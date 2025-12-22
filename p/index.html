@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="pydanic配合json序列化\nCustomEncoder 与 json.dumps 的协作机制说明文档 一、背景与问题说明 在实际工程中，直接使用 json.dumps() 序列化复杂对象（如 Pydantic 对象、HTTP Header、流式对象等）往往会失败。失败原因在于：这些对象并非 JSON 原生支持的类型。\n为解决该问题，引入了一个 自定义 JSONEncoder（CustomEncoder），用于在序列化过程中对“问题对象”进行兜底处理。\n二、CustomEncoder 定义 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 class CustomEncoder(json.JSONEncoder): &#34;&#34;&#34; 直接dump pydantic 对象存在问题，这里加一个 hack &#34;&#34;&#34; def default(self, obj): &#34;&#34;&#34;json dump default&#34;&#34;&#34; if obj.__class__.__name__ == &#34;SerializationIterator&#34;: return None if obj.__class__.__name__ == &#34;CaseInsensitiveDict&#34;: return dict(obj) if isinstance(obj, StreamingValue): return &#34;&#34; return super().default(obj) 该类的核心在于 重写 JSONEncoder.default() 方法。\n">
+<title></title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="">
+<meta property='og:description' content="pydanic配合json序列化\nCustomEncoder 与 json.dumps 的协作机制说明文档 一、背景与问题说明 在实际工程中，直接使用 json.dumps() 序列化复杂对象（如 Pydantic 对象、HTTP Header、流式对象等）往往会失败。失败原因在于：这些对象并非 JSON 原生支持的类型。\n为解决该问题，引入了一个 自定义 JSONEncoder（CustomEncoder），用于在序列化过程中对“问题对象”进行兜底处理。\n二、CustomEncoder 定义 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 class CustomEncoder(json.JSONEncoder): &#34;&#34;&#34; 直接dump pydantic 对象存在问题，这里加一个 hack &#34;&#34;&#34; def default(self, obj): &#34;&#34;&#34;json dump default&#34;&#34;&#34; if obj.__class__.__name__ == &#34;SerializationIterator&#34;: return None if obj.__class__.__name__ == &#34;CaseInsensitiveDict&#34;: return dict(obj) if isinstance(obj, StreamingValue): return &#34;&#34; return super().default(obj) 该类的核心在于 重写 JSONEncoder.default() 方法。\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' />
+<meta name="twitter:title" content="">
+<meta name="twitter:description" content="pydanic配合json序列化\nCustomEncoder 与 json.dumps 的协作机制说明文档 一、背景与问题说明 在实际工程中，直接使用 json.dumps() 序列化复杂对象（如 Pydantic 对象、HTTP Header、流式对象等）往往会失败。失败原因在于：这些对象并非 JSON 原生支持的类型。\n为解决该问题，引入了一个 自定义 JSONEncoder（CustomEncoder），用于在序列化过程中对“问题对象”进行兜底处理。\n二、CustomEncoder 定义 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 class CustomEncoder(json.JSONEncoder): &#34;&#34;&#34; 直接dump pydantic 对象存在问题，这里加一个 hack &#34;&#34;&#34; def default(self, obj): &#34;&#34;&#34;json dump default&#34;&#34;&#34; if obj.__class__.__name__ == &#34;SerializationIterator&#34;: return None if obj.__class__.__name__ == &#34;CaseInsensitiveDict&#34;: return dict(obj) if isinstance(obj, StreamingValue): return &#34;&#34; return super().default(obj) 该类的核心在于 重写 JSONEncoder.default() 方法。\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ol>
+    <li><a href="#一背景与问题说明">一、背景与问题说明</a></li>
+    <li><a href="#二customencoder-定义">二、CustomEncoder 定义</a></li>
+    <li><a href="#三jsondumps-clscustomencoder-的工作机制">三、json.dumps(&hellip;, cls=CustomEncoder) 的工作机制</a>
+      <ol>
+        <li><a href="#1-本质行为">1. 本质行为</a></li>
+        <li><a href="#2-json-原生支持的类型">2. JSON 原生支持的类型</a></li>
+        <li><a href="#3-default-的调用规则一句话版">3. default() 的调用规则（一句话版）</a></li>
+      </ol>
+    </li>
+    <li><a href="#四customencoderdefault-的处理逻辑详解">四、CustomEncoder.default 的处理逻辑详解</a>
+      <ol>
+        <li><a href="#1-serializationiteratorpydantic-内部对象">1️⃣ SerializationIterator（Pydantic 内部对象）</a></li>
+        <li><a href="#2-caseinsensitivedicthttp-header">2️⃣ CaseInsensitiveDict（HTTP Header）</a></li>
+        <li><a href="#3-streamingvalue流式对象">3️⃣ StreamingValue（流式对象）</a></li>
+        <li><a href="#4-兜底失败保持严格">4️⃣ 兜底失败（保持严格）</a></li>
+      </ol>
+    </li>
+    <li><a href="#五完整递归与-default-触发流程图">五、完整递归与 default() 触发流程图</a>
+      <ol>
+        <li><a href="#1-整体入口">1. 整体入口</a></li>
+        <li><a href="#2-每个节点的判断逻辑">2. 每个节点的判断逻辑</a></li>
+        <li><a href="#3-customencoderdefault-内部决策流程">3. CustomEncoder.default 内部决策流程</a></li>
+      </ol>
+    </li>
+    <li><a href="#六结合真实数据结构的递归示例">六、结合真实数据结构的递归示例</a>
+      <ol>
+        <li><a href="#实际递归路径">实际递归路径</a></li>
+      </ol>
+    </li>
+    <li><a href="#七最终-json-结果形态示意">七、最终 JSON 结果形态（示意）</a></li>
+    <li><a href="#八工程视角总结一句话">八、工程视角总结（一句话）</a></li>
+    <li><a href="#九适用场景">九、适用场景</a></li>
+  </ol>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/"></a>
+        </h2>
+    
+        
+    </div>
+
+    
+    
+    
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <p>pydanic配合json序列化</p>
+<h1 id="customencoder-与-jsondumps-的协作机制说明文档">CustomEncoder 与 json.dumps 的协作机制说明文档
+</h1><h2 id="一背景与问题说明">一、背景与问题说明
+</h2><p>在实际工程中，<strong>直接使用 <strong><code>json.dumps()</code></strong> 序列化复杂对象（如 Pydantic 对象、HTTP Header、流式对象等）往往会失败</strong>。失败原因在于：这些对象并非 JSON 原生支持的类型。</p>
+<p>为解决该问题，引入了一个 <strong>自定义 JSONEncoder（CustomEncoder）</strong>，用于在序列化过程中对“问题对象”进行兜底处理。</p>
+<hr>
+<h2 id="二customencoder-定义">二、CustomEncoder 定义
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">class CustomEncoder(json.JSONEncoder):
+</span></span><span class="line"><span class="cl">    &#34;&#34;&#34;
+</span></span><span class="line"><span class="cl">    直接dump pydantic 对象存在问题，这里加一个 hack
+</span></span><span class="line"><span class="cl">    &#34;&#34;&#34;
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    def default(self, obj):
+</span></span><span class="line"><span class="cl">        &#34;&#34;&#34;json dump default&#34;&#34;&#34;
+</span></span><span class="line"><span class="cl">        if obj.__class__.__name__ == &#34;SerializationIterator&#34;:
+</span></span><span class="line"><span class="cl">            return None
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        if obj.__class__.__name__ == &#34;CaseInsensitiveDict&#34;:
+</span></span><span class="line"><span class="cl">            return dict(obj)
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        if isinstance(obj, StreamingValue):
+</span></span><span class="line"><span class="cl">            return &#34;&#34;
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        return super().default(obj)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>该类的核心在于 <strong>重写 <strong><code>JSONEncoder.default()</code></strong> 方法</strong>。</p>
+<h2 id="三jsondumps-clscustomencoder-的工作机制">三、json.dumps(&hellip;, cls=CustomEncoder) 的工作机制
+</h2><h3 id="1-本质行为">1. 本质行为
+</h3><p>当调用：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">json.dumps(last_item, cls=CustomEncoder)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>内部逻辑等价于（简化后）：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">encoder = CustomEncoder()
+</span></span><span class="line"><span class="cl">encoder.encode(last_item)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="2-json-原生支持的类型">2. JSON 原生支持的类型
+</h3><p>以下类型在序列化时**不会调用 **<code>default()</code>：</p>
+<ul>
+<li><code>dict</code></li>
+<li><code>list / tuple</code></li>
+<li><code>str</code></li>
+<li><code>int / float</code></li>
+<li><code>bool</code></li>
+<li><code>None</code></li>
+</ul>
+<h3 id="3-default-的调用规则一句话版">3. default() 的调用规则（一句话版）
+</h3><blockquote>
+<p><strong>当 <strong><code>json.dumps</code></strong> 在递归遍历对象树时，遇到一个 JSON 原生不支持的对象，就会调用 <strong><code>default(obj)</code></strong>。</strong>
+注意：</p></blockquote>
+<ul>
+<li><code>default()</code><strong>不是只调用一次</strong></li>
+<li>它会在 <strong>每一个不支持的节点</strong> 上被触发</li>
+</ul>
+<hr>
+<h2 id="四customencoderdefault-的处理逻辑详解">四、CustomEncoder.default 的处理逻辑详解
+</h2><h3 id="1-serializationiteratorpydantic-内部对象">1️⃣ SerializationIterator（Pydantic 内部对象）
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">if obj.__class__.__name__ == &#34;SerializationIterator&#34;:    returnNone
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>常见来源：</strong></p>
+<ul>
+<li>Pydantic v2</li>
+<li>FastAPI Response</li>
+<li><code>model_dump()</code> 内部流式序列化</li>
+</ul>
+<p><strong>处理策略：</strong></p>
+<ul>
+<li>直接丢弃</li>
+<li>JSON 中表现为 <code>null</code></li>
+</ul>
+<hr>
+<h3 id="2-caseinsensitivedicthttp-header">2️⃣ CaseInsensitiveDict（HTTP Header）
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">if obj.__class__.__name__ == &#34;CaseInsensitiveDict&#34;:    returndict(obj)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>常见来源：</strong></p>
+<ul>
+<li><code>requests.Response.headers</code></li>
+<li>HTTP 请求 / 响应头</li>
+</ul>
+<p><strong>处理策略：</strong></p>
+<ul>
+<li>显式转换为普通 <code>dict</code></li>
+<li>保留全部键值信息</li>
+</ul>
+<hr>
+<h3 id="3-streamingvalue流式对象">3️⃣ StreamingValue（流式对象）
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">ifisinstance(obj, StreamingValue):    return&#34;&#34;
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>常见来源：</strong></p>
+<ul>
+<li>LLM streaming</li>
+<li>SSE / chunked response</li>
+<li>延迟计算对象</li>
+</ul>
+<p><strong>处理策略：</strong></p>
+<ul>
+<li>不序列化内容</li>
+<li>返回空字符串，避免阻塞或异常</li>
+</ul>
+<hr>
+<h3 id="4-兜底失败保持严格">4️⃣ 兜底失败（保持严格）
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">returnsuper().default(obj)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>行为：</strong></p>
+<ul>
+<li>抛出 <code>TypeError: not JSON serializable</code></li>
+</ul>
+<p><strong>设计意义：</strong></p>
+<ul>
+<li>只对“已知问题对象”做 hack</li>
+<li>避免悄悄吞掉真正的错误类型</li>
+</ul>
+<hr>
+<h2 id="五完整递归与-default-触发流程图">五、完整递归与 default() 触发流程图
+</h2><h3 id="1-整体入口">1. 整体入口
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">json.dumps(last_item, cls=CustomEncoder)            │            ▼     CustomEncoder.encode()
+</span></span><span class="line"><span class="cl">            │
+</span></span><span class="line"><span class="cl">            ▼
+</span></span><span class="line"><span class="cl">   深度递归遍历对象树
+</span></span></code></pre></td></tr></table>
+</div>
+</div><hr>
+<h3 id="2-每个节点的判断逻辑">2. 每个节点的判断逻辑
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">┌──────────────────────────────┐
+</span></span><span class="line"><span class="cl">│ 当前对象 obj                  │
+</span></span><span class="line"><span class="cl">└───────────────┬──────────────┘
+</span></span><span class="line"><span class="cl">                │
+</span></span><span class="line"><span class="cl">                ▼
+</span></span><span class="line"><span class="cl">     obj 是否 JSON 原生类型？
+</span></span><span class="line"><span class="cl">                │
+</span></span><span class="line"><span class="cl">        ┌───────┴────────┐
+</span></span><span class="line"><span class="cl">        │                │
+</span></span><span class="line"><span class="cl">       是               否
+</span></span><span class="line"><span class="cl">        │                │
+</span></span><span class="line"><span class="cl">        ▼                ▼
+</span></span><span class="line"><span class="cl">  直接序列化        调用 default(obj)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><hr>
+<h3 id="3-customencoderdefault-内部决策流程">3. CustomEncoder.default 内部决策流程
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">CustomEncoder.default(obj)        │        ▼SerializationIterator ?        │Yes → returnNone → JSON: null        │        ▼ NoCaseInsensitiveDict ?        │Yes → return dict(obj)        │        ▼ NoStreamingValue ?        │Yes → return &#34;&#34;        │        ▼ Nosuper().default(obj)
+</span></span><span class="line"><span class="cl">        │
+</span></span><span class="line"><span class="cl">        ▼
+</span></span><span class="line"><span class="cl">TypeError
+</span></span></code></pre></td></tr></table>
+</div>
+</div><hr>
+<h2 id="六结合真实数据结构的递归示例">六、结合真实数据结构的递归示例
+</h2><p>假设输入对象：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">last_item = {    &#34;headers&#34;: response.headers,      # CaseInsensitiveDict&#34;stream&#34;: streaming_value,        # StreamingValue&#34;data&#34;: pydantic_model            # 内含 SerializationIterator
+</span></span><span class="line"><span class="cl">}
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="实际递归路径">实际递归路径
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">last_item (dict)│├── headers → CaseInsensitiveDict│       └─ default() → dict(obj)│├── stream → StreamingValue│       └─ default() → &#34;&#34;│└── data → PydanticModel        └─ SerializationIterator                └─ default() → None
+</span></span></code></pre></td></tr></table>
+</div>
+</div><hr>
+<h2 id="七最终-json-结果形态示意">七、最终 JSON 结果形态（示意）
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">{&#34;headers&#34;:{&#34;content-type&#34;:&#34;application/json&#34;},&#34;stream&#34;:&#34;&#34;,&#34;data&#34;:{&#34;some_field&#34;:null}}
+</span></span></code></pre></td></tr></table>
+</div>
+</div><hr>
+<h2 id="八工程视角总结一句话">八、工程视角总结（一句话）
+</h2><blockquote>
+<p><strong>CustomEncoder 是一个“best-effort JSON 序列化适配器”，通过在递归过程中拦截不可序列化对象，将其压平为安全的 JSON 原生值，从而保证 <strong><code>json.dumps</code></strong> 在复杂对象场景下不崩溃。</strong></p></blockquote>
+<hr>
+<h2 id="九适用场景">九、适用场景
+</h2><ul>
+<li>日志系统（request / response dump）</li>
+<li>审计记录</li>
+<li>Debug 快照</li>
+<li>LLM 中间态保存</li>
+<li>FastAPI / Pydantic 对象持久化</li>
+</ul>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2025 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>
