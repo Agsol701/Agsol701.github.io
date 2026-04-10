@@ -229,6 +229,21 @@
   <ol>
     <li><a href="#问题现象">问题现象</a></li>
     <li><a href="#先说结论">先说结论</a></li>
+    <li><a href="#celery-pool-类型概览">Celery Pool 类型概览</a>
+      <ol>
+        <li><a href="#默认行为">默认行为</a></li>
+        <li><a href="#prefork-vs-eventletgevent-的关键区别">Prefork vs Eventlet/Gevent 的关键区别</a></li>
+        <li><a href="#选择建议">选择建议</a></li>
+        <li><a href="#cpu-密集型-vs-io-密集型">CPU 密集型 vs I/O 密集型</a>
+          <ol>
+            <li><a href="#cpu-密集型示例">CPU 密集型示例</a></li>
+            <li><a href="#io-密集型示例">I/O 密集型示例</a></li>
+            <li><a href="#为什么选择不同的-pool">为什么选择不同的 Pool</a></li>
+            <li><a href="#简单判断方法">简单判断方法</a></li>
+          </ol>
+        </li>
+      </ol>
+    </li>
     <li><a href="#celery-中两者怎么用">Celery 中两者怎么用</a>
       <ol>
         <li><a href="#正确的启动方式">正确的启动方式</a></li>
@@ -369,6 +384,273 @@
 <li>“进程正常但不消费”这类现象，通常意味着 <strong>worker 没挂，但某个关键 I/O 或 hub 调度被阻塞了</strong></li>
 <li>如果切到 <code>gevent</code> 后恢复正常，通常说明问题更接近于 <code>eventlet</code> 的运行时行为，而不是任务代码或 broker 协议本身</li>
 </ul>
+<h2 id="celery-pool-类型概览">Celery Pool 类型概览
+</h2><p>Celery 支持多种并发池（Pool）实现，通过 <code>-P</code> 参数指定：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>Pool 类型</th>
+          <th>并发模型</th>
+          <th>适用场景</th>
+          <th>启动命令示例</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><strong>prefork</strong> (默认)</td>
+          <td>多进程</td>
+          <td>CPU 密集型任务，无需处理大量并发连接</td>
+          <td><code>celery -A task worker -c 4</code></td>
+      </tr>
+      <tr>
+          <td><strong>eventlet</strong></td>
+          <td>协程 (greenlet)</td>
+          <td>I/O 密集型，大量并发网络请求</td>
+          <td><code>celery -A task worker -P eventlet -c 100</code></td>
+      </tr>
+      <tr>
+          <td><strong>gevent</strong></td>
+          <td>协程 (greenlet)</td>
+          <td>类似 eventlet，API 更友好，稳定性更好</td>
+          <td><code>celery -A task worker -P gevent -c 100</code></td>
+      </tr>
+      <tr>
+          <td><strong>solo</strong></td>
+          <td>单线程</td>
+          <td>开发调试、任务量小</td>
+          <td><code>celery -A task worker -P solo</code></td>
+      </tr>
+      <tr>
+          <td><strong>threads</strong></td>
+          <td>多线程</td>
+          <td>轻量级 I/O 任务</td>
+          <td><code>celery -A task worker -P threads -c 10</code></td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="默认行为">默认行为
+</h3><p>如果不指定 <code>-P</code> 参数，Celery 默认使用 <strong>prefork</strong>（多进程模式）：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 这两个命令等价</span>
+</span></span><span class="line"><span class="cl">celery -A task worker -Q celery -l debug -c <span class="m">4</span>
+</span></span><span class="line"><span class="cl">celery -A task worker -Q celery -l debug -P prefork -c <span class="m">4</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="prefork-vs-eventletgevent-的关键区别">Prefork vs Eventlet/Gevent 的关键区别
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># prefork - 每个 worker 进程独立，内存占用较高，但隔离性好</span>
+</span></span><span class="line"><span class="cl">celery -A task worker -Q celery -l debug -c <span class="m">4</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># eventlet - 单进程多协程，适合 I/O 密集型，需要安装 eventlet</span>
+</span></span><span class="line"><span class="cl">pip install eventlet
+</span></span><span class="line"><span class="cl">celery -A task worker -Q celery -l debug -P eventlet -c <span class="m">100</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># gevent - 单进程多协程，稳定性通常优于 eventlet</span>
+</span></span><span class="line"><span class="cl">pip install gevent
+</span></span><span class="line"><span class="cl">celery -A task worker -Q celery -l debug -P gevent -c <span class="m">100</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="选择建议">选择建议
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>场景</th>
+          <th>推荐的 Pool</th>
+          <th>原因</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>CPU 密集型计算</td>
+          <td>prefork</td>
+          <td>多进程充分利用多核，避免 GIL 限制</td>
+      </tr>
+      <tr>
+          <td>大量 HTTP 请求、数据库查询</td>
+          <td>gevent</td>
+          <td>协程高效处理并发 I/O</td>
+      </tr>
+      <tr>
+          <td>开发调试</td>
+          <td>solo</td>
+          <td>简单可控，便于排查问题</td>
+      </tr>
+      <tr>
+          <td>已有 eventlet 代码且运行稳定</td>
+          <td>eventlet</td>
+          <td>保持兼容，但新项目建议用 gevent</td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="cpu-密集型-vs-io-密集型">CPU 密集型 vs I/O 密集型
+</h3><p>选择 Pool 类型的关键在于理解任务的特性：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>特征</th>
+          <th>CPU 密集型</th>
+          <th>I/O 密集型</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><strong>瓶颈</strong></td>
+          <td>CPU 计算能力</td>
+          <td>等待 I/O 操作完成</td>
+      </tr>
+      <tr>
+          <td><strong>CPU 利用率</strong></td>
+          <td>高，持续占用</td>
+          <td>低，大部分时间在等待</td>
+      </tr>
+      <tr>
+          <td><strong>主要操作</strong></td>
+          <td>数学计算、数据处理、加密解密</td>
+          <td>网络请求、磁盘读写、数据库查询</td>
+      </tr>
+  </tbody>
+</table></div>
+<h4 id="cpu-密集型示例">CPU 密集型示例
+</h4><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># 图像处理</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">PIL</span> <span class="kn">import</span> <span class="n">Image</span>
+</span></span><span class="line"><span class="cl"><span class="n">img</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&#34;large.jpg&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="n">img</span> <span class="o">=</span> <span class="n">img</span><span class="o">.</span><span class="n">resize</span><span class="p">((</span><span class="mi">4000</span><span class="p">,</span> <span class="mi">3000</span><span class="p">))</span>  <span class="c1"># CPU 计算像素</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 加密计算</span>
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">hashlib</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10000000</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="sa">f</span><span class="s2">&#34;data</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&#34;</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 数学运算</span>
+</span></span><span class="line"><span class="cl"><span class="n">result</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">i</span> <span class="o">*</span> <span class="n">i</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">100000000</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 机器学习推理</span>
+</span></span><span class="line"><span class="cl"><span class="n">output</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">large_batch_data</span><span class="p">)</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>特点</strong>：代码一直在执行计算，CPU 没有等待时间。</p>
+<h4 id="io-密集型示例">I/O 密集型示例
+</h4><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># HTTP 请求</span>
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">requests</span>
+</span></span><span class="line"><span class="cl"><span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&#34;https://api.example.com/data&#34;</span><span class="p">)</span>  <span class="c1"># 等待网络响应</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 数据库查询</span>
+</span></span><span class="line"><span class="cl"><span class="n">cursor</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&#34;SELECT * FROM users WHERE id = 1&#34;</span><span class="p">)</span>  <span class="c1"># 等待数据库返回</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 文件读写</span>
+</span></span><span class="line"><span class="cl"><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&#34;large_file.txt&#34;</span><span class="p">,</span> <span class="s2">&#34;r&#34;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="n">content</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>  <span class="c1"># 等待磁盘读取</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 发送邮件</span>
+</span></span><span class="line"><span class="cl"><span class="n">smtp</span><span class="o">.</span><span class="n">sendmail</span><span class="p">(</span><span class="n">from_addr</span><span class="p">,</span> <span class="n">to_addr</span><span class="p">,</span> <span class="n">message</span><span class="p">)</span>  <span class="c1"># 等待 SMTP 服务器</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>特点</strong>：代码发起请求后进入等待状态，CPU 空闲。</p>
+<h4 id="为什么选择不同的-pool">为什么选择不同的 Pool
+</h4><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">CPU 密集型任务（用 prefork）：
+</span></span><span class="line"><span class="cl">┌─────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│ 进程1: ████████████████████████████ │  ← CPU 满载
+</span></span><span class="line"><span class="cl">│ 进程2: ████████████████████████████ │
+</span></span><span class="line"><span class="cl">│ 进程3: ████████████████████████████ │
+</span></span><span class="line"><span class="cl">│ 进程4: ████████████████████████████ │
+</span></span><span class="line"><span class="cl">└─────────────────────────────────────┘
+</span></span><span class="line"><span class="cl">→ 多进程并行，充分利用多核 CPU
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">I/O 密集型任务（用 gevent/eventlet）：
+</span></span><span class="line"><span class="cl">┌─────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│ 协程1: ██░░░░░░░░░░░░██░░░░░░░░░░██ │  ← 大部分时间在等待
+</span></span><span class="line"><span class="cl">│ 协程2: ░░██░░░░░░░░░░░░██░░░░░░░░░░ │
+</span></span><span class="line"><span class="cl">│ 协程3: ░░░░██░░░░░░░░░░░░██░░░░░░░░ │
+</span></span><span class="line"><span class="cl">│ 协程4: ░░░░░░██░░░░░░░░░░░░██░░░░░░ │
+</span></span><span class="line"><span class="cl">└─────────────────────────────────────┘
+</span></span><span class="line"><span class="cl">██ = CPU 工作  ░░ = 等待 I/O
+</span></span><span class="line"><span class="cl">→ 单进程多协程，等待时自动切换执行其他协程
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h4 id="简单判断方法">简单判断方法
+</h4><p><strong>任务是在&quot;算&quot;还是在&quot;等&quot;？</strong></p>
+<ul>
+<li>算得多 → CPU 密集型 → 用 prefork</li>
+<li>等得多 → I/O 密集型 → 用 gevent</li>
+</ul>
+<p><strong>重要提示</strong>：eventlet 和 gevent 都属于 green pool，需要确保任务代码中不包含阻塞调用（如未 patch 的 socket、time.sleep 等），否则会阻塞整个事件循环。</p>
 <h2 id="celery-中两者怎么用">Celery 中两者怎么用
 </h2><h3 id="正确的启动方式">正确的启动方式
 </h3><div class="highlight"><div class="chroma">
