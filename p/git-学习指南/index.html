@@ -249,6 +249,16 @@
         <li><a href="#26-标签操作">2.6 标签操作</a></li>
         <li><a href="#27-子模块">2.7 子模块</a></li>
         <li><a href="#28-高级用法">2.8 高级用法</a></li>
+        <li><a href="#29-超大文件管理">2.9 超大文件管理</a>
+          <ol>
+            <li><a href="#方案一大文件不进-git">方案一：大文件不进 Git</a></li>
+            <li><a href="#方案二使用-git-lfs">方案二：使用 Git LFS</a></li>
+            <li><a href="#方案三源码和产物分离">方案三：源码和产物分离</a></li>
+            <li><a href="#已经误提交大文件怎么办">已经误提交大文件怎么办</a></li>
+            <li><a href="#hugging-face-如何管理大文件">Hugging Face 如何管理大文件</a></li>
+            <li><a href="#实用建议">实用建议</a></li>
+          </ol>
+        </li>
       </ol>
     </li>
     <li><a href="#3-git-容易踩的坑">3. Git 容易踩的坑</a>
@@ -1017,7 +1027,210 @@
 </span></span><span class="line"><span class="cl">git log --grep<span class="o">=</span><span class="s2">&#34;关键字&#34;</span>  <span class="c1"># 搜索提交信息</span>
 </span></span></code></pre></td></tr></table>
 </div>
-</div><hr>
+</div><h3 id="29-超大文件管理">2.9 超大文件管理
+</h3><p>Git 适合管理源码、文档和中小型文件，但并不适合频繁变更的大二进制文件。<br>
+如果把模型文件、视频、压缩包、数据库备份这类超大文件直接放进 Git 历史，通常会带来几个问题：</p>
+<ul>
+<li>仓库体积迅速膨胀</li>
+<li><code>clone</code>、<code>pull</code>、<code>checkout</code> 变慢</li>
+<li>大文件每次修改都可能生成新的历史版本</li>
+<li>多人协作和 CI 拉取成本明显增加</li>
+</ul>
+<h4 id="方案一大文件不进-git">方案一：大文件不进 Git
+</h4><p>如果文件本身不是源码的一部分，最稳妥的做法通常是把它放到外部存储中，例如：</p>
+<ul>
+<li>对象存储：S3、OSS、COS</li>
+<li>制品仓库：Nexus、Artifactory</li>
+<li>发布平台：GitHub Releases</li>
+</ul>
+<p>Git 仓库中只保留：</p>
+<ul>
+<li>下载脚本</li>
+<li>文件版本号</li>
+<li>校验值</li>
+<li>使用说明</li>
+</ul>
+<p>这种做法最适合：</p>
+<ul>
+<li>数据集</li>
+<li>训练模型</li>
+<li>视频资源</li>
+<li>备份文件</li>
+<li>构建产物</li>
+</ul>
+<h4 id="方案二使用-git-lfs">方案二：使用 Git LFS
+</h4><p>如果大文件需要和代码一起版本管理，可以使用 Git LFS（Large File Storage）。</p>
+<p>它的核心思路是：</p>
+<ul>
+<li>Git 仓库中只保存一个轻量的指针文件</li>
+<li>真正的大文件内容交给 LFS 后端存储</li>
+<li>使用方式仍然接近普通 Git</li>
+</ul>
+<p>常见用法如下：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 初始化 Git LFS</span>
+</span></span><span class="line"><span class="cl">git lfs install
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 跟踪指定类型的大文件</span>
+</span></span><span class="line"><span class="cl">git lfs track <span class="s2">&#34;*.zip&#34;</span>
+</span></span><span class="line"><span class="cl">git lfs track <span class="s2">&#34;*.mp4&#34;</span>
+</span></span><span class="line"><span class="cl">git lfs track <span class="s2">&#34;*.psd&#34;</span>
+</span></span><span class="line"><span class="cl">git lfs track <span class="s2">&#34;models/*&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 提交跟踪规则</span>
+</span></span><span class="line"><span class="cl">git add .gitattributes
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 提交大文件</span>
+</span></span><span class="line"><span class="cl">git add big-file.zip
+</span></span><span class="line"><span class="cl">git commit -m <span class="s2">&#34;track large files with git lfs&#34;</span>
+</span></span><span class="line"><span class="cl">git push
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>适合使用 Git LFS 的场景：</p>
+<ul>
+<li>模型权重</li>
+<li>设计稿</li>
+<li>音视频素材</li>
+<li>需要保留多个版本的大型二进制资源</li>
+</ul>
+<h4 id="方案三源码和产物分离">方案三：源码和产物分离
+</h4><p>很多团队会犯一个常见错误：把构建后的产物直接提交到源码仓库，例如：</p>
+<ul>
+<li><code>dist/</code></li>
+<li><code>build/</code></li>
+<li><code>.tar.gz</code></li>
+<li><code>.jar</code></li>
+<li><code>.exe</code></li>
+</ul>
+<p>更合理的做法是：</p>
+<ul>
+<li>源码进入 Git</li>
+<li>产物进入制品仓库或发布平台</li>
+</ul>
+<p>这样可以避免源码仓库逐渐演变成“文件仓库”。</p>
+<h4 id="已经误提交大文件怎么办">已经误提交大文件怎么办
+</h4><p>如果大文件已经提交过，仅仅把它加入 <code>.gitignore</code> 是不够的，因为历史中仍然保存着这个文件。</p>
+<p>这时需要清理历史，常见工具有：</p>
+<ul>
+<li><code>git filter-repo</code>，推荐</li>
+<li>BFG Repo-Cleaner</li>
+</ul>
+<p>示例：删除某个误提交的大文件</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">git filter-repo --path big-file.zip --invert-paths
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>示例：删除某一类大文件</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">git filter-repo --path-glob <span class="s2">&#34;*.mp4&#34;</span> --invert-paths
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>清理历史后通常还需要强制推送：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">git push --force --all
+</span></span><span class="line"><span class="cl">git push --force --tags
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>注意：</p>
+<ul>
+<li>这会改写 Git 历史</li>
+<li>团队成员需要重新同步仓库</li>
+<li>对共享仓库必须提前沟通</li>
+</ul>
+<h4 id="hugging-face-如何管理大文件">Hugging Face 如何管理大文件
+</h4><p>Hugging Face 的做法本质上也是 <code>Git + 大文件后端存储</code>，只是它针对模型文件和数据集这类超大二进制文件做了更深的优化。</p>
+<p>可以把它理解为两层：</p>
+<ul>
+<li>Git 仍然负责版本管理、提交历史和仓库结构</li>
+<li>真正的大文件内容交给专门的大文件存储系统处理</li>
+</ul>
+<p>在 Hugging Face Hub 中，传统方案主要依赖 <code>Git LFS</code>：</p>
+<ul>
+<li>仓库中保存的是 pointer file（指针文件）</li>
+<li><code>.gitattributes</code> 用来声明哪些文件走大文件存储</li>
+<li>实际的模型权重、数据集文件存放在远端对象存储中</li>
+</ul>
+<p>这种模式和通用 Git LFS 的思路是一致的，也就是：</p>
+<ul>
+<li>Git 不直接管理超大文件本体</li>
+<li>Git 只管理“这个版本对应哪一个大文件对象”</li>
+</ul>
+<p>不过 Hugging Face 近年正在把一部分仓库迁移到 <code>Xet</code> 存储后端。</p>
+<p><code>Xet</code> 和传统 Git LFS 最大的区别在于去重粒度：</p>
+<ul>
+<li><code>Git LFS</code> 更接近文件级管理</li>
+<li><code>Xet</code> 会把大文件拆成更小的数据块，再做分块级去重</li>
+</ul>
+<p>这意味着：</p>
+<ul>
+<li>如果一个超大模型文件只改动了一小部分</li>
+<li>使用传统 LFS 时，往往需要重新上传整个文件版本</li>
+<li>使用 Xet 时，只需要上传发生变化的那部分数据块</li>
+</ul>
+<p>对于模型权重、Parquet 数据集、GGUF 文件这类超大文件，这种方式会更节省上传时间、下载流量和存储空间。</p>
+<p>所以，如果把 Hugging Face 的方案和前面的通用方案对应起来，可以这样理解：</p>
+<ul>
+<li>基础层面：它符合“使用 Git LFS 管理大文件”的思路</li>
+<li>进阶层面：它在此基础上进一步使用 <code>Xet</code> 做更细粒度的分块去重优化</li>
+</ul>
+<p>对使用者来说，日常工作流通常还是比较接近 Git：</p>
+<ul>
+<li>提交仓库元数据和 pointer</li>
+<li>大文件由后端单独存储</li>
+<li>下载和上传时由 Hub 帮你完成实际的大文件传输</li>
+</ul>
+<p>这也是为什么 Hugging Face 能在保留 Git 工作流的同时，管理几十 GB 甚至更大的模型和数据集文件。</p>
+<h4 id="实用建议">实用建议
+</h4><ul>
+<li>尽量不要把几十 MB 以上且频繁变化的二进制文件直接提交到 Git</li>
+<li><code>node_modules/</code>、日志文件、缓存文件、导出产物应加入 <code>.gitignore</code></li>
+<li>大模型、数据集、媒体资源优先考虑对象存储或 Git LFS</li>
+<li>构建产物优先放到 Release 或制品仓库</li>
+<li>定期检查仓库大小和对象数量</li>
+</ul>
+<p>可以使用下面的命令做基本检查：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">git count-objects -vH
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果仓库已经明显变大，还可以结合 <code>git-sizer</code> 分析历史膨胀原因。</p>
+<hr>
 <h2 id="3-git-容易踩的坑">3. Git 容易踩的坑
 </h2><h3 id="31-提交相关">3.1 提交相关
 </h3><div class="highlight"><div class="chroma">

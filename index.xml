@@ -650,7 +650,210 @@
 &lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;git log --grep&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;关键字&amp;#34;&lt;/span&gt;  &lt;span class=&#34;c1&#34;&gt;# 搜索提交信息&lt;/span&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
 &lt;/div&gt;
-&lt;/div&gt;&lt;hr&gt;
+&lt;/div&gt;&lt;h3 id=&#34;29-超大文件管理&#34;&gt;2.9 超大文件管理
+&lt;/h3&gt;&lt;p&gt;Git 适合管理源码、文档和中小型文件，但并不适合频繁变更的大二进制文件。&lt;br&gt;
+如果把模型文件、视频、压缩包、数据库备份这类超大文件直接放进 Git 历史，通常会带来几个问题：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;仓库体积迅速膨胀&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;clone&lt;/code&gt;、&lt;code&gt;pull&lt;/code&gt;、&lt;code&gt;checkout&lt;/code&gt; 变慢&lt;/li&gt;
+&lt;li&gt;大文件每次修改都可能生成新的历史版本&lt;/li&gt;
+&lt;li&gt;多人协作和 CI 拉取成本明显增加&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;方案一大文件不进-git&#34;&gt;方案一：大文件不进 Git
+&lt;/h4&gt;&lt;p&gt;如果文件本身不是源码的一部分，最稳妥的做法通常是把它放到外部存储中，例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;对象存储：S3、OSS、COS&lt;/li&gt;
+&lt;li&gt;制品仓库：Nexus、Artifactory&lt;/li&gt;
+&lt;li&gt;发布平台：GitHub Releases&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Git 仓库中只保留：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;下载脚本&lt;/li&gt;
+&lt;li&gt;文件版本号&lt;/li&gt;
+&lt;li&gt;校验值&lt;/li&gt;
+&lt;li&gt;使用说明&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这种做法最适合：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;数据集&lt;/li&gt;
+&lt;li&gt;训练模型&lt;/li&gt;
+&lt;li&gt;视频资源&lt;/li&gt;
+&lt;li&gt;备份文件&lt;/li&gt;
+&lt;li&gt;构建产物&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;方案二使用-git-lfs&#34;&gt;方案二：使用 Git LFS
+&lt;/h4&gt;&lt;p&gt;如果大文件需要和代码一起版本管理，可以使用 Git LFS（Large File Storage）。&lt;/p&gt;
+&lt;p&gt;它的核心思路是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Git 仓库中只保存一个轻量的指针文件&lt;/li&gt;
+&lt;li&gt;真正的大文件内容交给 LFS 后端存储&lt;/li&gt;
+&lt;li&gt;使用方式仍然接近普通 Git&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;常见用法如下：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;15
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;16
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# 初始化 Git LFS&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;git lfs install
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# 跟踪指定类型的大文件&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;git lfs track &lt;span class=&#34;s2&#34;&gt;&amp;#34;*.zip&amp;#34;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;git lfs track &lt;span class=&#34;s2&#34;&gt;&amp;#34;*.mp4&amp;#34;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;git lfs track &lt;span class=&#34;s2&#34;&gt;&amp;#34;*.psd&amp;#34;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;git lfs track &lt;span class=&#34;s2&#34;&gt;&amp;#34;models/*&amp;#34;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# 提交跟踪规则&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;git add .gitattributes
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# 提交大文件&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;git add big-file.zip
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;git commit -m &lt;span class=&#34;s2&#34;&gt;&amp;#34;track large files with git lfs&amp;#34;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;git push
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;适合使用 Git LFS 的场景：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;模型权重&lt;/li&gt;
+&lt;li&gt;设计稿&lt;/li&gt;
+&lt;li&gt;音视频素材&lt;/li&gt;
+&lt;li&gt;需要保留多个版本的大型二进制资源&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;方案三源码和产物分离&#34;&gt;方案三：源码和产物分离
+&lt;/h4&gt;&lt;p&gt;很多团队会犯一个常见错误：把构建后的产物直接提交到源码仓库，例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;dist/&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;build/&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;.tar.gz&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;.jar&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;.exe&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;更合理的做法是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;源码进入 Git&lt;/li&gt;
+&lt;li&gt;产物进入制品仓库或发布平台&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这样可以避免源码仓库逐渐演变成“文件仓库”。&lt;/p&gt;
+&lt;h4 id=&#34;已经误提交大文件怎么办&#34;&gt;已经误提交大文件怎么办
+&lt;/h4&gt;&lt;p&gt;如果大文件已经提交过，仅仅把它加入 &lt;code&gt;.gitignore&lt;/code&gt; 是不够的，因为历史中仍然保存着这个文件。&lt;/p&gt;
+&lt;p&gt;这时需要清理历史，常见工具有：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;git filter-repo&lt;/code&gt;，推荐&lt;/li&gt;
+&lt;li&gt;BFG Repo-Cleaner&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;示例：删除某个误提交的大文件&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;git filter-repo --path big-file.zip --invert-paths
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;示例：删除某一类大文件&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;git filter-repo --path-glob &lt;span class=&#34;s2&#34;&gt;&amp;#34;*.mp4&amp;#34;&lt;/span&gt; --invert-paths
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;清理历史后通常还需要强制推送：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;git push --force --all
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;git push --force --tags
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;注意：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;这会改写 Git 历史&lt;/li&gt;
+&lt;li&gt;团队成员需要重新同步仓库&lt;/li&gt;
+&lt;li&gt;对共享仓库必须提前沟通&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;hugging-face-如何管理大文件&#34;&gt;Hugging Face 如何管理大文件
+&lt;/h4&gt;&lt;p&gt;Hugging Face 的做法本质上也是 &lt;code&gt;Git + 大文件后端存储&lt;/code&gt;，只是它针对模型文件和数据集这类超大二进制文件做了更深的优化。&lt;/p&gt;
+&lt;p&gt;可以把它理解为两层：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Git 仍然负责版本管理、提交历史和仓库结构&lt;/li&gt;
+&lt;li&gt;真正的大文件内容交给专门的大文件存储系统处理&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;在 Hugging Face Hub 中，传统方案主要依赖 &lt;code&gt;Git LFS&lt;/code&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;仓库中保存的是 pointer file（指针文件）&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;.gitattributes&lt;/code&gt; 用来声明哪些文件走大文件存储&lt;/li&gt;
+&lt;li&gt;实际的模型权重、数据集文件存放在远端对象存储中&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这种模式和通用 Git LFS 的思路是一致的，也就是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Git 不直接管理超大文件本体&lt;/li&gt;
+&lt;li&gt;Git 只管理“这个版本对应哪一个大文件对象”&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;不过 Hugging Face 近年正在把一部分仓库迁移到 &lt;code&gt;Xet&lt;/code&gt; 存储后端。&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;Xet&lt;/code&gt; 和传统 Git LFS 最大的区别在于去重粒度：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;Git LFS&lt;/code&gt; 更接近文件级管理&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;Xet&lt;/code&gt; 会把大文件拆成更小的数据块，再做分块级去重&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这意味着：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;如果一个超大模型文件只改动了一小部分&lt;/li&gt;
+&lt;li&gt;使用传统 LFS 时，往往需要重新上传整个文件版本&lt;/li&gt;
+&lt;li&gt;使用 Xet 时，只需要上传发生变化的那部分数据块&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;对于模型权重、Parquet 数据集、GGUF 文件这类超大文件，这种方式会更节省上传时间、下载流量和存储空间。&lt;/p&gt;
+&lt;p&gt;所以，如果把 Hugging Face 的方案和前面的通用方案对应起来，可以这样理解：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;基础层面：它符合“使用 Git LFS 管理大文件”的思路&lt;/li&gt;
+&lt;li&gt;进阶层面：它在此基础上进一步使用 &lt;code&gt;Xet&lt;/code&gt; 做更细粒度的分块去重优化&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;对使用者来说，日常工作流通常还是比较接近 Git：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;提交仓库元数据和 pointer&lt;/li&gt;
+&lt;li&gt;大文件由后端单独存储&lt;/li&gt;
+&lt;li&gt;下载和上传时由 Hub 帮你完成实际的大文件传输&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这也是为什么 Hugging Face 能在保留 Git 工作流的同时，管理几十 GB 甚至更大的模型和数据集文件。&lt;/p&gt;
+&lt;h4 id=&#34;实用建议&#34;&gt;实用建议
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;尽量不要把几十 MB 以上且频繁变化的二进制文件直接提交到 Git&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;node_modules/&lt;/code&gt;、日志文件、缓存文件、导出产物应加入 &lt;code&gt;.gitignore&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;大模型、数据集、媒体资源优先考虑对象存储或 Git LFS&lt;/li&gt;
+&lt;li&gt;构建产物优先放到 Release 或制品仓库&lt;/li&gt;
+&lt;li&gt;定期检查仓库大小和对象数量&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;可以使用下面的命令做基本检查：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;git count-objects -vH
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;如果仓库已经明显变大，还可以结合 &lt;code&gt;git-sizer&lt;/code&gt; 分析历史膨胀原因。&lt;/p&gt;
+&lt;hr&gt;
 &lt;h2 id=&#34;3-git-容易踩的坑&#34;&gt;3. Git 容易踩的坑
 &lt;/h2&gt;&lt;h3 id=&#34;31-提交相关&#34;&gt;3.1 提交相关
 &lt;/h3&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
