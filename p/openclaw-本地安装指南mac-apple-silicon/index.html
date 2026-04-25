@@ -256,6 +256,20 @@
   </ol>
 
   <ol>
+    <li><a href="#微信插件名称">微信插件名称</a></li>
+    <li><a href="#安装微信插件">安装微信插件</a></li>
+    <li><a href="#登录微信">登录微信</a></li>
+    <li><a href="#查看微信通道状态">查看微信通道状态</a></li>
+    <li><a href="#微信接入后的权限控制">微信接入后的权限控制</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#plugin-是什么">Plugin 是什么</a></li>
+    <li><a href="#skill-是什么">Skill 是什么</a></li>
+    <li><a href="#怎么理解两者的关系">怎么理解两者的关系</a></li>
+  </ol>
+
+  <ol>
     <li><a href="#1-启动-tui">1. 启动 TUI</a></li>
     <li><a href="#2-打开-web-ui">2. 打开 Web UI</a></li>
     <li><a href="#3-做最小测试">3. 做最小测试</a></li>
@@ -704,6 +718,157 @@
 <li>在 TUI 中执行 <code>/model openai-codex/gpt-5.4</code></li>
 <li>必要时再执行 <code>/new openai-codex/gpt-5.4</code></li>
 </ol>
+<h1 id="接入微信">接入微信
+</h1><p>除了在本地终端或 Web UI 中使用 OpenClaw，你也可以把它接到微信上。</p>
+<p>不过需要注意：微信不是 OpenClaw 核心内置通道，而是通过外部 channel plugin 接入的。</p>
+<p>当前官方文档给出的能力范围大致是：</p>
+<ul>
+<li>支持微信私聊</li>
+<li>支持媒体消息</li>
+<li>群聊能力目前没有在插件能力元数据中明确声明</li>
+</ul>
+<h2 id="微信插件名称">微信插件名称
+</h2><p>OpenClaw 文档里这套微信接入相关名称有几种写法，容易混淆：</p>
+<ul>
+<li><code>WeChat</code>：文档里展示给用户看的名字</li>
+<li><code>Weixin</code>：腾讯插件侧使用的命名</li>
+<li><code>openclaw-weixin</code>：OpenClaw 中的 channel id</li>
+<li><code>@tencent-weixin/openclaw-weixin</code>：实际 npm 插件包名</li>
+</ul>
+<p>在命令行和配置里，通常使用的是 <code>openclaw-weixin</code>。</p>
+<h2 id="安装微信插件">安装微信插件
+</h2><p>可以直接执行：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">openclaw plugins install <span class="s2">&#34;@tencent-weixin/openclaw-weixin&#34;</span>
+</span></span><span class="line"><span class="cl">openclaw config <span class="nb">set</span> plugins.entries.openclaw-weixin.enabled <span class="nb">true</span>
+</span></span><span class="line"><span class="cl">openclaw gateway restart
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果你更喜欢官方提供的一键安装方式，也可以使用：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">npx -y @tencent-weixin/openclaw-weixin-cli install
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>安装完成后，建议先检查插件是否已经被识别：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">openclaw plugins list
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="登录微信">登录微信
+</h2><p>执行：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">openclaw channels login --channel openclaw-weixin
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>然后用手机微信扫描二维码并确认登录。</p>
+<p>登录完成后，插件会把账号凭证保存在本地 OpenClaw 状态目录中。之后 Gateway 启动时，会自动尝试拉起这个微信通道。</p>
+<p>如果你配置了多个微信账号，官方文档建议把私聊 session 范围设置得更细一些：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">openclaw config <span class="nb">set</span> session.dmScope per-account-channel-peer
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="查看微信通道状态">查看微信通道状态
+</h2><p>接入完成后，可以执行：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">openclaw channels status --probe
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果你想看更详细的通道状态，也可以执行：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">openclaw channels list
+</span></span><span class="line"><span class="cl">openclaw channels logs --channel openclaw-weixin
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="微信接入后的权限控制">微信接入后的权限控制
+</h2><p>微信接入后，新的私聊发送方通常仍然会经过 OpenClaw 的 pairing / allowlist 机制。</p>
+<p>你可以先查看待审批对象：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">openclaw pairing list openclaw-weixin
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>然后审批：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">openclaw pairing approve openclaw-weixin &lt;CODE&gt;
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样可以避免任何拿到微信入口的人都直接和 agent 建立会话。</p>
+<h1 id="plugin-和-skill-的区别">Plugin 和 Skill 的区别
+</h1><p>很多人在第一次接触 OpenClaw 时，会把 <code>plugin</code> 和 <code>skill</code> 混在一起。实际上它们不是一回事。</p>
+<h2 id="plugin-是什么">Plugin 是什么
+</h2><p><code>plugin</code> 更像是系统功能扩展，用来给 OpenClaw 增加新的能力。</p>
+<p>常见用途包括：</p>
+<ul>
+<li>新增聊天渠道</li>
+<li>新增外部工具接入</li>
+<li>新增运行时能力</li>
+</ul>
+<p>比如微信接入用到的 <code>@tencent-weixin/openclaw-weixin</code>，本质上就是一个 channel plugin。它负责让 OpenClaw 具备“连接微信、扫码登录、收发消息”的能力。</p>
+<h2 id="skill-是什么">Skill 是什么
+</h2><p><code>skill</code> 更像是给 agent 增加一套专门的提示、规则和工作流程。</p>
+<p>它通常用于：</p>
+<ul>
+<li>约束 agent 的回答方式</li>
+<li>补充某个领域的专用知识</li>
+<li>给 agent 增加一套稳定可复用的执行模板</li>
+</ul>
+<p>例如：</p>
+<ul>
+<li>代码审查 skill</li>
+<li>文档写作 skill</li>
+<li>某个 API 的专用操作说明</li>
+</ul>
+<p>这些 skill 会影响 agent 怎么做事，但不会直接增加一个微信通道、Slack 通道或者其他系统级能力。</p>
+<h2 id="怎么理解两者的关系">怎么理解两者的关系
+</h2><p>你可以把它们理解成：</p>
+<ul>
+<li><code>plugin</code> 解决“OpenClaw 能不能做这件事”</li>
+<li><code>skill</code> 解决“agent 应该怎么把这件事做好”</li>
+</ul>
+<p>拿微信举例：</p>
+<ul>
+<li>微信 plugin：让 OpenClaw 能接入微信</li>
+<li>skill：告诉 agent 在微信里应该如何回复、如何执行业务流程、如何遵循某种沟通规范</li>
+</ul>
+<p>所以，微信接入属于 <code>plugin</code>，不是 <code>skill</code>。</p>
 <h1 id="安装完成后的验证">安装完成后的验证
 </h1><p>如果安装和初始化都正常，通常会看到类似提示：</p>
 <div class="highlight"><div class="chroma">
@@ -865,6 +1030,28 @@
     
 
     
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/hermes-%E6%9C%AC%E5%9C%B0%E5%AE%89%E8%A3%85%E6%8C%87%E5%8D%97mac-apple-silicon/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">Hermes 本地安装指南（Mac Apple Silicon）</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
 
      
     
