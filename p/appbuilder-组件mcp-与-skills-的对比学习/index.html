@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 这篇文档里的“组件”，特指百度 AppBuilder SDK 仓库 python/core/components 目录下那类组件。\n这里的组件，不是前端组件，也不是我前面误解成的“tool_eval 输入块”。这里更准确的定义应该是：\nAppBuilder 中可被直接调用、可被编排、可作为工作流原子能力使用的能力组件。\n比如仓库和文档里提到的这类能力：\n文档解析 文档切分 向量化 检索 OCR TTS 高级问答增强组件 从这个语境看：\n组件 是可调用的能力单元 MCP 是能力接入协议 Skills 是任务方法和经验封装 它们三者不是同一个层面的概念。\n一、AppBuilder 里的“组件”到底是什么 1.1 基本定义 在 AppBuilder 语境里，组件更接近：\n一个对外暴露明确输入输出、可以直接运行、可以参与工作流编排的能力节点。\n也就是说，它不是单纯的类文件集合，而是平台能力的代码化封装。\n从官方仓库 README 可以看到，AppBuilder-SDK 提供了 40+ 个“源于百度生态的优质组件”，并且这些组件覆盖了构建 RAG 和 Agent 应用的多个阶段，比如文档解析、切片、向量化、召回、答案生成等。README 还明确写到 SDK 提供了 Message、Component、AgentRuntime 多级工作流抽象，用来实现工作流编排。\n这说明这里的 Component 不是一个泛泛的概念，而是 SDK 的一层正式抽象。\n1.2 它的关键特征 这类组件通常有几个明显特点：\n有明确的输入输出 可以独立调用 可以和其他组件串联 可以被 Agent 或 Workflow 编排 背后可能封装了模型能力、搜索能力或百度云服务能力 所以它更像“能力积木”，而不是“给模型看的说明块”。\n">
+<title>AppBuilder 组件、MCP 与 Skills 的对比学习</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/appbuilder-%E7%BB%84%E4%BB%B6mcp-%E4%B8%8E-skills-%E7%9A%84%E5%AF%B9%E6%AF%94%E5%AD%A6%E4%B9%A0/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="AppBuilder 组件、MCP 与 Skills 的对比学习">
+<meta property='og:description' content="写在前面 这篇文档里的“组件”，特指百度 AppBuilder SDK 仓库 python/core/components 目录下那类组件。\n这里的组件，不是前端组件，也不是我前面误解成的“tool_eval 输入块”。这里更准确的定义应该是：\nAppBuilder 中可被直接调用、可被编排、可作为工作流原子能力使用的能力组件。\n比如仓库和文档里提到的这类能力：\n文档解析 文档切分 向量化 检索 OCR TTS 高级问答增强组件 从这个语境看：\n组件 是可调用的能力单元 MCP 是能力接入协议 Skills 是任务方法和经验封装 它们三者不是同一个层面的概念。\n一、AppBuilder 里的“组件”到底是什么 1.1 基本定义 在 AppBuilder 语境里，组件更接近：\n一个对外暴露明确输入输出、可以直接运行、可以参与工作流编排的能力节点。\n也就是说，它不是单纯的类文件集合，而是平台能力的代码化封装。\n从官方仓库 README 可以看到，AppBuilder-SDK 提供了 40+ 个“源于百度生态的优质组件”，并且这些组件覆盖了构建 RAG 和 Agent 应用的多个阶段，比如文档解析、切片、向量化、召回、答案生成等。README 还明确写到 SDK 提供了 Message、Component、AgentRuntime 多级工作流抽象，用来实现工作流编排。\n这说明这里的 Component 不是一个泛泛的概念，而是 SDK 的一层正式抽象。\n1.2 它的关键特征 这类组件通常有几个明显特点：\n有明确的输入输出 可以独立调用 可以和其他组件串联 可以被 Agent 或 Workflow 编排 背后可能封装了模型能力、搜索能力或百度云服务能力 所以它更像“能力积木”，而不是“给模型看的说明块”。\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/appbuilder-%E7%BB%84%E4%BB%B6mcp-%E4%B8%8E-skills-%E7%9A%84%E5%AF%B9%E6%AF%94%E5%AD%A6%E4%B9%A0/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='mcp' /><meta property='article:tag' content='skills' /><meta property='article:tag' content='appbuilder' /><meta property='article:tag' content='component' /><meta property='article:published_time' content='2026-05-02T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-02T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="AppBuilder 组件、MCP 与 Skills 的对比学习">
+<meta name="twitter:description" content="写在前面 这篇文档里的“组件”，特指百度 AppBuilder SDK 仓库 python/core/components 目录下那类组件。\n这里的组件，不是前端组件，也不是我前面误解成的“tool_eval 输入块”。这里更准确的定义应该是：\nAppBuilder 中可被直接调用、可被编排、可作为工作流原子能力使用的能力组件。\n比如仓库和文档里提到的这类能力：\n文档解析 文档切分 向量化 检索 OCR TTS 高级问答增强组件 从这个语境看：\n组件 是可调用的能力单元 MCP 是能力接入协议 Skills 是任务方法和经验封装 它们三者不是同一个层面的概念。\n一、AppBuilder 里的“组件”到底是什么 1.1 基本定义 在 AppBuilder 语境里，组件更接近：\n一个对外暴露明确输入输出、可以直接运行、可以参与工作流编排的能力节点。\n也就是说，它不是单纯的类文件集合，而是平台能力的代码化封装。\n从官方仓库 README 可以看到，AppBuilder-SDK 提供了 40+ 个“源于百度生态的优质组件”，并且这些组件覆盖了构建 RAG 和 Agent 应用的多个阶段，比如文档解析、切片、向量化、召回、答案生成等。README 还明确写到 SDK 提供了 Message、Component、AgentRuntime 多级工作流抽象，用来实现工作流编排。\n这说明这里的 Component 不是一个泛泛的概念，而是 SDK 的一层正式抽象。\n1.2 它的关键特征 这类组件通常有几个明显特点：\n有明确的输入输出 可以独立调用 可以和其他组件串联 可以被 Agent 或 Workflow 编排 背后可能封装了模型能力、搜索能力或百度云服务能力 所以它更像“能力积木”，而不是“给模型看的说明块”。\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ol>
+    <li><a href="#11-基本定义">1.1 基本定义</a></li>
+    <li><a href="#12-它的关键特征">1.2 它的关键特征</a></li>
+    <li><a href="#13-可以怎么理解">1.3 可以怎么理解</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#21-rag-场景">2.1 RAG 场景</a></li>
+    <li><a href="#22-agent-场景">2.2 Agent 场景</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#31-直接调用">3.1 直接调用</a></li>
+    <li><a href="#32-作为工作流节点">3.2 作为工作流节点</a></li>
+    <li><a href="#33-作为-agent-工具能力">3.3 作为 Agent 工具能力</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#41-表面上看组件是-sdk-类">4.1 表面上看：组件是 SDK 类</a></li>
+    <li><a href="#42-本质上看组件是平台能力的代码封装">4.2 本质上看：组件是平台能力的代码封装</a></li>
+    <li><a href="#43-从工程上看">4.3 从工程上看</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#51-一句话区分">5.1 一句话区分</a></li>
+    <li><a href="#52-appbuilder-组件更像什么">5.2 AppBuilder 组件更像什么</a></li>
+    <li><a href="#53-mcp-更像什么">5.3 MCP 更像什么</a></li>
+    <li><a href="#54-两者关系">5.4 两者关系</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#61-一句话区分">6.1 一句话区分</a></li>
+    <li><a href="#62-组件在回答什么问题">6.2 组件在回答什么问题</a></li>
+    <li><a href="#63-skills-在回答什么问题">6.3 Skills 在回答什么问题</a></li>
+    <li><a href="#64-两者关系">6.4 两者关系</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#71-组件不是-tool_eval-组件本身">7.1 组件不是 tool_eval 组件本身</a></li>
+    <li><a href="#72-但组件可以进入-tool_eval-链路">7.2 但组件可以进入 tool_eval 链路</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#81-组件负责能力执行">8.1 组件负责能力执行</a></li>
+    <li><a href="#82-mcp-负责标准化暴露">8.2 MCP 负责标准化暴露</a></li>
+    <li><a href="#83-skills-负责策略和方法">8.3 Skills 负责策略和方法</a></li>
+  </ol>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/ai/" >
+                Ai
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/appbuilder-%E7%BB%84%E4%BB%B6mcp-%E4%B8%8E-skills-%E7%9A%84%E5%AF%B9%E6%AF%94%E5%AD%A6%E4%B9%A0/">AppBuilder 组件、MCP 与 Skills 的对比学习</a>
+        </h2>
+    
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">May 02, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h1 id="写在前面">写在前面
+</h1><p>这篇文档里的“组件”，特指百度 AppBuilder SDK 仓库 <code>python/core/components</code> 目录下那类组件。</p>
+<p>这里的组件，不是前端组件，也不是我前面误解成的“tool_eval 输入块”。这里更准确的定义应该是：</p>
+<blockquote>
+<p>AppBuilder 中可被直接调用、可被编排、可作为工作流原子能力使用的能力组件。</p></blockquote>
+<p>比如仓库和文档里提到的这类能力：</p>
+<ul>
+<li>文档解析</li>
+<li>文档切分</li>
+<li>向量化</li>
+<li>检索</li>
+<li>OCR</li>
+<li>TTS</li>
+<li>高级问答增强组件</li>
+</ul>
+<p>从这个语境看：</p>
+<ul>
+<li><code>组件</code> 是可调用的能力单元</li>
+<li><code>MCP</code> 是能力接入协议</li>
+<li><code>Skills</code> 是任务方法和经验封装</li>
+</ul>
+<p>它们三者不是同一个层面的概念。</p>
+<h1 id="一appbuilder-里的组件到底是什么">一、AppBuilder 里的“组件”到底是什么
+</h1><h2 id="11-基本定义">1.1 基本定义
+</h2><p>在 AppBuilder 语境里，组件更接近：</p>
+<blockquote>
+<p>一个对外暴露明确输入输出、可以直接运行、可以参与工作流编排的能力节点。</p></blockquote>
+<p>也就是说，它不是单纯的类文件集合，而是平台能力的代码化封装。</p>
+<p>从官方仓库 README 可以看到，AppBuilder-SDK 提供了 <code>40+</code> 个“源于百度生态的优质组件”，并且这些组件覆盖了构建 RAG 和 Agent 应用的多个阶段，比如文档解析、切片、向量化、召回、答案生成等。README 还明确写到 SDK 提供了 <code>Message</code>、<code>Component</code>、<code>AgentRuntime</code> 多级工作流抽象，用来实现工作流编排。<br>
+这说明这里的 <code>Component</code> 不是一个泛泛的概念，而是 SDK 的一层正式抽象。</p>
+<h2 id="12-它的关键特征">1.2 它的关键特征
+</h2><p>这类组件通常有几个明显特点：</p>
+<ul>
+<li>有明确的输入输出</li>
+<li>可以独立调用</li>
+<li>可以和其他组件串联</li>
+<li>可以被 Agent 或 Workflow 编排</li>
+<li>背后可能封装了模型能力、搜索能力或百度云服务能力</li>
+</ul>
+<p>所以它更像“能力积木”，而不是“给模型看的说明块”。</p>
+<h2 id="13-可以怎么理解">1.3 可以怎么理解
+</h2><p>如果用最直观的话说：</p>
+<blockquote>
+<p>AppBuilder 组件，就是平台提前帮你封装好的可复用 AI 能力单元。</p></blockquote>
+<p>你不需要从零写：</p>
+<ul>
+<li>OCR 服务调用</li>
+<li>文档解析流程</li>
+<li>向量检索逻辑</li>
+<li>某些增强问答能力</li>
+</ul>
+<p>而是可以像调用 SDK 能力一样直接用这些组件。</p>
+<h1 id="二这些组件一般用在什么场景">二、这些组件一般用在什么场景
+</h1><p>从仓库 README 展示的能力全景来看，这些组件主要用在两大类场景。</p>
+<h2 id="21-rag-场景">2.1 RAG 场景
+</h2><p>这是最典型的场景。</p>
+<p>README 中明确把组件映射到了 RAG 全流程：</p>
+<ul>
+<li>文档解析</li>
+<li>文档切片</li>
+<li>向量化</li>
+<li>索引构建</li>
+<li>切片召回</li>
+<li>答案生成</li>
+</ul>
+<p>这说明 AppBuilder 的组件不是只给 Agent 用的，也非常适合搭建产业级 RAG 链路。</p>
+<p>例如你可以把多个组件串起来：</p>
+<ol>
+<li>先用解析组件处理文档</li>
+<li>再用切分组件拆 chunk</li>
+<li>再用 embedding 组件向量化</li>
+<li>再用检索组件做召回</li>
+<li>再交给问答或生成组件出答案</li>
+</ol>
+<h2 id="22-agent-场景">2.2 Agent 场景
+</h2><p>README 同样提到：</p>
+<ul>
+<li>可以调用能力组件赋能 Agent 应用</li>
+<li>可以通过 <code>AgentRuntime</code> 做编排</li>
+<li>可以通过 ToolCall 联动本地组件和端云组件</li>
+</ul>
+<p>这意味着这些组件也可以成为 Agent 的“可调用能力池”。</p>
+<p>在这个语境里，组件通常扮演：</p>
+<ul>
+<li>Agent 可直接调用的工具能力</li>
+<li>工作流中的处理节点</li>
+<li>模型能力之外的外部执行能力</li>
+</ul>
+<h1 id="三这些组件怎么使用">三、这些组件怎么使用
+</h1><h2 id="31-直接调用">3.1 直接调用
+</h2><p>最直接的方式就是像 SDK 示例那样直接实例化组件，然后 <code>run</code>。</p>
+<p>README 里给了类似下面这种模式：</p>
+<ul>
+<li>创建组件实例</li>
+<li>传入 <code>Message</code></li>
+<li>调用 <code>run</code></li>
+<li>获取结果</li>
+</ul>
+<p>这说明组件的使用方式非常接近“函数化能力调用”。</p>
+<h2 id="32-作为工作流节点">3.2 作为工作流节点
+</h2><p>README 里提到 <code>Message</code>、<code>Component</code>、<code>AgentRuntime</code> 多级抽象。</p>
+<p>这意味着一个组件不只是“单次调用对象”，它还可以被放进更大的编排框架里，成为一个 workflow node。</p>
+<p>这个视角下：</p>
+<ul>
+<li><code>Message</code> 更像数据载体</li>
+<li><code>Component</code> 更像能力节点</li>
+<li><code>AgentRuntime</code> 更像调度与执行容器</li>
+</ul>
+<h2 id="33-作为-agent-工具能力">3.3 作为 Agent 工具能力
+</h2><p>在 Agent 场景里，组件还可以被包装成模型可调用的能力。</p>
+<p>这时模型不一定直接理解组件内部实现，但系统会告诉模型：</p>
+<ul>
+<li>有哪些组件能力可用</li>
+<li>哪个组件适合什么任务</li>
+<li>调用后会返回什么</li>
+</ul>
+<p>所以组件也可以成为 tool-use 体系中的基础能力来源。</p>
+<h1 id="四这些组件的实现原理是什么">四、这些组件的实现原理是什么
+</h1><h2 id="41-表面上看组件是-sdk-类">4.1 表面上看：组件是 SDK 类
+</h2><p>从代码结构上看，<code>python/core/components</code> 目录下的内容当然是代码模块和类实现。</p>
+<p>但如果只把它理解成“一个 Python 类”，就太窄了。</p>
+<h2 id="42-本质上看组件是平台能力的代码封装">4.2 本质上看：组件是平台能力的代码封装
+</h2><p>更准确地说，它们的原理通常是：</p>
+<ul>
+<li>对底层模型或云服务能力做封装</li>
+<li>对输入输出做标准化</li>
+<li>对调用过程做统一接口抽象</li>
+<li>对编排场景做兼容</li>
+</ul>
+<p>所以这些组件的真正价值，不在“它是一个类”，而在：</p>
+<ul>
+<li>它把底层能力产品化了</li>
+<li>它能被稳定复用</li>
+<li>它能参与编排</li>
+</ul>
+<h2 id="43-从工程上看">4.3 从工程上看
+</h2><p>一个成熟组件通常会隐含这些工程特性：</p>
+<ul>
+<li>参数定义</li>
+<li>输入输出协议</li>
+<li>错误处理</li>
+<li>流式或非流式返回</li>
+<li>和 runtime / tracing / deployment 的兼容</li>
+</ul>
+<p>这也是为什么它比“自己写一个小函数调 API”更像平台能力单元。</p>
+<h1 id="五它和-mcp-有什么区别">五、它和 MCP 有什么区别
+</h1><p>这是最容易混淆的一点。</p>
+<h2 id="51-一句话区分">5.1 一句话区分
+</h2><ul>
+<li><code>组件</code> 是可调用能力本身</li>
+<li><code>MCP</code> 是把能力暴露出来的一种标准协议</li>
+</ul>
+<p>也就是说：</p>
+<ul>
+<li>组件回答“我能做什么”</li>
+<li>MCP 回答“我怎么把这个能力标准化提供给外部系统”</li>
+</ul>
+<h2 id="52-appbuilder-组件更像什么">5.2 AppBuilder 组件更像什么
+</h2><p>AppBuilder 组件更像：</p>
+<ul>
+<li>OCR 工具</li>
+<li>检索工具</li>
+<li>文档处理工具</li>
+<li>生成增强工具</li>
+</ul>
+<p>它们是“能力实体”。</p>
+<h2 id="53-mcp-更像什么">5.3 MCP 更像什么
+</h2><p>MCP 更像：</p>
+<ul>
+<li>一套统一的接入规范</li>
+<li>一种 client/server 能力暴露方式</li>
+<li>一种让模型宿主发现并调用外部工具和资源的标准</li>
+</ul>
+<p>它本身不等于某一个 OCR、检索或切分能力。</p>
+<h2 id="54-两者关系">5.4 两者关系
+</h2><p>两者的关系可以这样理解：</p>
+<blockquote>
+<p>AppBuilder 组件可以被包装后通过 MCP 暴露，但组件本身不等于 MCP。</p></blockquote>
+<p>也就是说，一个组件未来完全可以：</p>
+<ul>
+<li>作为本地 SDK 能力直接调用</li>
+<li>也可以被包成一个 MCP tool 对外提供</li>
+</ul>
+<p>所以：</p>
+<ul>
+<li>组件是“能力内容”</li>
+<li>MCP 是“暴露方式”</li>
+</ul>
+<h1 id="六它和-skills-有什么区别">六、它和 Skills 有什么区别
+</h1><h2 id="61-一句话区分">6.1 一句话区分
+</h2><ul>
+<li><code>组件</code> 是能力单元</li>
+<li><code>Skills</code> 是任务方法包</li>
+</ul>
+<p>组件偏执行，skills 偏策略。</p>
+<h2 id="62-组件在回答什么问题">6.2 组件在回答什么问题
+</h2><p>组件更像在回答：</p>
+<ul>
+<li>我可以帮你做什么</li>
+<li>你给我什么输入</li>
+<li>我返回什么输出</li>
+</ul>
+<h2 id="63-skills-在回答什么问题">6.3 Skills 在回答什么问题
+</h2><p>skill 更像在回答：</p>
+<ul>
+<li>这类任务应该怎么做</li>
+<li>应该先调哪个能力</li>
+<li>哪些步骤不能省</li>
+<li>优先采用什么策略</li>
+</ul>
+<h2 id="64-两者关系">6.4 两者关系
+</h2><p>它们的关系通常是：</p>
+<blockquote>
+<p>skill 会决定什么时候、按什么顺序去调用组件。</p></blockquote>
+<p>例如一个“企业问答 skill”可能规定：</p>
+<ol>
+<li>先解析文档</li>
+<li>再切分</li>
+<li>再向量化</li>
+<li>再检索</li>
+<li>最后生成答案</li>
+</ol>
+<p>这其中：</p>
+<ul>
+<li>解析、切分、向量化、检索、生成，都是组件</li>
+<li>这条顺序和方法，本身更像 skill</li>
+</ul>
+<h1 id="七它和-tool_eval-的关系">七、它和 tool_eval 的关系
+</h1><p>这部分专门回应你前面的语境。</p>
+<h2 id="71-组件不是-tool_eval-组件本身">7.1 组件不是 tool_eval 组件本身
+</h2><p>如果按 AppBuilder 的定义，组件首先是“可调用能力单元”。</p>
+<p>它不是天然就等于：</p>
+<ul>
+<li>tool_eval 的输入卡片</li>
+<li>模型可见说明块</li>
+<li>规则组件</li>
+</ul>
+<h2 id="72-但组件可以进入-tool_eval-链路">7.2 但组件可以进入 tool_eval 链路
+</h2><p>当一个 Agent 系统要让模型决定“调哪个能力”时，系统完全可以把某个 AppBuilder 组件描述成工具信息提供给模型。</p>
+<p>这时会发生两层转换：</p>
+<ol>
+<li>底层真实能力是 AppBuilder 组件</li>
+<li>上层给模型看的，是这个组件的工具描述</li>
+</ol>
+<p>所以更准确的说法应该是：</p>
+<blockquote>
+<p>AppBuilder 组件是 tool_eval 可选择的候选能力来源，但不等于 tool_eval 输入层组件。</p></blockquote>
+<p>这个区别很重要。</p>
+<h1 id="八放在同一个系统里怎么理解">八、放在同一个系统里怎么理解
+</h1><p>一个完整系统里，三者可以这样协作：</p>
+<h2 id="81-组件负责能力执行">8.1 组件负责能力执行
+</h2><p>例如：</p>
+<ul>
+<li>OCR 组件</li>
+<li>检索组件</li>
+<li>文档切分组件</li>
+<li>问答增强组件</li>
+</ul>
+<h2 id="82-mcp-负责标准化暴露">8.2 MCP 负责标准化暴露
+</h2><p>如果你希望这些能力被外部 agent、IDE 或其他宿主系统调用，就可以再用 MCP 包装出去。</p>
+<h2 id="83-skills-负责策略和方法">8.3 Skills 负责策略和方法
+</h2><p>如果你希望某类任务更稳定，例如“简历筛选”“企业问答”“代码审查”，就可以用 skill 规定：</p>
+<ul>
+<li>先调用哪些组件</li>
+<li>哪些参数优先</li>
+<li>哪些结果需要二次校验</li>
+</ul>
+<h1 id="九一个最简对比表">九、一个最简对比表
+</h1><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>维度</th>
+          <th>AppBuilder 组件</th>
+          <th>MCP</th>
+          <th>Skills</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>本质</td>
+          <td>可调用能力单元</td>
+          <td>能力接入协议</td>
+          <td>任务方法包</td>
+      </tr>
+      <tr>
+          <td>关注点</td>
+          <td>做什么能力</td>
+          <td>怎么暴露能力</td>
+          <td>怎么组织能力</td>
+      </tr>
+      <tr>
+          <td>常见形态</td>
+          <td>OCR、解析、检索、TTS、问答增强</td>
+          <td>resources、tools、client/server</td>
+          <td>SOP、模板、策略、规则</td>
+      </tr>
+      <tr>
+          <td>是否能直接执行任务</td>
+          <td>能，通常可以直接 <code>run</code></td>
+          <td>不能，它只是协议</td>
+          <td>不能单独执行，通常要配合组件</td>
+      </tr>
+      <tr>
+          <td>是否适合工作流编排</td>
+          <td>非常适合</td>
+          <td>间接适合</td>
+          <td>适合做流程约束</td>
+      </tr>
+      <tr>
+          <td>与模型关系</td>
+          <td>可作为模型外部能力</td>
+          <td>可作为模型接外部世界的接口</td>
+          <td>可影响模型如何选择和调用能力</td>
+      </tr>
+  </tbody>
+</table></div>
+<h1 id="十一个最准确的总结">十、一个最准确的总结
+</h1><p>如果完全贴着你给的仓库路径来理解，可以这样记：</p>
+<blockquote>
+<p>AppBuilder 的 <code>python/core/components</code> 里的组件，是一组平台封装好的、可直接调用和可编排的 AI 能力单元。</p></blockquote>
+<p>然后再和另外两个概念区分：</p>
+<ul>
+<li><code>MCP</code> 不是能力本身，而是能力如何被标准化暴露</li>
+<li><code>Skills</code> 不是能力本身，而是任务如何组织这些能力</li>
+</ul>
+<p>如果再压缩成三句：</p>
+<ul>
+<li><code>组件</code> 是能力积木</li>
+<li><code>MCP</code> 是接口规范</li>
+<li><code>Skills</code> 是操作套路</li>
+</ul>
+<h1 id="十一后续学习建议">十一、后续学习建议
+</h1><p>如果我们后面继续围绕这篇文档学习，我建议下一步最值得补的是这两个方向：</p>
+<ol>
+<li><code>AppBuilder 组件的分类体系</code></li>
+<li><code>AppBuilder 组件如何进入 Agent / ToolCall / Workflow</code></li>
+</ol>
+<p>第一部分会更偏“认识组件家族”。</p>
+<p>第二部分会更偏“组件如何真正跑进 Agent 系统里”。</p>
+<h1 id="参考链接">参考链接
+</h1><ul>
+<li>AppBuilder 仓库首页：https://github.com/baidubce/app-builder</li>
+<li>你指的组件目录：https://github.com/baidubce/app-builder/tree/master/python/core/components</li>
+</ul>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/ai/">AI</a>
+        
+            <a href="/tags/agent/">Agent</a>
+        
+            <a href="/tags/mcp/">Mcp</a>
+        
+            <a href="/tags/skills/">Skills</a>
+        
+            <a href="/tags/appbuilder/">Appbuilder</a>
+        
+            <a href="/tags/component/">Component</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-harness-%E4%B8%8E-harness-engineering/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">什么是 Harness 与 Harness Engineering</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/hermes-%E6%9C%AC%E5%9C%B0%E5%AE%89%E8%A3%85%E6%8C%87%E5%8D%97mac-apple-silicon/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">Hermes 本地安装指南（Mac Apple Silicon）</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/openclaw-%E6%9C%AC%E5%9C%B0%E5%AE%89%E8%A3%85%E6%8C%87%E5%8D%97mac-apple-silicon/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">OpenClaw 本地安装指南（Mac Apple Silicon）</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>
