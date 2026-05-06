@@ -1,0 +1,1332 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 这两年 RAG 基本已经成了大模型落地里出现频率最高的词之一。\n很多人会把它简单理解成：\n向量数据库 知识库问答 embedding 检索 给模型外挂记忆 这些理解都不算完全错，但都不够完整。\n如果先用一句话做一个总定义：\nRAG，即 Retrieval-Augmented Generation，是一种“先检索外部知识，再基于检索结果生成答案”的系统方法。\n这里最关键的是两点：\nRAG 不是单纯的检索系统 RAG 也不是单纯的生成系统 它本质上是一套把“知识供给”与“语言生成”组合起来的应用架构。\n所以这篇文章不只回答“RAG 是什么”，还会系统整理这些问题：\n一个完整的 RAG 到底分几步 常见实现方式有哪些 它底层为什么能工作 工程上最容易踩哪些坑 面试里最常被问什么 除了搭建，还应该怎么评估和优化 一、RAG 到底是什么 1.1 最直白的理解 可以先把 RAG 理解成：\n让模型在回答前，先去知识库里“查资料”。\n例如用户问：\n“公司的报销流程是什么？”\n如果只靠模型参数记忆，它很可能不知道你们公司的内部制度。\n但如果系统先去：\n内部文档库 Wiki 产品手册 数据库说明 里找出最相关的资料，再把这些资料和问题一起交给大模型，那么模型就可以基于这些真实内容来回答。\n这就是 RAG 的核心思路。\n1.2 它解决的核心问题是什么 RAG 主要解决的是：\n模型知识不够新、不够专、不够私有时，如何把外部知识动态提供给模型。\n这背后通常对应四类痛点。\n第一类：模型不知道私有知识 比如：\n企业内部制度 项目源码 私有 API 文档 合同、报告、会议纪要 这些内容通常不会出现在模型训练数据里。\n">
+<title>什么是 RAG：完整流程、常见实现、底层原理、常见坑与高频面试题</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/%E4%BB%80%E4%B9%88%E6%98%AF-rag%E5%AE%8C%E6%95%B4%E6%B5%81%E7%A8%8B%E5%B8%B8%E8%A7%81%E5%AE%9E%E7%8E%B0%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%B8%B8%E8%A7%81%E5%9D%91%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="什么是 RAG：完整流程、常见实现、底层原理、常见坑与高频面试题">
+<meta property='og:description' content="写在前面 这两年 RAG 基本已经成了大模型落地里出现频率最高的词之一。\n很多人会把它简单理解成：\n向量数据库 知识库问答 embedding 检索 给模型外挂记忆 这些理解都不算完全错，但都不够完整。\n如果先用一句话做一个总定义：\nRAG，即 Retrieval-Augmented Generation，是一种“先检索外部知识，再基于检索结果生成答案”的系统方法。\n这里最关键的是两点：\nRAG 不是单纯的检索系统 RAG 也不是单纯的生成系统 它本质上是一套把“知识供给”与“语言生成”组合起来的应用架构。\n所以这篇文章不只回答“RAG 是什么”，还会系统整理这些问题：\n一个完整的 RAG 到底分几步 常见实现方式有哪些 它底层为什么能工作 工程上最容易踩哪些坑 面试里最常被问什么 除了搭建，还应该怎么评估和优化 一、RAG 到底是什么 1.1 最直白的理解 可以先把 RAG 理解成：\n让模型在回答前，先去知识库里“查资料”。\n例如用户问：\n“公司的报销流程是什么？”\n如果只靠模型参数记忆，它很可能不知道你们公司的内部制度。\n但如果系统先去：\n内部文档库 Wiki 产品手册 数据库说明 里找出最相关的资料，再把这些资料和问题一起交给大模型，那么模型就可以基于这些真实内容来回答。\n这就是 RAG 的核心思路。\n1.2 它解决的核心问题是什么 RAG 主要解决的是：\n模型知识不够新、不够专、不够私有时，如何把外部知识动态提供给模型。\n这背后通常对应四类痛点。\n第一类：模型不知道私有知识 比如：\n企业内部制度 项目源码 私有 API 文档 合同、报告、会议纪要 这些内容通常不会出现在模型训练数据里。\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/%E4%BB%80%E4%B9%88%E6%98%AF-rag%E5%AE%8C%E6%95%B4%E6%B5%81%E7%A8%8B%E5%B8%B8%E8%A7%81%E5%AE%9E%E7%8E%B0%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%B8%B8%E8%A7%81%E5%9D%91%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:published_time' content='2026-05-04T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-04T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="什么是 RAG：完整流程、常见实现、底层原理、常见坑与高频面试题">
+<meta name="twitter:description" content="写在前面 这两年 RAG 基本已经成了大模型落地里出现频率最高的词之一。\n很多人会把它简单理解成：\n向量数据库 知识库问答 embedding 检索 给模型外挂记忆 这些理解都不算完全错，但都不够完整。\n如果先用一句话做一个总定义：\nRAG，即 Retrieval-Augmented Generation，是一种“先检索外部知识，再基于检索结果生成答案”的系统方法。\n这里最关键的是两点：\nRAG 不是单纯的检索系统 RAG 也不是单纯的生成系统 它本质上是一套把“知识供给”与“语言生成”组合起来的应用架构。\n所以这篇文章不只回答“RAG 是什么”，还会系统整理这些问题：\n一个完整的 RAG 到底分几步 常见实现方式有哪些 它底层为什么能工作 工程上最容易踩哪些坑 面试里最常被问什么 除了搭建，还应该怎么评估和优化 一、RAG 到底是什么 1.1 最直白的理解 可以先把 RAG 理解成：\n让模型在回答前，先去知识库里“查资料”。\n例如用户问：\n“公司的报销流程是什么？”\n如果只靠模型参数记忆，它很可能不知道你们公司的内部制度。\n但如果系统先去：\n内部文档库 Wiki 产品手册 数据库说明 里找出最相关的资料，再把这些资料和问题一起交给大模型，那么模型就可以基于这些真实内容来回答。\n这就是 RAG 的核心思路。\n1.2 它解决的核心问题是什么 RAG 主要解决的是：\n模型知识不够新、不够专、不够私有时，如何把外部知识动态提供给模型。\n这背后通常对应四类痛点。\n第一类：模型不知道私有知识 比如：\n企业内部制度 项目源码 私有 API 文档 合同、报告、会议纪要 这些内容通常不会出现在模型训练数据里。\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ol>
+    <li><a href="#11-最直白的理解">1.1 最直白的理解</a></li>
+    <li><a href="#12-它解决的核心问题是什么">1.2 它解决的核心问题是什么</a>
+      <ol>
+        <li><a href="#第一类模型不知道私有知识">第一类：模型不知道私有知识</a></li>
+        <li><a href="#第二类模型知识过期">第二类：模型知识过期</a></li>
+        <li><a href="#第三类模型容易幻觉">第三类：模型容易幻觉</a></li>
+        <li><a href="#第四类纯微调成本高且不灵活">第四类：纯微调成本高且不灵活</a></li>
+      </ol>
+    </li>
+  </ol>
+
+  <ol>
+    <li><a href="#21-数据接入">2.1 数据接入</a></li>
+    <li><a href="#22-文档解析">2.2 文档解析</a></li>
+    <li><a href="#23-文本切分">2.3 文本切分</a></li>
+    <li><a href="#24-向量化与索引构建">2.4 向量化与索引构建</a></li>
+    <li><a href="#25-查询理解">2.5 查询理解</a></li>
+    <li><a href="#26-召回">2.6 召回</a></li>
+    <li><a href="#27-重排">2.7 重排</a></li>
+    <li><a href="#28-上下文组装">2.8 上下文组装</a></li>
+    <li><a href="#29-生成答案">2.9 生成答案</a></li>
+    <li><a href="#210-后处理与反馈闭环">2.10 后处理与反馈闭环</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#31-naive-rag">3.1 Naive RAG</a></li>
+    <li><a href="#32-advanced-rag">3.2 Advanced RAG</a></li>
+    <li><a href="#33-hybrid-rag">3.3 Hybrid RAG</a></li>
+    <li><a href="#34-graph-rag">3.4 Graph RAG</a></li>
+    <li><a href="#35-agentic-rag">3.5 Agentic RAG</a></li>
+    <li><a href="#36-long-context-rag">3.6 Long-Context RAG</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#41-embedding-为什么能检索相似内容">4.1 embedding 为什么能检索相似内容</a></li>
+    <li><a href="#42-为什么还需要关键词检索">4.2 为什么还需要关键词检索</a></li>
+    <li><a href="#43-chunk-为什么会影响效果">4.3 chunk 为什么会影响效果</a></li>
+    <li><a href="#44-rerank-为什么有效">4.4 rerank 为什么有效</a></li>
+    <li><a href="#45-rag-为什么能降低幻觉">4.5 RAG 为什么能降低幻觉</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#51-只关注模型不关注数据质量">5.1 只关注模型，不关注数据质量</a></li>
+    <li><a href="#52-chunk-切分太机械">5.2 chunk 切分太机械</a></li>
+    <li><a href="#53-只做向量检索">5.3 只做向量检索</a></li>
+    <li><a href="#54-top-k-拿得过多或过少">5.4 top-k 拿得过多或过少</a></li>
+    <li><a href="#55-没有做-metadata-过滤">5.5 没有做 metadata 过滤</a></li>
+    <li><a href="#56-把答案质量问题误判成检索问题">5.6 把“答案质量问题”误判成“检索问题”</a></li>
+    <li><a href="#57-缺少评估体系">5.7 缺少评估体系</a></li>
+    <li><a href="#58-忽略权限与安全">5.8 忽略权限与安全</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#61-数据处理层">6.1 数据处理层</a></li>
+    <li><a href="#62-索引层">6.2 索引层</a></li>
+    <li><a href="#63-检索增强层">6.3 检索增强层</a></li>
+    <li><a href="#64-生成层">6.4 生成层</a></li>
+    <li><a href="#65-编排层">6.5 编排层</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#71-至少拆成两层评估">7.1 至少拆成两层评估</a></li>
+    <li><a href="#72-常见评估指标">7.2 常见评估指标</a></li>
+    <li><a href="#73-优化时的正确顺序">7.3 优化时的正确顺序</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#81-rag-和微调的区别">8.1 RAG 和微调的区别</a></li>
+    <li><a href="#82-rag-和长上下文的关系">8.2 RAG 和长上下文的关系</a></li>
+    <li><a href="#83-rag-和-agent-的关系">8.3 RAG 和 Agent 的关系</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#91-什么是-rag它解决什么问题">9.1 什么是 RAG？它解决什么问题？</a></li>
+    <li><a href="#92-rag-的完整流程是什么">9.2 RAG 的完整流程是什么？</a></li>
+    <li><a href="#93-为什么要切-chunkchunk-太大或太小有什么问题">9.3 为什么要切 chunk？chunk 太大或太小有什么问题？</a></li>
+    <li><a href="#94-向量检索和-bm25-的区别是什么">9.4 向量检索和 BM25 的区别是什么？</a></li>
+    <li><a href="#95-为什么需要-rerank">9.5 为什么需要 rerank？</a></li>
+    <li><a href="#96-rag-为什么仍然会幻觉">9.6 RAG 为什么仍然会幻觉？</a></li>
+    <li><a href="#97-rag-和微调怎么选">9.7 RAG 和微调怎么选？</a></li>
+    <li><a href="#98-怎么评估-rag-效果">9.8 怎么评估 RAG 效果？</a></li>
+    <li><a href="#99-rag-最容易踩哪些坑">9.9 RAG 最容易踩哪些坑？</a></li>
+    <li><a href="#910-生产级-rag-和-demo-最大区别是什么">9.10 生产级 RAG 和 demo 最大区别是什么？</a></li>
+  </ol>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/ai/" >
+                Ai
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-rag%E5%AE%8C%E6%95%B4%E6%B5%81%E7%A8%8B%E5%B8%B8%E8%A7%81%E5%AE%9E%E7%8E%B0%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%B8%B8%E8%A7%81%E5%9D%91%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">什么是 RAG：完整流程、常见实现、底层原理、常见坑与高频面试题</a>
+        </h2>
+    
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">May 04, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h1 id="写在前面">写在前面
+</h1><p>这两年 <code>RAG</code> 基本已经成了大模型落地里出现频率最高的词之一。</p>
+<p>很多人会把它简单理解成：</p>
+<ul>
+<li>向量数据库</li>
+<li>知识库问答</li>
+<li>embedding 检索</li>
+<li>给模型外挂记忆</li>
+</ul>
+<p>这些理解都不算完全错，但都不够完整。</p>
+<p>如果先用一句话做一个总定义：</p>
+<blockquote>
+<p><code>RAG</code>，即 <code>Retrieval-Augmented Generation</code>，是一种“先检索外部知识，再基于检索结果生成答案”的系统方法。</p></blockquote>
+<p>这里最关键的是两点：</p>
+<ul>
+<li><code>RAG</code> 不是单纯的检索系统</li>
+<li><code>RAG</code> 也不是单纯的生成系统</li>
+</ul>
+<p>它本质上是一套把“知识供给”与“语言生成”组合起来的应用架构。</p>
+<p>所以这篇文章不只回答“RAG 是什么”，还会系统整理这些问题：</p>
+<ol>
+<li>一个完整的 RAG 到底分几步</li>
+<li>常见实现方式有哪些</li>
+<li>它底层为什么能工作</li>
+<li>工程上最容易踩哪些坑</li>
+<li>面试里最常被问什么</li>
+<li>除了搭建，还应该怎么评估和优化</li>
+</ol>
+<h1 id="一rag-到底是什么">一、RAG 到底是什么
+</h1><h2 id="11-最直白的理解">1.1 最直白的理解
+</h2><p>可以先把 <code>RAG</code> 理解成：</p>
+<blockquote>
+<p>让模型在回答前，先去知识库里“查资料”。</p></blockquote>
+<p>例如用户问：</p>
+<blockquote>
+<p>“公司的报销流程是什么？”</p></blockquote>
+<p>如果只靠模型参数记忆，它很可能不知道你们公司的内部制度。</p>
+<p>但如果系统先去：</p>
+<ul>
+<li>内部文档库</li>
+<li>Wiki</li>
+<li>产品手册</li>
+<li>数据库说明</li>
+</ul>
+<p>里找出最相关的资料，再把这些资料和问题一起交给大模型，那么模型就可以基于这些真实内容来回答。</p>
+<p>这就是 <code>RAG</code> 的核心思路。</p>
+<h2 id="12-它解决的核心问题是什么">1.2 它解决的核心问题是什么
+</h2><p><code>RAG</code> 主要解决的是：</p>
+<blockquote>
+<p>模型知识不够新、不够专、不够私有时，如何把外部知识动态提供给模型。</p></blockquote>
+<p>这背后通常对应四类痛点。</p>
+<h3 id="第一类模型不知道私有知识">第一类：模型不知道私有知识
+</h3><p>比如：</p>
+<ul>
+<li>企业内部制度</li>
+<li>项目源码</li>
+<li>私有 API 文档</li>
+<li>合同、报告、会议纪要</li>
+</ul>
+<p>这些内容通常不会出现在模型训练数据里。</p>
+<h3 id="第二类模型知识过期">第二类：模型知识过期
+</h3><p>即使模型很强，它参数里的知识也不是实时更新的。</p>
+<p>所以：</p>
+<ul>
+<li>最新政策</li>
+<li>新版本文档</li>
+<li>刚上线的产品能力</li>
+<li>当天生成的业务数据</li>
+</ul>
+<p>都更适合通过检索动态注入。</p>
+<h3 id="第三类模型容易幻觉">第三类：模型容易幻觉
+</h3><p>如果没有可靠依据，模型很可能“看起来像在回答，实际上是在猜”。</p>
+<p><code>RAG</code> 的一个重要价值，就是尽量让回答建立在可追溯资料之上。</p>
+<h3 id="第四类纯微调成本高且不灵活">第四类：纯微调成本高且不灵活
+</h3><p>如果每次知识更新都靠微调：</p>
+<ul>
+<li>成本高</li>
+<li>反馈慢</li>
+<li>数据准备重</li>
+<li>难以处理高频变更</li>
+</ul>
+<p>而 <code>RAG</code> 更适合处理“知识频繁变化”的场景。</p>
+<h1 id="二rag-的完整流程">二、RAG 的完整流程
+</h1><p>很多人以为 RAG 只有“切块 + 向量库 + 检索 + 生成”。</p>
+<p>这其实只说到了主干，没有把工程链路讲完整。</p>
+<p>一个相对完整的 RAG，通常可以拆成下面几个阶段。</p>
+<h2 id="21-数据接入">2.1 数据接入
+</h2><p>先把知识源接进系统。</p>
+<p>常见来源包括：</p>
+<ul>
+<li>PDF</li>
+<li>Word</li>
+<li>Markdown</li>
+<li>网页</li>
+<li>FAQ</li>
+<li>数据库</li>
+<li>代码仓库</li>
+<li>工单与聊天记录</li>
+</ul>
+<p>这一阶段的关键，不是“存进去”，而是先解决：</p>
+<ul>
+<li>数据从哪里来</li>
+<li>更新频率如何</li>
+<li>权限怎么处理</li>
+<li>原始格式怎么统一</li>
+</ul>
+<h2 id="22-文档解析">2.2 文档解析
+</h2><p>原始文档往往不能直接拿去检索。</p>
+<p>例如 PDF 里可能有：</p>
+<ul>
+<li>页眉页脚</li>
+<li>表格</li>
+<li>图片</li>
+<li>双栏排版</li>
+<li>OCR 错误</li>
+</ul>
+<p>所以通常要先做解析，把它转成更适合处理的文本结构。</p>
+<p>这一步常见操作包括：</p>
+<ul>
+<li>提取正文</li>
+<li>去噪</li>
+<li>保留标题层级</li>
+<li>识别表格和代码块</li>
+<li>保留文档元数据</li>
+</ul>
+<h2 id="23-文本切分">2.3 文本切分
+</h2><p>解析后的长文档，通常还要切成多个 <code>chunk</code>。</p>
+<p>这是因为：</p>
+<ul>
+<li>embedding 模型有长度限制</li>
+<li>检索粒度不能太粗</li>
+<li>LLM 上下文窗口有限</li>
+</ul>
+<p>切分时常见策略包括：</p>
+<ul>
+<li>固定长度切分</li>
+<li>滑动窗口切分</li>
+<li>按标题层级切分</li>
+<li>按段落语义切分</li>
+<li>针对代码、表格、问答做定制切分</li>
+</ul>
+<p><code>chunk</code> 设计直接影响后面的召回质量，是 RAG 里最关键的环节之一。</p>
+<h2 id="24-向量化与索引构建">2.4 向量化与索引构建
+</h2><p>切好块之后，通常要把每个 <code>chunk</code> 转成向量。</p>
+<p>这一步就是 <code>embedding</code>。</p>
+<p>向量化之后，系统会把这些内容连同元数据存进索引中，常见形式包括：</p>
+<ul>
+<li>向量索引</li>
+<li>倒排索引</li>
+<li>混合索引</li>
+<li>图结构索引</li>
+</ul>
+<p>这里的元数据通常包括：</p>
+<ul>
+<li>文档标题</li>
+<li>来源 URL</li>
+<li>时间</li>
+<li>权限标签</li>
+<li>部门</li>
+<li>产品线</li>
+<li>章节路径</li>
+</ul>
+<h2 id="25-查询理解">2.5 查询理解
+</h2><p>用户问题并不总是适合直接拿去检索。</p>
+<p>例如用户问：</p>
+<blockquote>
+<p>“这个东西最近权限改了吗？”</p></blockquote>
+<p>这里的“这个东西”如果没有上下文，检索很难命中。</p>
+<p>所以很多系统在检索前会先做查询理解，例如：</p>
+<ul>
+<li>query rewrite</li>
+<li>query expansion</li>
+<li>指代消解</li>
+<li>多轮上下文拼接</li>
+<li>把模糊问题改写成可检索问题</li>
+</ul>
+<h2 id="26-召回">2.6 召回
+</h2><p>这一步是从索引中找出最相关的候选内容。</p>
+<p>常见召回方式包括：</p>
+<ul>
+<li>向量相似度召回</li>
+<li>BM25 关键词召回</li>
+<li>混合召回</li>
+<li>多路召回</li>
+</ul>
+<p>召回阶段重点关注的是：</p>
+<ul>
+<li>尽量别漏掉真正相关内容</li>
+<li>给后续排序保留足够候选集</li>
+</ul>
+<p>也就是说，这一阶段更偏“高召回率”。</p>
+<h2 id="27-重排">2.7 重排
+</h2><p>召回出来的结果不一定顺序最好，所以通常还会有 <code>rerank</code>。</p>
+<p>重排的作用是：</p>
+<blockquote>
+<p>在候选集合里，把真正最相关的内容排到前面。</p></blockquote>
+<p>常见方式包括：</p>
+<ul>
+<li>cross-encoder rerank</li>
+<li>基于大模型打分</li>
+<li>结合 metadata 规则重排</li>
+<li>基于时间、权限、来源可信度重排</li>
+</ul>
+<p>很多线上系统的实际效果提升，往往就来自“召回后再排一次”。</p>
+<h2 id="28-上下文组装">2.8 上下文组装
+</h2><p>不是把召回结果一股脑塞给模型就行。</p>
+<p>还要解决：</p>
+<ul>
+<li>选哪几段</li>
+<li>按什么顺序放</li>
+<li>是否去重</li>
+<li>是否合并相邻片段</li>
+<li>是否附带来源信息</li>
+</ul>
+<p>这一阶段本质上是在做：</p>
+<blockquote>
+<p>context packing</p></blockquote>
+<p>也就是在有限 token 预算里，把最有价值的信息装进去。</p>
+<h2 id="29-生成答案">2.9 生成答案
+</h2><p>把用户问题和检索结果一起交给大模型，让模型生成最终回答。</p>
+<p>这一阶段常见设计包括：</p>
+<ul>
+<li>严格基于资料回答</li>
+<li>回答时附上引用</li>
+<li>资料不足时明确说不知道</li>
+<li>区分“原文摘录”和“模型总结”</li>
+</ul>
+<h2 id="210-后处理与反馈闭环">2.10 后处理与反馈闭环
+</h2><p>一个成熟系统通常还有最后几步：</p>
+<ul>
+<li>答案引用对齐</li>
+<li>敏感信息过滤</li>
+<li>结果缓存</li>
+<li>用户反馈收集</li>
+<li>失败样本回流</li>
+</ul>
+<p>这部分决定系统能不能持续优化，而不是只跑通一次 demo。</p>
+<h1 id="三rag-的常见实现方式">三、RAG 的常见实现方式
+</h1><p>RAG 并不是只有一种形态。</p>
+<h2 id="31-naive-rag">3.1 Naive RAG
+</h2><p>最基础的做法是：</p>
+<ol>
+<li>文档切块</li>
+<li>embedding</li>
+<li>向量检索 top-k</li>
+<li>把结果塞给 LLM</li>
+</ol>
+<p>这是很多教程里的起点。</p>
+<p>优点是简单、容易落地。</p>
+<p>缺点也很明显：</p>
+<ul>
+<li>对 query 表达很敏感</li>
+<li>容易召回不准</li>
+<li>chunk 粗糙时效果差</li>
+<li>缺少 rerank 和多路检索时上限较低</li>
+</ul>
+<h2 id="32-advanced-rag">3.2 Advanced RAG
+</h2><p>这是最常见的工程升级形态。</p>
+<p>典型增强点包括：</p>
+<ul>
+<li>更合理的 chunk 策略</li>
+<li>query rewrite</li>
+<li>hybrid search</li>
+<li>rerank</li>
+<li>metadata filter</li>
+<li>引用输出</li>
+<li>缓存和评估</li>
+</ul>
+<p>很多企业里的“生产级 RAG”，本质上都属于这一类。</p>
+<h2 id="33-hybrid-rag">3.3 Hybrid RAG
+</h2><p>也就是混合检索。</p>
+<p>它通常把：</p>
+<ul>
+<li>稠密检索</li>
+<li>稀疏检索</li>
+</ul>
+<p>结合起来。</p>
+<p>原因是：</p>
+<ul>
+<li>向量检索擅长语义相近</li>
+<li>关键词检索擅长精确术语、缩写、版本号、错误码</li>
+</ul>
+<p>例如：</p>
+<ul>
+<li>API 名称</li>
+<li>订单号</li>
+<li>类名函数名</li>
+<li>法条编号</li>
+</ul>
+<p>这类内容，单靠向量检索往往不稳定。</p>
+<h2 id="34-graph-rag">3.4 Graph RAG
+</h2><p>当知识之间存在明显关系结构时，会有人引入图。</p>
+<p>例如：</p>
+<ul>
+<li>实体关系</li>
+<li>组织架构</li>
+<li>系统依赖关系</li>
+<li>代码调用关系</li>
+</ul>
+<p>它的思路不是只检索文本相似度，而是利用实体和关系做扩展检索与推理。</p>
+<p>适合：</p>
+<ul>
+<li>多跳问答</li>
+<li>复杂实体关系问题</li>
+<li>依赖路径分析</li>
+</ul>
+<h2 id="35-agentic-rag">3.5 Agentic RAG
+</h2><p>在更复杂的系统里，检索不一定只发生一次。</p>
+<p>模型可能会：</p>
+<ol>
+<li>先理解问题</li>
+<li>决定检索哪类资料</li>
+<li>看第一次结果够不够</li>
+<li>不够就继续改写 query 或继续查</li>
+<li>最后再生成答案</li>
+</ol>
+<p>这类做法通常会和 agent、tool use、workflow 编排结合起来。</p>
+<p>它的特点是更灵活，但系统复杂度也更高。</p>
+<h2 id="36-long-context-rag">3.6 Long-Context RAG
+</h2><p>随着上下文窗口变大，一些团队会减少复杂检索层，更多依赖“大上下文直接读”。</p>
+<p>但这不等于 RAG 失效。</p>
+<p>更准确地说，是 RAG 的重点会从“强压缩检索”转向：</p>
+<ul>
+<li>更好的筛选</li>
+<li>更好的排序</li>
+<li>更好的上下文组织</li>
+</ul>
+<p>长上下文不是 RAG 的替代品，而是改变了 RAG 的工程权衡。</p>
+<h1 id="四rag-的底层原理">四、RAG 的底层原理
+</h1><p>这部分是面试里最容易被问到，也最容易回答空泛的地方。</p>
+<h2 id="41-embedding-为什么能检索相似内容">4.1 embedding 为什么能检索相似内容
+</h2><p><code>embedding</code> 的核心作用，是把文本映射成高维向量。</p>
+<p>在这个向量空间里，语义相近的文本，通常距离更近。</p>
+<p>例如：</p>
+<ul>
+<li>“怎么重置密码”</li>
+<li>“忘记密码怎么办”</li>
+</ul>
+<p>虽然字面不完全一样，但 embedding 后可能距离较近。</p>
+<p>检索时，系统会把用户 query 也转成向量，然后在向量库里找“距离最近”的若干个 <code>chunk</code>。</p>
+<p>常见相似度计算方式包括：</p>
+<ul>
+<li>cosine similarity</li>
+<li>dot product</li>
+<li>euclidean distance</li>
+</ul>
+<h2 id="42-为什么还需要关键词检索">4.2 为什么还需要关键词检索
+</h2><p>因为“语义相近”不等于“字面精确”。</p>
+<p>例如：</p>
+<ul>
+<li><code>ERR_CONN_RESET</code></li>
+<li><code>v2.3.17</code></li>
+<li><code>OrderService.create()</code></li>
+</ul>
+<p>这类符号、编号、专有名词，BM25 或倒排索引往往更稳定。</p>
+<p>所以真实系统里，通常不会只依赖单一路径。</p>
+<h2 id="43-chunk-为什么会影响效果">4.3 chunk 为什么会影响效果
+</h2><p>因为检索命中的对象不是整篇文档，而是 chunk。</p>
+<p>如果 chunk 太大：</p>
+<ul>
+<li>噪声多</li>
+<li>主题混杂</li>
+<li>命中后塞进上下文的成本高</li>
+</ul>
+<p>如果 chunk 太小：</p>
+<ul>
+<li>语义不完整</li>
+<li>容易丢上下文</li>
+<li>答案依据被切散</li>
+</ul>
+<p>所以 RAG 很多问题，不是模型不行，而是 chunk 粒度设计得不对。</p>
+<h2 id="44-rerank-为什么有效">4.4 rerank 为什么有效
+</h2><p>召回阶段通常追求“别漏”，所以候选结果里常常混入一些“差不多相关”的内容。</p>
+<p>而 <code>rerank</code> 更像第二道筛选：</p>
+<blockquote>
+<p>它不要求扫全库，只要求在较小候选集里做更精细的相关性判断。</p></blockquote>
+<p>因此它通常能显著改善 top 几条结果的质量。</p>
+<h2 id="45-rag-为什么能降低幻觉">4.5 RAG 为什么能降低幻觉
+</h2><p>因为模型不再只靠参数记忆，而是能参考外部证据。</p>
+<p>但要注意：</p>
+<blockquote>
+<p><code>RAG</code> 只能降低幻觉，不能彻底消灭幻觉。</p></blockquote>
+<p>因为即使检索到了正确内容，也仍然可能出现：</p>
+<ul>
+<li>模型误读资料</li>
+<li>引用错段落</li>
+<li>过度总结</li>
+<li>把多个来源拼错</li>
+</ul>
+<p>所以 <code>RAG</code> 本质上是“提升证据供给质量”，不是“自动保证真相”。</p>
+<h1 id="五rag-中最容易遇到的坑">五、RAG 中最容易遇到的坑
+</h1><p>真正做 RAG，问题通常不在“能不能跑起来”，而在“为什么效果总是不稳定”。</p>
+<h2 id="51-只关注模型不关注数据质量">5.1 只关注模型，不关注数据质量
+</h2><p>这是最常见的问题。</p>
+<p>如果源文档本身：</p>
+<ul>
+<li>过期</li>
+<li>冲突</li>
+<li>OCR 错误严重</li>
+<li>标题层级混乱</li>
+</ul>
+<p>那后面检索和生成做得再漂亮，结果也不会稳定。</p>
+<h2 id="52-chunk-切分太机械">5.2 chunk 切分太机械
+</h2><p>很多 demo 会直接按固定字数切。</p>
+<p>这在真实场景里经常导致：</p>
+<ul>
+<li>表格被截断</li>
+<li>问答对被拆开</li>
+<li>标题和正文分离</li>
+<li>代码片段不完整</li>
+</ul>
+<p>结果就是看起来检索到了，实际上证据不完整。</p>
+<h2 id="53-只做向量检索">5.3 只做向量检索
+</h2><p>纯向量检索对很多术语型问题并不稳。</p>
+<p>特别是这些场景：</p>
+<ul>
+<li>版本号</li>
+<li>接口名</li>
+<li>错误码</li>
+<li>SKU</li>
+<li>人名、地名、法条编号</li>
+</ul>
+<p>如果没有关键词或混合检索，经常会漏召回。</p>
+<h2 id="54-top-k-拿得过多或过少">5.4 top-k 拿得过多或过少
+</h2><p><code>top-k</code> 太小，容易漏关键依据。</p>
+<p><code>top-k</code> 太大，又会导致：</p>
+<ul>
+<li>噪声增加</li>
+<li>token 浪费</li>
+<li>模型注意力分散</li>
+</ul>
+<p>这不是固定参数能一劳永逸解决的问题，通常要结合数据集调优。</p>
+<h2 id="55-没有做-metadata-过滤">5.5 没有做 metadata 过滤
+</h2><p>如果知识库跨多个部门、产品线、地区、租户，缺少 metadata filter 会让检索结果非常脏。</p>
+<p>例如本来应该查：</p>
+<ul>
+<li>某个业务线</li>
+<li>某个语言版本</li>
+<li>某个时间区间</li>
+</ul>
+<p>结果系统把不相关范围的文档也拿进来了。</p>
+<h2 id="56-把答案质量问题误判成检索问题">5.6 把“答案质量问题”误判成“检索问题”
+</h2><p>有时候检索结果其实是对的，但生成阶段 prompt 不好，导致：</p>
+<ul>
+<li>回答不够保守</li>
+<li>没按引用回答</li>
+<li>总结过度</li>
+<li>没区分事实和推断</li>
+</ul>
+<p>所以 RAG 调优一定要拆开看：</p>
+<ul>
+<li>是没召回</li>
+<li>是排序不对</li>
+<li>还是生成没用好证据</li>
+</ul>
+<h2 id="57-缺少评估体系">5.7 缺少评估体系
+</h2><p>很多团队调 RAG 靠“手感”。</p>
+<p>今天换个 embedding，明天改个 prompt，最后却说不清到底哪里变好了。</p>
+<p>如果没有最基本的评估集和指标，优化会非常低效。</p>
+<h2 id="58-忽略权限与安全">5.8 忽略权限与安全
+</h2><p>企业 RAG 很容易踩这个坑。</p>
+<p>例如：</p>
+<ul>
+<li>检索结果越权</li>
+<li>敏感字段被带进上下文</li>
+<li>缓存污染不同用户结果</li>
+<li>日志里泄露原文</li>
+</ul>
+<p>所以生产级 RAG 不只是算法问题，还是治理问题。</p>
+<h1 id="六rag-的常见技术栈与实现路径">六、RAG 的常见技术栈与实现路径
+</h1><p>如果从工程实现看，常见链路大概是这样：</p>
+<h2 id="61-数据处理层">6.1 数据处理层
+</h2><ul>
+<li>文档解析：OCR、PDF parser、HTML parser</li>
+<li>清洗与标准化：去噪、结构抽取、元数据补充</li>
+<li>切分：固定窗口、语义切分、结构化切分</li>
+</ul>
+<h2 id="62-索引层">6.2 索引层
+</h2><ul>
+<li>稠密向量库：Milvus、FAISS、pgvector、Weaviate、Qdrant</li>
+<li>稀疏检索：Elasticsearch、OpenSearch、Lucene、BM25</li>
+<li>混合检索：向量 + 倒排</li>
+</ul>
+<h2 id="63-检索增强层">6.3 检索增强层
+</h2><ul>
+<li>query rewrite</li>
+<li>multi-query retrieval</li>
+<li>rerank</li>
+<li>metadata filtering</li>
+<li>parent-child retrieval</li>
+<li>summary index</li>
+</ul>
+<h2 id="64-生成层">6.4 生成层
+</h2><ul>
+<li>LLM answer synthesis</li>
+<li>citation grounding</li>
+<li>refusal when insufficient evidence</li>
+</ul>
+<h2 id="65-编排层">6.5 编排层
+</h2><ul>
+<li>LangChain</li>
+<li>LlamaIndex</li>
+<li>Haystack</li>
+<li>自研 workflow</li>
+<li>agent runtime</li>
+</ul>
+<p>这里要注意：</p>
+<blockquote>
+<p>框架不是 RAG 的本质，数据、检索和评估才是 RAG 的核心。</p></blockquote>
+<h1 id="七除了搭建还要怎么评估和优化">七、除了搭建，还要怎么评估和优化
+</h1><p>这是很多文章会漏掉，但实际工作里非常重要的一部分。</p>
+<h2 id="71-至少拆成两层评估">7.1 至少拆成两层评估
+</h2><p>第一层是检索评估。</p>
+<p>常见关注点：</p>
+<ul>
+<li>是否召回了正确文档</li>
+<li>正确 chunk 排名是否靠前</li>
+<li>有没有明显漏召回</li>
+</ul>
+<p>第二层是答案评估。</p>
+<p>常见关注点：</p>
+<ul>
+<li>是否基于证据回答</li>
+<li>是否答到了问题</li>
+<li>是否有幻觉</li>
+<li>是否引用正确</li>
+</ul>
+<h2 id="72-常见评估指标">7.2 常见评估指标
+</h2><p>检索侧常见指标：</p>
+<ul>
+<li>Recall@k</li>
+<li>Precision@k</li>
+<li>MRR</li>
+<li>NDCG</li>
+</ul>
+<p>生成侧常见指标：</p>
+<ul>
+<li>faithfulness</li>
+<li>answer relevancy</li>
+<li>groundedness</li>
+<li>citation accuracy</li>
+</ul>
+<p>当然，很多业务场景最终还是要落回人工标注与业务指标。</p>
+<h2 id="73-优化时的正确顺序">7.3 优化时的正确顺序
+</h2><p>如果效果不好，一个更稳妥的排查顺序通常是：</p>
+<ol>
+<li>先看数据源是否干净、完整、最新</li>
+<li>再看 chunk 是否合理</li>
+<li>再看召回是否漏</li>
+<li>再看 rerank 是否有效</li>
+<li>最后才看 prompt 和模型</li>
+</ol>
+<p>因为很多问题，根本不是“模型不够强”，而是前面的知识供给链路出了问题。</p>
+<h1 id="八rag-与微调长上下文agent-的关系">八、RAG 与微调、长上下文、Agent 的关系
+</h1><p>这也是高频讨论点。</p>
+<h2 id="81-rag-和微调的区别">8.1 RAG 和微调的区别
+</h2><p>可以这样粗略区分：</p>
+<ul>
+<li><code>RAG</code> 主要解决“把外部知识提供给模型”</li>
+<li><code>微调</code> 主要解决“改变模型行为模式或任务适配”</li>
+</ul>
+<p>例如：</p>
+<ul>
+<li>产品手册更新，优先考虑 <code>RAG</code></li>
+<li>模型语气、格式、任务风格不稳定，可能考虑微调</li>
+</ul>
+<p>很多场景并不是二选一，而是组合使用。</p>
+<h2 id="82-rag-和长上下文的关系">8.2 RAG 和长上下文的关系
+</h2><p>长上下文让模型一次能看更多资料，但它没有解决：</p>
+<ul>
+<li>哪些内容最该看</li>
+<li>怎么从海量文档中选</li>
+<li>如何控制成本</li>
+</ul>
+<p>所以长上下文更多是在改变 RAG 的实现方式，而不是让 RAG 消失。</p>
+<h2 id="83-rag-和-agent-的关系">8.3 RAG 和 Agent 的关系
+</h2><p><code>RAG</code> 关注的是知识获取与注入。</p>
+<p><code>Agent</code> 关注的是：</p>
+<ul>
+<li>规划</li>
+<li>决策</li>
+<li>多步执行</li>
+<li>工具调用</li>
+</ul>
+<p>一个 agent 完全可以把 RAG 当成自己的一个能力模块。</p>
+<p>例如：</p>
+<ul>
+<li>先检索知识库</li>
+<li>再调用数据库</li>
+<li>再结合工具结果做决策</li>
+</ul>
+<h1 id="九高频面试题">九、高频面试题
+</h1><p>下面这些问题，在面试和技术交流里都很常见。</p>
+<h2 id="91-什么是-rag它解决什么问题">9.1 什么是 RAG？它解决什么问题？
+</h2><p>回答重点：</p>
+<ul>
+<li>先检索、再生成</li>
+<li>解决知识时效性、私有知识、幻觉和知识注入问题</li>
+<li>本质是知识增强架构</li>
+</ul>
+<h2 id="92-rag-的完整流程是什么">9.2 RAG 的完整流程是什么？
+</h2><p>回答时最好按链路说完整：</p>
+<p>数据接入、解析、切分、向量化、索引构建、查询理解、召回、重排、上下文组装、生成、评估反馈。</p>
+<h2 id="93-为什么要切-chunkchunk-太大或太小有什么问题">9.3 为什么要切 chunk？chunk 太大或太小有什么问题？
+</h2><p>回答重点：</p>
+<ul>
+<li>检索对象是 chunk，不是整篇文档</li>
+<li>太大噪声多、成本高</li>
+<li>太小语义不完整、上下文丢失</li>
+<li>chunk 粒度直接影响召回和生成</li>
+</ul>
+<h2 id="94-向量检索和-bm25-的区别是什么">9.4 向量检索和 BM25 的区别是什么？
+</h2><p>回答重点：</p>
+<ul>
+<li>向量检索偏语义相似</li>
+<li>BM25 偏关键词匹配</li>
+<li>术语、编号、错误码这类内容 BM25 往往更稳</li>
+<li>线上常见做法是 hybrid search</li>
+</ul>
+<h2 id="95-为什么需要-rerank">9.5 为什么需要 rerank？
+</h2><p>回答重点：</p>
+<ul>
+<li>召回重覆盖，重排重精度</li>
+<li>候选集里会混入“差不多相关”的内容</li>
+<li>rerank 可以提升 top 几条结果的质量</li>
+</ul>
+<h2 id="96-rag-为什么仍然会幻觉">9.6 RAG 为什么仍然会幻觉？
+</h2><p>回答重点：</p>
+<ul>
+<li>检索不到</li>
+<li>检索到了但排序靠后</li>
+<li>模型误读证据</li>
+<li>多段资料拼接错误</li>
+<li>prompt 没限制好</li>
+</ul>
+<h2 id="97-rag-和微调怎么选">9.7 RAG 和微调怎么选？
+</h2><p>回答重点：</p>
+<ul>
+<li>知识更新、私有知识，优先 RAG</li>
+<li>行为模式、格式风格、专任务适配，优先微调</li>
+<li>二者经常组合</li>
+</ul>
+<h2 id="98-怎么评估-rag-效果">9.8 怎么评估 RAG 效果？
+</h2><p>回答重点：</p>
+<ul>
+<li>拆成检索评估和生成评估</li>
+<li>看 Recall@k、MRR、NDCG</li>
+<li>看 groundedness、faithfulness、citation accuracy</li>
+<li>最终结合人工标注和业务指标</li>
+</ul>
+<h2 id="99-rag-最容易踩哪些坑">9.9 RAG 最容易踩哪些坑？
+</h2><p>回答重点：</p>
+<ul>
+<li>数据脏</li>
+<li>chunk 不合理</li>
+<li>只做向量检索</li>
+<li>缺少 metadata filter</li>
+<li>没有评估集</li>
+<li>权限控制缺失</li>
+</ul>
+<h2 id="910-生产级-rag-和-demo-最大区别是什么">9.10 生产级 RAG 和 demo 最大区别是什么？
+</h2><p>回答重点：</p>
+<ul>
+<li>demo 重“跑通”</li>
+<li>生产级重“稳定、可评估、可治理、可更新、可追踪”</li>
+</ul>
+<h1 id="十一个更实用的理解框架">十、一个更实用的理解框架
+</h1><p>如果你想在工作里更稳地理解 <code>RAG</code>，可以记住下面这个框架：</p>
+<blockquote>
+<p><code>RAG</code> 不只是“检索 + 生成”，而是一整套“知识进入系统、被索引、被召回、被组织、被模型使用、再被评估和优化”的工程链路。</p></blockquote>
+<p>所以真正决定效果的，通常不只是模型，而是这几层是否都做对了：</p>
+<ul>
+<li>数据质量</li>
+<li>chunk 设计</li>
+<li>检索策略</li>
+<li>排序机制</li>
+<li>上下文组织</li>
+<li>生成约束</li>
+<li>评估闭环</li>
+</ul>
+<h1 id="小结">小结
+</h1><p><code>RAG</code> 的本质，是让模型从“只依赖参数记忆回答”，变成“基于外部知识进行回答”。</p>
+<p>它最核心的价值，不是让系统看起来更聪明，而是让回答：</p>
+<ul>
+<li>更可追溯</li>
+<li>更适合私有知识</li>
+<li>更适合动态知识</li>
+<li>更容易持续优化</li>
+</ul>
+<p>如果把一句话再说得更工程化一点：</p>
+<blockquote>
+<p><code>RAG</code> 是大模型应用里最重要的知识供给系统之一，而不是一个单独的检索技巧。</p></blockquote>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/ai/">AI</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/appbuilder-%E7%BB%84%E4%BB%B6mcp-%E4%B8%8E-skills-%E7%9A%84%E5%AF%B9%E6%AF%94%E5%AD%A6%E4%B9%A0/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AppBuilder 组件、MCP 与 Skills 的对比学习</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-mcp%E6%A6%82%E5%BF%B5%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F%E5%BC%80%E5%8F%91%E6%96%B9%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">什么是 MCP：概念、使用方式、开发方法、底层原理与常见面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-harness-%E4%B8%8E-harness-engineering/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">什么是 Harness 与 Harness Engineering</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/hermes-%E6%9C%AC%E5%9C%B0%E5%AE%89%E8%A3%85%E6%8C%87%E5%8D%97mac-apple-silicon/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">Hermes 本地安装指南（Mac Apple Silicon）</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/openclaw-%E6%9C%AC%E5%9C%B0%E5%AE%89%E8%A3%85%E6%8C%87%E5%8D%97mac-apple-silicon/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">OpenClaw 本地安装指南（Mac Apple Silicon）</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>

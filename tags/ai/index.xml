@@ -7,7 +7,707 @@
         <generator>Hugo -- gohugo.io</generator>
         <language>en</language>
         <copyright>Agsol</copyright>
-        <lastBuildDate>Sat, 02 May 2026 00:00:00 +0000</lastBuildDate><atom:link href="https://Agsol701.github.io/tags/ai/index.xml" rel="self" type="application/rss+xml" /><item>
+        <lastBuildDate>Mon, 04 May 2026 00:00:00 +0000</lastBuildDate><atom:link href="https://Agsol701.github.io/tags/ai/index.xml" rel="self" type="application/rss+xml" /><item>
+        <title>什么是 RAG：完整流程、常见实现、底层原理、常见坑与高频面试题</title>
+        <link>https://Agsol701.github.io/p/%E4%BB%80%E4%B9%88%E6%98%AF-rag%E5%AE%8C%E6%95%B4%E6%B5%81%E7%A8%8B%E5%B8%B8%E8%A7%81%E5%AE%9E%E7%8E%B0%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%B8%B8%E8%A7%81%E5%9D%91%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/</link>
+        <pubDate>Mon, 04 May 2026 00:00:00 +0000</pubDate>
+        
+        <guid>https://Agsol701.github.io/p/%E4%BB%80%E4%B9%88%E6%98%AF-rag%E5%AE%8C%E6%95%B4%E6%B5%81%E7%A8%8B%E5%B8%B8%E8%A7%81%E5%AE%9E%E7%8E%B0%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%B8%B8%E8%A7%81%E5%9D%91%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/</guid>
+        <description>&lt;h1 id=&#34;写在前面&#34;&gt;写在前面
+&lt;/h1&gt;&lt;p&gt;这两年 &lt;code&gt;RAG&lt;/code&gt; 基本已经成了大模型落地里出现频率最高的词之一。&lt;/p&gt;
+&lt;p&gt;很多人会把它简单理解成：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;向量数据库&lt;/li&gt;
+&lt;li&gt;知识库问答&lt;/li&gt;
+&lt;li&gt;embedding 检索&lt;/li&gt;
+&lt;li&gt;给模型外挂记忆&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这些理解都不算完全错，但都不够完整。&lt;/p&gt;
+&lt;p&gt;如果先用一句话做一个总定义：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;code&gt;RAG&lt;/code&gt;，即 &lt;code&gt;Retrieval-Augmented Generation&lt;/code&gt;，是一种“先检索外部知识，再基于检索结果生成答案”的系统方法。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;这里最关键的是两点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;RAG&lt;/code&gt; 不是单纯的检索系统&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;RAG&lt;/code&gt; 也不是单纯的生成系统&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;它本质上是一套把“知识供给”与“语言生成”组合起来的应用架构。&lt;/p&gt;
+&lt;p&gt;所以这篇文章不只回答“RAG 是什么”，还会系统整理这些问题：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;一个完整的 RAG 到底分几步&lt;/li&gt;
+&lt;li&gt;常见实现方式有哪些&lt;/li&gt;
+&lt;li&gt;它底层为什么能工作&lt;/li&gt;
+&lt;li&gt;工程上最容易踩哪些坑&lt;/li&gt;
+&lt;li&gt;面试里最常被问什么&lt;/li&gt;
+&lt;li&gt;除了搭建，还应该怎么评估和优化&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h1 id=&#34;一rag-到底是什么&#34;&gt;一、RAG 到底是什么
+&lt;/h1&gt;&lt;h2 id=&#34;11-最直白的理解&#34;&gt;1.1 最直白的理解
+&lt;/h2&gt;&lt;p&gt;可以先把 &lt;code&gt;RAG&lt;/code&gt; 理解成：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;让模型在回答前，先去知识库里“查资料”。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;例如用户问：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;“公司的报销流程是什么？”&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;如果只靠模型参数记忆，它很可能不知道你们公司的内部制度。&lt;/p&gt;
+&lt;p&gt;但如果系统先去：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;内部文档库&lt;/li&gt;
+&lt;li&gt;Wiki&lt;/li&gt;
+&lt;li&gt;产品手册&lt;/li&gt;
+&lt;li&gt;数据库说明&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;里找出最相关的资料，再把这些资料和问题一起交给大模型，那么模型就可以基于这些真实内容来回答。&lt;/p&gt;
+&lt;p&gt;这就是 &lt;code&gt;RAG&lt;/code&gt; 的核心思路。&lt;/p&gt;
+&lt;h2 id=&#34;12-它解决的核心问题是什么&#34;&gt;1.2 它解决的核心问题是什么
+&lt;/h2&gt;&lt;p&gt;&lt;code&gt;RAG&lt;/code&gt; 主要解决的是：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;模型知识不够新、不够专、不够私有时，如何把外部知识动态提供给模型。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;这背后通常对应四类痛点。&lt;/p&gt;
+&lt;h3 id=&#34;第一类模型不知道私有知识&#34;&gt;第一类：模型不知道私有知识
+&lt;/h3&gt;&lt;p&gt;比如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;企业内部制度&lt;/li&gt;
+&lt;li&gt;项目源码&lt;/li&gt;
+&lt;li&gt;私有 API 文档&lt;/li&gt;
+&lt;li&gt;合同、报告、会议纪要&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这些内容通常不会出现在模型训练数据里。&lt;/p&gt;
+&lt;h3 id=&#34;第二类模型知识过期&#34;&gt;第二类：模型知识过期
+&lt;/h3&gt;&lt;p&gt;即使模型很强，它参数里的知识也不是实时更新的。&lt;/p&gt;
+&lt;p&gt;所以：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;最新政策&lt;/li&gt;
+&lt;li&gt;新版本文档&lt;/li&gt;
+&lt;li&gt;刚上线的产品能力&lt;/li&gt;
+&lt;li&gt;当天生成的业务数据&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;都更适合通过检索动态注入。&lt;/p&gt;
+&lt;h3 id=&#34;第三类模型容易幻觉&#34;&gt;第三类：模型容易幻觉
+&lt;/h3&gt;&lt;p&gt;如果没有可靠依据，模型很可能“看起来像在回答，实际上是在猜”。&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;RAG&lt;/code&gt; 的一个重要价值，就是尽量让回答建立在可追溯资料之上。&lt;/p&gt;
+&lt;h3 id=&#34;第四类纯微调成本高且不灵活&#34;&gt;第四类：纯微调成本高且不灵活
+&lt;/h3&gt;&lt;p&gt;如果每次知识更新都靠微调：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;成本高&lt;/li&gt;
+&lt;li&gt;反馈慢&lt;/li&gt;
+&lt;li&gt;数据准备重&lt;/li&gt;
+&lt;li&gt;难以处理高频变更&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;而 &lt;code&gt;RAG&lt;/code&gt; 更适合处理“知识频繁变化”的场景。&lt;/p&gt;
+&lt;h1 id=&#34;二rag-的完整流程&#34;&gt;二、RAG 的完整流程
+&lt;/h1&gt;&lt;p&gt;很多人以为 RAG 只有“切块 + 向量库 + 检索 + 生成”。&lt;/p&gt;
+&lt;p&gt;这其实只说到了主干，没有把工程链路讲完整。&lt;/p&gt;
+&lt;p&gt;一个相对完整的 RAG，通常可以拆成下面几个阶段。&lt;/p&gt;
+&lt;h2 id=&#34;21-数据接入&#34;&gt;2.1 数据接入
+&lt;/h2&gt;&lt;p&gt;先把知识源接进系统。&lt;/p&gt;
+&lt;p&gt;常见来源包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;PDF&lt;/li&gt;
+&lt;li&gt;Word&lt;/li&gt;
+&lt;li&gt;Markdown&lt;/li&gt;
+&lt;li&gt;网页&lt;/li&gt;
+&lt;li&gt;FAQ&lt;/li&gt;
+&lt;li&gt;数据库&lt;/li&gt;
+&lt;li&gt;代码仓库&lt;/li&gt;
+&lt;li&gt;工单与聊天记录&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这一阶段的关键，不是“存进去”，而是先解决：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;数据从哪里来&lt;/li&gt;
+&lt;li&gt;更新频率如何&lt;/li&gt;
+&lt;li&gt;权限怎么处理&lt;/li&gt;
+&lt;li&gt;原始格式怎么统一&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;22-文档解析&#34;&gt;2.2 文档解析
+&lt;/h2&gt;&lt;p&gt;原始文档往往不能直接拿去检索。&lt;/p&gt;
+&lt;p&gt;例如 PDF 里可能有：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;页眉页脚&lt;/li&gt;
+&lt;li&gt;表格&lt;/li&gt;
+&lt;li&gt;图片&lt;/li&gt;
+&lt;li&gt;双栏排版&lt;/li&gt;
+&lt;li&gt;OCR 错误&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以通常要先做解析，把它转成更适合处理的文本结构。&lt;/p&gt;
+&lt;p&gt;这一步常见操作包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;提取正文&lt;/li&gt;
+&lt;li&gt;去噪&lt;/li&gt;
+&lt;li&gt;保留标题层级&lt;/li&gt;
+&lt;li&gt;识别表格和代码块&lt;/li&gt;
+&lt;li&gt;保留文档元数据&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;23-文本切分&#34;&gt;2.3 文本切分
+&lt;/h2&gt;&lt;p&gt;解析后的长文档，通常还要切成多个 &lt;code&gt;chunk&lt;/code&gt;。&lt;/p&gt;
+&lt;p&gt;这是因为：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;embedding 模型有长度限制&lt;/li&gt;
+&lt;li&gt;检索粒度不能太粗&lt;/li&gt;
+&lt;li&gt;LLM 上下文窗口有限&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;切分时常见策略包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;固定长度切分&lt;/li&gt;
+&lt;li&gt;滑动窗口切分&lt;/li&gt;
+&lt;li&gt;按标题层级切分&lt;/li&gt;
+&lt;li&gt;按段落语义切分&lt;/li&gt;
+&lt;li&gt;针对代码、表格、问答做定制切分&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;code&gt;chunk&lt;/code&gt; 设计直接影响后面的召回质量，是 RAG 里最关键的环节之一。&lt;/p&gt;
+&lt;h2 id=&#34;24-向量化与索引构建&#34;&gt;2.4 向量化与索引构建
+&lt;/h2&gt;&lt;p&gt;切好块之后，通常要把每个 &lt;code&gt;chunk&lt;/code&gt; 转成向量。&lt;/p&gt;
+&lt;p&gt;这一步就是 &lt;code&gt;embedding&lt;/code&gt;。&lt;/p&gt;
+&lt;p&gt;向量化之后，系统会把这些内容连同元数据存进索引中，常见形式包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;向量索引&lt;/li&gt;
+&lt;li&gt;倒排索引&lt;/li&gt;
+&lt;li&gt;混合索引&lt;/li&gt;
+&lt;li&gt;图结构索引&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这里的元数据通常包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;文档标题&lt;/li&gt;
+&lt;li&gt;来源 URL&lt;/li&gt;
+&lt;li&gt;时间&lt;/li&gt;
+&lt;li&gt;权限标签&lt;/li&gt;
+&lt;li&gt;部门&lt;/li&gt;
+&lt;li&gt;产品线&lt;/li&gt;
+&lt;li&gt;章节路径&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;25-查询理解&#34;&gt;2.5 查询理解
+&lt;/h2&gt;&lt;p&gt;用户问题并不总是适合直接拿去检索。&lt;/p&gt;
+&lt;p&gt;例如用户问：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;“这个东西最近权限改了吗？”&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;这里的“这个东西”如果没有上下文，检索很难命中。&lt;/p&gt;
+&lt;p&gt;所以很多系统在检索前会先做查询理解，例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;query rewrite&lt;/li&gt;
+&lt;li&gt;query expansion&lt;/li&gt;
+&lt;li&gt;指代消解&lt;/li&gt;
+&lt;li&gt;多轮上下文拼接&lt;/li&gt;
+&lt;li&gt;把模糊问题改写成可检索问题&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;26-召回&#34;&gt;2.6 召回
+&lt;/h2&gt;&lt;p&gt;这一步是从索引中找出最相关的候选内容。&lt;/p&gt;
+&lt;p&gt;常见召回方式包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;向量相似度召回&lt;/li&gt;
+&lt;li&gt;BM25 关键词召回&lt;/li&gt;
+&lt;li&gt;混合召回&lt;/li&gt;
+&lt;li&gt;多路召回&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;召回阶段重点关注的是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;尽量别漏掉真正相关内容&lt;/li&gt;
+&lt;li&gt;给后续排序保留足够候选集&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;也就是说，这一阶段更偏“高召回率”。&lt;/p&gt;
+&lt;h2 id=&#34;27-重排&#34;&gt;2.7 重排
+&lt;/h2&gt;&lt;p&gt;召回出来的结果不一定顺序最好，所以通常还会有 &lt;code&gt;rerank&lt;/code&gt;。&lt;/p&gt;
+&lt;p&gt;重排的作用是：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;在候选集合里，把真正最相关的内容排到前面。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;常见方式包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;cross-encoder rerank&lt;/li&gt;
+&lt;li&gt;基于大模型打分&lt;/li&gt;
+&lt;li&gt;结合 metadata 规则重排&lt;/li&gt;
+&lt;li&gt;基于时间、权限、来源可信度重排&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;很多线上系统的实际效果提升，往往就来自“召回后再排一次”。&lt;/p&gt;
+&lt;h2 id=&#34;28-上下文组装&#34;&gt;2.8 上下文组装
+&lt;/h2&gt;&lt;p&gt;不是把召回结果一股脑塞给模型就行。&lt;/p&gt;
+&lt;p&gt;还要解决：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;选哪几段&lt;/li&gt;
+&lt;li&gt;按什么顺序放&lt;/li&gt;
+&lt;li&gt;是否去重&lt;/li&gt;
+&lt;li&gt;是否合并相邻片段&lt;/li&gt;
+&lt;li&gt;是否附带来源信息&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这一阶段本质上是在做：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;context packing&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;也就是在有限 token 预算里，把最有价值的信息装进去。&lt;/p&gt;
+&lt;h2 id=&#34;29-生成答案&#34;&gt;2.9 生成答案
+&lt;/h2&gt;&lt;p&gt;把用户问题和检索结果一起交给大模型，让模型生成最终回答。&lt;/p&gt;
+&lt;p&gt;这一阶段常见设计包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;严格基于资料回答&lt;/li&gt;
+&lt;li&gt;回答时附上引用&lt;/li&gt;
+&lt;li&gt;资料不足时明确说不知道&lt;/li&gt;
+&lt;li&gt;区分“原文摘录”和“模型总结”&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;210-后处理与反馈闭环&#34;&gt;2.10 后处理与反馈闭环
+&lt;/h2&gt;&lt;p&gt;一个成熟系统通常还有最后几步：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;答案引用对齐&lt;/li&gt;
+&lt;li&gt;敏感信息过滤&lt;/li&gt;
+&lt;li&gt;结果缓存&lt;/li&gt;
+&lt;li&gt;用户反馈收集&lt;/li&gt;
+&lt;li&gt;失败样本回流&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这部分决定系统能不能持续优化，而不是只跑通一次 demo。&lt;/p&gt;
+&lt;h1 id=&#34;三rag-的常见实现方式&#34;&gt;三、RAG 的常见实现方式
+&lt;/h1&gt;&lt;p&gt;RAG 并不是只有一种形态。&lt;/p&gt;
+&lt;h2 id=&#34;31-naive-rag&#34;&gt;3.1 Naive RAG
+&lt;/h2&gt;&lt;p&gt;最基础的做法是：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;文档切块&lt;/li&gt;
+&lt;li&gt;embedding&lt;/li&gt;
+&lt;li&gt;向量检索 top-k&lt;/li&gt;
+&lt;li&gt;把结果塞给 LLM&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;这是很多教程里的起点。&lt;/p&gt;
+&lt;p&gt;优点是简单、容易落地。&lt;/p&gt;
+&lt;p&gt;缺点也很明显：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;对 query 表达很敏感&lt;/li&gt;
+&lt;li&gt;容易召回不准&lt;/li&gt;
+&lt;li&gt;chunk 粗糙时效果差&lt;/li&gt;
+&lt;li&gt;缺少 rerank 和多路检索时上限较低&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;32-advanced-rag&#34;&gt;3.2 Advanced RAG
+&lt;/h2&gt;&lt;p&gt;这是最常见的工程升级形态。&lt;/p&gt;
+&lt;p&gt;典型增强点包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;更合理的 chunk 策略&lt;/li&gt;
+&lt;li&gt;query rewrite&lt;/li&gt;
+&lt;li&gt;hybrid search&lt;/li&gt;
+&lt;li&gt;rerank&lt;/li&gt;
+&lt;li&gt;metadata filter&lt;/li&gt;
+&lt;li&gt;引用输出&lt;/li&gt;
+&lt;li&gt;缓存和评估&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;很多企业里的“生产级 RAG”，本质上都属于这一类。&lt;/p&gt;
+&lt;h2 id=&#34;33-hybrid-rag&#34;&gt;3.3 Hybrid RAG
+&lt;/h2&gt;&lt;p&gt;也就是混合检索。&lt;/p&gt;
+&lt;p&gt;它通常把：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;稠密检索&lt;/li&gt;
+&lt;li&gt;稀疏检索&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;结合起来。&lt;/p&gt;
+&lt;p&gt;原因是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;向量检索擅长语义相近&lt;/li&gt;
+&lt;li&gt;关键词检索擅长精确术语、缩写、版本号、错误码&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;API 名称&lt;/li&gt;
+&lt;li&gt;订单号&lt;/li&gt;
+&lt;li&gt;类名函数名&lt;/li&gt;
+&lt;li&gt;法条编号&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这类内容，单靠向量检索往往不稳定。&lt;/p&gt;
+&lt;h2 id=&#34;34-graph-rag&#34;&gt;3.4 Graph RAG
+&lt;/h2&gt;&lt;p&gt;当知识之间存在明显关系结构时，会有人引入图。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;实体关系&lt;/li&gt;
+&lt;li&gt;组织架构&lt;/li&gt;
+&lt;li&gt;系统依赖关系&lt;/li&gt;
+&lt;li&gt;代码调用关系&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;它的思路不是只检索文本相似度，而是利用实体和关系做扩展检索与推理。&lt;/p&gt;
+&lt;p&gt;适合：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;多跳问答&lt;/li&gt;
+&lt;li&gt;复杂实体关系问题&lt;/li&gt;
+&lt;li&gt;依赖路径分析&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;35-agentic-rag&#34;&gt;3.5 Agentic RAG
+&lt;/h2&gt;&lt;p&gt;在更复杂的系统里，检索不一定只发生一次。&lt;/p&gt;
+&lt;p&gt;模型可能会：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;先理解问题&lt;/li&gt;
+&lt;li&gt;决定检索哪类资料&lt;/li&gt;
+&lt;li&gt;看第一次结果够不够&lt;/li&gt;
+&lt;li&gt;不够就继续改写 query 或继续查&lt;/li&gt;
+&lt;li&gt;最后再生成答案&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;这类做法通常会和 agent、tool use、workflow 编排结合起来。&lt;/p&gt;
+&lt;p&gt;它的特点是更灵活，但系统复杂度也更高。&lt;/p&gt;
+&lt;h2 id=&#34;36-long-context-rag&#34;&gt;3.6 Long-Context RAG
+&lt;/h2&gt;&lt;p&gt;随着上下文窗口变大，一些团队会减少复杂检索层，更多依赖“大上下文直接读”。&lt;/p&gt;
+&lt;p&gt;但这不等于 RAG 失效。&lt;/p&gt;
+&lt;p&gt;更准确地说，是 RAG 的重点会从“强压缩检索”转向：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;更好的筛选&lt;/li&gt;
+&lt;li&gt;更好的排序&lt;/li&gt;
+&lt;li&gt;更好的上下文组织&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;长上下文不是 RAG 的替代品，而是改变了 RAG 的工程权衡。&lt;/p&gt;
+&lt;h1 id=&#34;四rag-的底层原理&#34;&gt;四、RAG 的底层原理
+&lt;/h1&gt;&lt;p&gt;这部分是面试里最容易被问到，也最容易回答空泛的地方。&lt;/p&gt;
+&lt;h2 id=&#34;41-embedding-为什么能检索相似内容&#34;&gt;4.1 embedding 为什么能检索相似内容
+&lt;/h2&gt;&lt;p&gt;&lt;code&gt;embedding&lt;/code&gt; 的核心作用，是把文本映射成高维向量。&lt;/p&gt;
+&lt;p&gt;在这个向量空间里，语义相近的文本，通常距离更近。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;“怎么重置密码”&lt;/li&gt;
+&lt;li&gt;“忘记密码怎么办”&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;虽然字面不完全一样，但 embedding 后可能距离较近。&lt;/p&gt;
+&lt;p&gt;检索时，系统会把用户 query 也转成向量，然后在向量库里找“距离最近”的若干个 &lt;code&gt;chunk&lt;/code&gt;。&lt;/p&gt;
+&lt;p&gt;常见相似度计算方式包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;cosine similarity&lt;/li&gt;
+&lt;li&gt;dot product&lt;/li&gt;
+&lt;li&gt;euclidean distance&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;42-为什么还需要关键词检索&#34;&gt;4.2 为什么还需要关键词检索
+&lt;/h2&gt;&lt;p&gt;因为“语义相近”不等于“字面精确”。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;ERR_CONN_RESET&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;v2.3.17&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;OrderService.create()&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这类符号、编号、专有名词，BM25 或倒排索引往往更稳定。&lt;/p&gt;
+&lt;p&gt;所以真实系统里，通常不会只依赖单一路径。&lt;/p&gt;
+&lt;h2 id=&#34;43-chunk-为什么会影响效果&#34;&gt;4.3 chunk 为什么会影响效果
+&lt;/h2&gt;&lt;p&gt;因为检索命中的对象不是整篇文档，而是 chunk。&lt;/p&gt;
+&lt;p&gt;如果 chunk 太大：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;噪声多&lt;/li&gt;
+&lt;li&gt;主题混杂&lt;/li&gt;
+&lt;li&gt;命中后塞进上下文的成本高&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果 chunk 太小：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;语义不完整&lt;/li&gt;
+&lt;li&gt;容易丢上下文&lt;/li&gt;
+&lt;li&gt;答案依据被切散&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以 RAG 很多问题，不是模型不行，而是 chunk 粒度设计得不对。&lt;/p&gt;
+&lt;h2 id=&#34;44-rerank-为什么有效&#34;&gt;4.4 rerank 为什么有效
+&lt;/h2&gt;&lt;p&gt;召回阶段通常追求“别漏”，所以候选结果里常常混入一些“差不多相关”的内容。&lt;/p&gt;
+&lt;p&gt;而 &lt;code&gt;rerank&lt;/code&gt; 更像第二道筛选：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;它不要求扫全库，只要求在较小候选集里做更精细的相关性判断。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;因此它通常能显著改善 top 几条结果的质量。&lt;/p&gt;
+&lt;h2 id=&#34;45-rag-为什么能降低幻觉&#34;&gt;4.5 RAG 为什么能降低幻觉
+&lt;/h2&gt;&lt;p&gt;因为模型不再只靠参数记忆，而是能参考外部证据。&lt;/p&gt;
+&lt;p&gt;但要注意：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;code&gt;RAG&lt;/code&gt; 只能降低幻觉，不能彻底消灭幻觉。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;因为即使检索到了正确内容，也仍然可能出现：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;模型误读资料&lt;/li&gt;
+&lt;li&gt;引用错段落&lt;/li&gt;
+&lt;li&gt;过度总结&lt;/li&gt;
+&lt;li&gt;把多个来源拼错&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以 &lt;code&gt;RAG&lt;/code&gt; 本质上是“提升证据供给质量”，不是“自动保证真相”。&lt;/p&gt;
+&lt;h1 id=&#34;五rag-中最容易遇到的坑&#34;&gt;五、RAG 中最容易遇到的坑
+&lt;/h1&gt;&lt;p&gt;真正做 RAG，问题通常不在“能不能跑起来”，而在“为什么效果总是不稳定”。&lt;/p&gt;
+&lt;h2 id=&#34;51-只关注模型不关注数据质量&#34;&gt;5.1 只关注模型，不关注数据质量
+&lt;/h2&gt;&lt;p&gt;这是最常见的问题。&lt;/p&gt;
+&lt;p&gt;如果源文档本身：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;过期&lt;/li&gt;
+&lt;li&gt;冲突&lt;/li&gt;
+&lt;li&gt;OCR 错误严重&lt;/li&gt;
+&lt;li&gt;标题层级混乱&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;那后面检索和生成做得再漂亮，结果也不会稳定。&lt;/p&gt;
+&lt;h2 id=&#34;52-chunk-切分太机械&#34;&gt;5.2 chunk 切分太机械
+&lt;/h2&gt;&lt;p&gt;很多 demo 会直接按固定字数切。&lt;/p&gt;
+&lt;p&gt;这在真实场景里经常导致：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;表格被截断&lt;/li&gt;
+&lt;li&gt;问答对被拆开&lt;/li&gt;
+&lt;li&gt;标题和正文分离&lt;/li&gt;
+&lt;li&gt;代码片段不完整&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;结果就是看起来检索到了，实际上证据不完整。&lt;/p&gt;
+&lt;h2 id=&#34;53-只做向量检索&#34;&gt;5.3 只做向量检索
+&lt;/h2&gt;&lt;p&gt;纯向量检索对很多术语型问题并不稳。&lt;/p&gt;
+&lt;p&gt;特别是这些场景：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;版本号&lt;/li&gt;
+&lt;li&gt;接口名&lt;/li&gt;
+&lt;li&gt;错误码&lt;/li&gt;
+&lt;li&gt;SKU&lt;/li&gt;
+&lt;li&gt;人名、地名、法条编号&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果没有关键词或混合检索，经常会漏召回。&lt;/p&gt;
+&lt;h2 id=&#34;54-top-k-拿得过多或过少&#34;&gt;5.4 top-k 拿得过多或过少
+&lt;/h2&gt;&lt;p&gt;&lt;code&gt;top-k&lt;/code&gt; 太小，容易漏关键依据。&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;top-k&lt;/code&gt; 太大，又会导致：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;噪声增加&lt;/li&gt;
+&lt;li&gt;token 浪费&lt;/li&gt;
+&lt;li&gt;模型注意力分散&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这不是固定参数能一劳永逸解决的问题，通常要结合数据集调优。&lt;/p&gt;
+&lt;h2 id=&#34;55-没有做-metadata-过滤&#34;&gt;5.5 没有做 metadata 过滤
+&lt;/h2&gt;&lt;p&gt;如果知识库跨多个部门、产品线、地区、租户，缺少 metadata filter 会让检索结果非常脏。&lt;/p&gt;
+&lt;p&gt;例如本来应该查：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;某个业务线&lt;/li&gt;
+&lt;li&gt;某个语言版本&lt;/li&gt;
+&lt;li&gt;某个时间区间&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;结果系统把不相关范围的文档也拿进来了。&lt;/p&gt;
+&lt;h2 id=&#34;56-把答案质量问题误判成检索问题&#34;&gt;5.6 把“答案质量问题”误判成“检索问题”
+&lt;/h2&gt;&lt;p&gt;有时候检索结果其实是对的，但生成阶段 prompt 不好，导致：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;回答不够保守&lt;/li&gt;
+&lt;li&gt;没按引用回答&lt;/li&gt;
+&lt;li&gt;总结过度&lt;/li&gt;
+&lt;li&gt;没区分事实和推断&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以 RAG 调优一定要拆开看：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;是没召回&lt;/li&gt;
+&lt;li&gt;是排序不对&lt;/li&gt;
+&lt;li&gt;还是生成没用好证据&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;57-缺少评估体系&#34;&gt;5.7 缺少评估体系
+&lt;/h2&gt;&lt;p&gt;很多团队调 RAG 靠“手感”。&lt;/p&gt;
+&lt;p&gt;今天换个 embedding，明天改个 prompt，最后却说不清到底哪里变好了。&lt;/p&gt;
+&lt;p&gt;如果没有最基本的评估集和指标，优化会非常低效。&lt;/p&gt;
+&lt;h2 id=&#34;58-忽略权限与安全&#34;&gt;5.8 忽略权限与安全
+&lt;/h2&gt;&lt;p&gt;企业 RAG 很容易踩这个坑。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;检索结果越权&lt;/li&gt;
+&lt;li&gt;敏感字段被带进上下文&lt;/li&gt;
+&lt;li&gt;缓存污染不同用户结果&lt;/li&gt;
+&lt;li&gt;日志里泄露原文&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以生产级 RAG 不只是算法问题，还是治理问题。&lt;/p&gt;
+&lt;h1 id=&#34;六rag-的常见技术栈与实现路径&#34;&gt;六、RAG 的常见技术栈与实现路径
+&lt;/h1&gt;&lt;p&gt;如果从工程实现看，常见链路大概是这样：&lt;/p&gt;
+&lt;h2 id=&#34;61-数据处理层&#34;&gt;6.1 数据处理层
+&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;文档解析：OCR、PDF parser、HTML parser&lt;/li&gt;
+&lt;li&gt;清洗与标准化：去噪、结构抽取、元数据补充&lt;/li&gt;
+&lt;li&gt;切分：固定窗口、语义切分、结构化切分&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;62-索引层&#34;&gt;6.2 索引层
+&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;稠密向量库：Milvus、FAISS、pgvector、Weaviate、Qdrant&lt;/li&gt;
+&lt;li&gt;稀疏检索：Elasticsearch、OpenSearch、Lucene、BM25&lt;/li&gt;
+&lt;li&gt;混合检索：向量 + 倒排&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;63-检索增强层&#34;&gt;6.3 检索增强层
+&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;query rewrite&lt;/li&gt;
+&lt;li&gt;multi-query retrieval&lt;/li&gt;
+&lt;li&gt;rerank&lt;/li&gt;
+&lt;li&gt;metadata filtering&lt;/li&gt;
+&lt;li&gt;parent-child retrieval&lt;/li&gt;
+&lt;li&gt;summary index&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;64-生成层&#34;&gt;6.4 生成层
+&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;LLM answer synthesis&lt;/li&gt;
+&lt;li&gt;citation grounding&lt;/li&gt;
+&lt;li&gt;refusal when insufficient evidence&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;65-编排层&#34;&gt;6.5 编排层
+&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;LangChain&lt;/li&gt;
+&lt;li&gt;LlamaIndex&lt;/li&gt;
+&lt;li&gt;Haystack&lt;/li&gt;
+&lt;li&gt;自研 workflow&lt;/li&gt;
+&lt;li&gt;agent runtime&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这里要注意：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;框架不是 RAG 的本质，数据、检索和评估才是 RAG 的核心。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;h1 id=&#34;七除了搭建还要怎么评估和优化&#34;&gt;七、除了搭建，还要怎么评估和优化
+&lt;/h1&gt;&lt;p&gt;这是很多文章会漏掉，但实际工作里非常重要的一部分。&lt;/p&gt;
+&lt;h2 id=&#34;71-至少拆成两层评估&#34;&gt;7.1 至少拆成两层评估
+&lt;/h2&gt;&lt;p&gt;第一层是检索评估。&lt;/p&gt;
+&lt;p&gt;常见关注点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;是否召回了正确文档&lt;/li&gt;
+&lt;li&gt;正确 chunk 排名是否靠前&lt;/li&gt;
+&lt;li&gt;有没有明显漏召回&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;第二层是答案评估。&lt;/p&gt;
+&lt;p&gt;常见关注点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;是否基于证据回答&lt;/li&gt;
+&lt;li&gt;是否答到了问题&lt;/li&gt;
+&lt;li&gt;是否有幻觉&lt;/li&gt;
+&lt;li&gt;是否引用正确&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;72-常见评估指标&#34;&gt;7.2 常见评估指标
+&lt;/h2&gt;&lt;p&gt;检索侧常见指标：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Recall@k&lt;/li&gt;
+&lt;li&gt;Precision@k&lt;/li&gt;
+&lt;li&gt;MRR&lt;/li&gt;
+&lt;li&gt;NDCG&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;生成侧常见指标：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;faithfulness&lt;/li&gt;
+&lt;li&gt;answer relevancy&lt;/li&gt;
+&lt;li&gt;groundedness&lt;/li&gt;
+&lt;li&gt;citation accuracy&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;当然，很多业务场景最终还是要落回人工标注与业务指标。&lt;/p&gt;
+&lt;h2 id=&#34;73-优化时的正确顺序&#34;&gt;7.3 优化时的正确顺序
+&lt;/h2&gt;&lt;p&gt;如果效果不好，一个更稳妥的排查顺序通常是：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;先看数据源是否干净、完整、最新&lt;/li&gt;
+&lt;li&gt;再看 chunk 是否合理&lt;/li&gt;
+&lt;li&gt;再看召回是否漏&lt;/li&gt;
+&lt;li&gt;再看 rerank 是否有效&lt;/li&gt;
+&lt;li&gt;最后才看 prompt 和模型&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;因为很多问题，根本不是“模型不够强”，而是前面的知识供给链路出了问题。&lt;/p&gt;
+&lt;h1 id=&#34;八rag-与微调长上下文agent-的关系&#34;&gt;八、RAG 与微调、长上下文、Agent 的关系
+&lt;/h1&gt;&lt;p&gt;这也是高频讨论点。&lt;/p&gt;
+&lt;h2 id=&#34;81-rag-和微调的区别&#34;&gt;8.1 RAG 和微调的区别
+&lt;/h2&gt;&lt;p&gt;可以这样粗略区分：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;RAG&lt;/code&gt; 主要解决“把外部知识提供给模型”&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;微调&lt;/code&gt; 主要解决“改变模型行为模式或任务适配”&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;产品手册更新，优先考虑 &lt;code&gt;RAG&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;模型语气、格式、任务风格不稳定，可能考虑微调&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;很多场景并不是二选一，而是组合使用。&lt;/p&gt;
+&lt;h2 id=&#34;82-rag-和长上下文的关系&#34;&gt;8.2 RAG 和长上下文的关系
+&lt;/h2&gt;&lt;p&gt;长上下文让模型一次能看更多资料，但它没有解决：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;哪些内容最该看&lt;/li&gt;
+&lt;li&gt;怎么从海量文档中选&lt;/li&gt;
+&lt;li&gt;如何控制成本&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以长上下文更多是在改变 RAG 的实现方式，而不是让 RAG 消失。&lt;/p&gt;
+&lt;h2 id=&#34;83-rag-和-agent-的关系&#34;&gt;8.3 RAG 和 Agent 的关系
+&lt;/h2&gt;&lt;p&gt;&lt;code&gt;RAG&lt;/code&gt; 关注的是知识获取与注入。&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;Agent&lt;/code&gt; 关注的是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;规划&lt;/li&gt;
+&lt;li&gt;决策&lt;/li&gt;
+&lt;li&gt;多步执行&lt;/li&gt;
+&lt;li&gt;工具调用&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;一个 agent 完全可以把 RAG 当成自己的一个能力模块。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;先检索知识库&lt;/li&gt;
+&lt;li&gt;再调用数据库&lt;/li&gt;
+&lt;li&gt;再结合工具结果做决策&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;九高频面试题&#34;&gt;九、高频面试题
+&lt;/h1&gt;&lt;p&gt;下面这些问题，在面试和技术交流里都很常见。&lt;/p&gt;
+&lt;h2 id=&#34;91-什么是-rag它解决什么问题&#34;&gt;9.1 什么是 RAG？它解决什么问题？
+&lt;/h2&gt;&lt;p&gt;回答重点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;先检索、再生成&lt;/li&gt;
+&lt;li&gt;解决知识时效性、私有知识、幻觉和知识注入问题&lt;/li&gt;
+&lt;li&gt;本质是知识增强架构&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;92-rag-的完整流程是什么&#34;&gt;9.2 RAG 的完整流程是什么？
+&lt;/h2&gt;&lt;p&gt;回答时最好按链路说完整：&lt;/p&gt;
+&lt;p&gt;数据接入、解析、切分、向量化、索引构建、查询理解、召回、重排、上下文组装、生成、评估反馈。&lt;/p&gt;
+&lt;h2 id=&#34;93-为什么要切-chunkchunk-太大或太小有什么问题&#34;&gt;9.3 为什么要切 chunk？chunk 太大或太小有什么问题？
+&lt;/h2&gt;&lt;p&gt;回答重点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;检索对象是 chunk，不是整篇文档&lt;/li&gt;
+&lt;li&gt;太大噪声多、成本高&lt;/li&gt;
+&lt;li&gt;太小语义不完整、上下文丢失&lt;/li&gt;
+&lt;li&gt;chunk 粒度直接影响召回和生成&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;94-向量检索和-bm25-的区别是什么&#34;&gt;9.4 向量检索和 BM25 的区别是什么？
+&lt;/h2&gt;&lt;p&gt;回答重点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;向量检索偏语义相似&lt;/li&gt;
+&lt;li&gt;BM25 偏关键词匹配&lt;/li&gt;
+&lt;li&gt;术语、编号、错误码这类内容 BM25 往往更稳&lt;/li&gt;
+&lt;li&gt;线上常见做法是 hybrid search&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;95-为什么需要-rerank&#34;&gt;9.5 为什么需要 rerank？
+&lt;/h2&gt;&lt;p&gt;回答重点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;召回重覆盖，重排重精度&lt;/li&gt;
+&lt;li&gt;候选集里会混入“差不多相关”的内容&lt;/li&gt;
+&lt;li&gt;rerank 可以提升 top 几条结果的质量&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;96-rag-为什么仍然会幻觉&#34;&gt;9.6 RAG 为什么仍然会幻觉？
+&lt;/h2&gt;&lt;p&gt;回答重点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;检索不到&lt;/li&gt;
+&lt;li&gt;检索到了但排序靠后&lt;/li&gt;
+&lt;li&gt;模型误读证据&lt;/li&gt;
+&lt;li&gt;多段资料拼接错误&lt;/li&gt;
+&lt;li&gt;prompt 没限制好&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;97-rag-和微调怎么选&#34;&gt;9.7 RAG 和微调怎么选？
+&lt;/h2&gt;&lt;p&gt;回答重点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;知识更新、私有知识，优先 RAG&lt;/li&gt;
+&lt;li&gt;行为模式、格式风格、专任务适配，优先微调&lt;/li&gt;
+&lt;li&gt;二者经常组合&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;98-怎么评估-rag-效果&#34;&gt;9.8 怎么评估 RAG 效果？
+&lt;/h2&gt;&lt;p&gt;回答重点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;拆成检索评估和生成评估&lt;/li&gt;
+&lt;li&gt;看 Recall@k、MRR、NDCG&lt;/li&gt;
+&lt;li&gt;看 groundedness、faithfulness、citation accuracy&lt;/li&gt;
+&lt;li&gt;最终结合人工标注和业务指标&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;99-rag-最容易踩哪些坑&#34;&gt;9.9 RAG 最容易踩哪些坑？
+&lt;/h2&gt;&lt;p&gt;回答重点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;数据脏&lt;/li&gt;
+&lt;li&gt;chunk 不合理&lt;/li&gt;
+&lt;li&gt;只做向量检索&lt;/li&gt;
+&lt;li&gt;缺少 metadata filter&lt;/li&gt;
+&lt;li&gt;没有评估集&lt;/li&gt;
+&lt;li&gt;权限控制缺失&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;910-生产级-rag-和-demo-最大区别是什么&#34;&gt;9.10 生产级 RAG 和 demo 最大区别是什么？
+&lt;/h2&gt;&lt;p&gt;回答重点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;demo 重“跑通”&lt;/li&gt;
+&lt;li&gt;生产级重“稳定、可评估、可治理、可更新、可追踪”&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;十一个更实用的理解框架&#34;&gt;十、一个更实用的理解框架
+&lt;/h1&gt;&lt;p&gt;如果你想在工作里更稳地理解 &lt;code&gt;RAG&lt;/code&gt;，可以记住下面这个框架：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;code&gt;RAG&lt;/code&gt; 不只是“检索 + 生成”，而是一整套“知识进入系统、被索引、被召回、被组织、被模型使用、再被评估和优化”的工程链路。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;所以真正决定效果的，通常不只是模型，而是这几层是否都做对了：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;数据质量&lt;/li&gt;
+&lt;li&gt;chunk 设计&lt;/li&gt;
+&lt;li&gt;检索策略&lt;/li&gt;
+&lt;li&gt;排序机制&lt;/li&gt;
+&lt;li&gt;上下文组织&lt;/li&gt;
+&lt;li&gt;生成约束&lt;/li&gt;
+&lt;li&gt;评估闭环&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;小结&#34;&gt;小结
+&lt;/h1&gt;&lt;p&gt;&lt;code&gt;RAG&lt;/code&gt; 的本质，是让模型从“只依赖参数记忆回答”，变成“基于外部知识进行回答”。&lt;/p&gt;
+&lt;p&gt;它最核心的价值，不是让系统看起来更聪明，而是让回答：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;更可追溯&lt;/li&gt;
+&lt;li&gt;更适合私有知识&lt;/li&gt;
+&lt;li&gt;更适合动态知识&lt;/li&gt;
+&lt;li&gt;更容易持续优化&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果把一句话再说得更工程化一点：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;code&gt;RAG&lt;/code&gt; 是大模型应用里最重要的知识供给系统之一，而不是一个单独的检索技巧。&lt;/p&gt;&lt;/blockquote&gt;
+</description>
+        </item>
+        <item>
         <title>AppBuilder 组件、MCP 与 Skills 的对比学习</title>
         <link>https://Agsol701.github.io/p/appbuilder-%E7%BB%84%E4%BB%B6mcp-%E4%B8%8E-skills-%E7%9A%84%E5%AF%B9%E6%AF%94%E5%AD%A6%E4%B9%A0/</link>
         <pubDate>Sat, 02 May 2026 00:00:00 +0000</pubDate>
