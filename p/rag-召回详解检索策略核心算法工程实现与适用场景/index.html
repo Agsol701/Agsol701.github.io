@@ -1,0 +1,3508 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 在 RAG 系统里，很多人会把注意力放在大模型、prompt、向量数据库上。\n但真正决定效果上限的，往往是召回。\n因为 RAG 的基本链路是：\n1 2 3 4 5 6 7 用户问题 ↓ 检索外部知识 ↓ 把检索结果放进上下文 ↓ 让大模型生成答案 如果召回阶段没有把正确证据找出来，后面的模型再强，也很难凭空答对。\n所以这篇文章只聚焦一个问题：\nRAG 里到底有哪些召回策略，它们背后的算法是什么，工程上怎么实现，分别适合什么场景？\n这篇会覆盖：\n召回在 RAG 链路里的位置 BM25 关键词召回 向量语义召回 混合召回 多路召回 查询改写与查询扩展 metadata filter parent-child retrieval summary index graph retrieval rerank 和召回的关系 召回评估与调优 一、先理解召回的目标 1.1 召回不是最终排序 在 RAG 里，召回的职责不是直接选出最终答案，而是：\n从大量知识片段中，找出一批“可能相关”的候选证据。\n它和排序的职责不同。\n召回关注：\n正确证据有没有进入候选集 候选集覆盖是否足够 是否漏掉关键文档 是否覆盖不同表达方式 排序关注：\n哪些候选更相关 正确候选是否排在前面 噪声是否被压下去 最终放进 prompt 的内容是否干净 所以召回阶段更重视 Recall，排序阶段更重视 Precision。\n">
+<title>RAG 召回详解：检索策略、核心算法、工程实现与适用场景</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/rag-%E5%8F%AC%E5%9B%9E%E8%AF%A6%E8%A7%A3%E6%A3%80%E7%B4%A2%E7%AD%96%E7%95%A5%E6%A0%B8%E5%BF%83%E7%AE%97%E6%B3%95%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E9%80%82%E7%94%A8%E5%9C%BA%E6%99%AF/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="RAG 召回详解：检索策略、核心算法、工程实现与适用场景">
+<meta property='og:description' content="写在前面 在 RAG 系统里，很多人会把注意力放在大模型、prompt、向量数据库上。\n但真正决定效果上限的，往往是召回。\n因为 RAG 的基本链路是：\n1 2 3 4 5 6 7 用户问题 ↓ 检索外部知识 ↓ 把检索结果放进上下文 ↓ 让大模型生成答案 如果召回阶段没有把正确证据找出来，后面的模型再强，也很难凭空答对。\n所以这篇文章只聚焦一个问题：\nRAG 里到底有哪些召回策略，它们背后的算法是什么，工程上怎么实现，分别适合什么场景？\n这篇会覆盖：\n召回在 RAG 链路里的位置 BM25 关键词召回 向量语义召回 混合召回 多路召回 查询改写与查询扩展 metadata filter parent-child retrieval summary index graph retrieval rerank 和召回的关系 召回评估与调优 一、先理解召回的目标 1.1 召回不是最终排序 在 RAG 里，召回的职责不是直接选出最终答案，而是：\n从大量知识片段中，找出一批“可能相关”的候选证据。\n它和排序的职责不同。\n召回关注：\n正确证据有没有进入候选集 候选集覆盖是否足够 是否漏掉关键文档 是否覆盖不同表达方式 排序关注：\n哪些候选更相关 正确候选是否排在前面 噪声是否被压下去 最终放进 prompt 的内容是否干净 所以召回阶段更重视 Recall，排序阶段更重视 Precision。\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/rag-%E5%8F%AC%E5%9B%9E%E8%AF%A6%E8%A7%A3%E6%A3%80%E7%B4%A2%E7%AD%96%E7%95%A5%E6%A0%B8%E5%BF%83%E7%AE%97%E6%B3%95%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E9%80%82%E7%94%A8%E5%9C%BA%E6%99%AF/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:published_time' content='2026-05-06T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-06T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="RAG 召回详解：检索策略、核心算法、工程实现与适用场景">
+<meta name="twitter:description" content="写在前面 在 RAG 系统里，很多人会把注意力放在大模型、prompt、向量数据库上。\n但真正决定效果上限的，往往是召回。\n因为 RAG 的基本链路是：\n1 2 3 4 5 6 7 用户问题 ↓ 检索外部知识 ↓ 把检索结果放进上下文 ↓ 让大模型生成答案 如果召回阶段没有把正确证据找出来，后面的模型再强，也很难凭空答对。\n所以这篇文章只聚焦一个问题：\nRAG 里到底有哪些召回策略，它们背后的算法是什么，工程上怎么实现，分别适合什么场景？\n这篇会覆盖：\n召回在 RAG 链路里的位置 BM25 关键词召回 向量语义召回 混合召回 多路召回 查询改写与查询扩展 metadata filter parent-child retrieval summary index graph retrieval rerank 和召回的关系 召回评估与调优 一、先理解召回的目标 1.1 召回不是最终排序 在 RAG 里，召回的职责不是直接选出最终答案，而是：\n从大量知识片段中，找出一批“可能相关”的候选证据。\n它和排序的职责不同。\n召回关注：\n正确证据有没有进入候选集 候选集覆盖是否足够 是否漏掉关键文档 是否覆盖不同表达方式 排序关注：\n哪些候选更相关 正确候选是否排在前面 噪声是否被压下去 最终放进 prompt 的内容是否干净 所以召回阶段更重视 Recall，排序阶段更重视 Precision。\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ol>
+    <li><a href="#11-召回不是最终排序">1.1 召回不是最终排序</a></li>
+    <li><a href="#12-召回失败是-rag-最致命的问题">1.2 召回失败是 RAG 最致命的问题</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#21-检索对象通常是-chunk">2.1 检索对象通常是 chunk</a></li>
+    <li><a href="#22-一个索引记录通常包含什么">2.2 一个索引记录通常包含什么</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#31-bm25-解决什么问题">3.1 BM25 解决什么问题</a></li>
+    <li><a href="#32-bm25-的核心思想">3.2 BM25 的核心思想</a></li>
+    <li><a href="#33-bm25-的简化公式">3.3 BM25 的简化公式</a></li>
+    <li><a href="#34-bm25-的工程实现">3.4 BM25 的工程实现</a></li>
+    <li><a href="#35-如果-embedding-已经放进向量数据库bm25-怎么做">3.5 如果 embedding 已经放进向量数据库，BM25 怎么做</a>
+      <ol>
+        <li><a href="#方式一向量数据库和搜索引擎双写">方式一：向量数据库和搜索引擎双写</a></li>
+        <li><a href="#方式二使用同时支持全文检索和向量检索的系统">方式二：使用同时支持全文检索和向量检索的系统</a></li>
+        <li><a href="#方式三使用向量数据库自带的-hybrid-能力">方式三：使用向量数据库自带的 hybrid 能力</a></li>
+      </ol>
+    </li>
+    <li><a href="#36-bm25-的优点和缺点">3.6 BM25 的优点和缺点</a></li>
+    <li><a href="#37-bm25-适用场景">3.7 BM25 适用场景</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#41-向量召回解决什么问题">4.1 向量召回解决什么问题</a></li>
+    <li><a href="#42-embedding-是什么">4.2 embedding 是什么</a></li>
+    <li><a href="#43-相似度算法">4.3 相似度算法</a>
+      <ol>
+        <li><a href="#cosine-similarity">Cosine Similarity</a></li>
+        <li><a href="#dot-product">Dot Product</a></li>
+        <li><a href="#euclidean-distance">Euclidean Distance</a></li>
+      </ol>
+    </li>
+    <li><a href="#44-ann-近似最近邻搜索">4.4 ANN 近似最近邻搜索</a></li>
+    <li><a href="#45-hnsw-的基本思想">4.5 HNSW 的基本思想</a></li>
+    <li><a href="#46-ivf-的基本思想">4.6 IVF 的基本思想</a></li>
+    <li><a href="#47-pq-的基本思想">4.7 PQ 的基本思想</a></li>
+    <li><a href="#48-向量召回的工程实现">4.8 向量召回的工程实现</a></li>
+    <li><a href="#49-向量召回的优点和缺点">4.9 向量召回的优点和缺点</a></li>
+    <li><a href="#410-向量召回适用场景">4.10 向量召回适用场景</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#51-为什么需要混合召回">5.1 为什么需要混合召回</a></li>
+    <li><a href="#52-典型混合召回流程">5.2 典型混合召回流程</a></li>
+    <li><a href="#53-分数归一化">5.3 分数归一化</a></li>
+    <li><a href="#54-rrf-融合算法">5.4 RRF 融合算法</a></li>
+    <li><a href="#55-加权融合">5.5 加权融合</a></li>
+    <li><a href="#56-混合召回适用场景">5.6 混合召回适用场景</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#61-多路召回是什么">6.1 多路召回是什么</a></li>
+    <li><a href="#62-混合召回和多路召回的关系">6.2 混合召回和多路召回的关系</a></li>
+    <li><a href="#63-为什么有了混合召回还需要多路召回">6.3 为什么有了混合召回，还需要多路召回</a>
+      <ol>
+        <li><a href="#问题一用户-query-本身不好检索">问题一：用户 query 本身不好检索</a></li>
+        <li><a href="#问题二一个问题有多种可能说法">问题二：一个问题有多种可能说法</a></li>
+        <li><a href="#问题三答案在长文档里需要先定位章节">问题三：答案在长文档里，需要先定位章节</a></li>
+        <li><a href="#问题四问题依赖实体关系">问题四：问题依赖实体关系</a></li>
+      </ol>
+    </li>
+    <li><a href="#64-一个直观例子">6.4 一个直观例子</a></li>
+    <li><a href="#65-多路召回的代价">6.5 多路召回的代价</a></li>
+    <li><a href="#66-多路召回有哪些常见通道">6.6 多路召回有哪些常见通道</a></li>
+    <li><a href="#67-原始-query-召回">6.7 原始 query 召回</a></li>
+    <li><a href="#68-改写-query-召回">6.8 改写 query 召回</a></li>
+    <li><a href="#69-查询扩展召回">6.9 查询扩展召回</a></li>
+    <li><a href="#610-hyde-召回">6.10 HyDE 召回</a></li>
+    <li><a href="#611-字段级召回">6.11 字段级召回</a></li>
+    <li><a href="#612-多路召回的工程结构">6.12 多路召回的工程结构</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#71-metadata-filter-是什么">7.1 metadata filter 是什么</a></li>
+    <li><a href="#72-为什么-metadata-filter-很重要">7.2 为什么 metadata filter 很重要</a></li>
+    <li><a href="#73-metadata-filter-的实现位置">7.3 metadata filter 的实现位置</a></li>
+    <li><a href="#74-metadata-filter-的风险">7.4 metadata filter 的风险</a></li>
+    <li><a href="#75-适用场景">7.5 适用场景</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#81-它解决什么问题">8.1 它解决什么问题</a></li>
+    <li><a href="#82-基本思想">8.2 基本思想</a></li>
+    <li><a href="#83-示例">8.3 示例</a></li>
+    <li><a href="#84-工程实现">8.4 工程实现</a></li>
+    <li><a href="#85-适用场景">8.5 适用场景</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#91-它解决什么问题">9.1 它解决什么问题</a></li>
+    <li><a href="#92-基本思想">9.2 基本思想</a></li>
+    <li><a href="#93-工程实现">9.3 工程实现</a></li>
+    <li><a href="#94-优点和缺点">9.4 优点和缺点</a></li>
+    <li><a href="#95-适用场景">9.5 适用场景</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#101-图召回解决什么问题">10.1 图召回解决什么问题</a></li>
+    <li><a href="#102-图里的节点和边">10.2 图里的节点和边</a></li>
+    <li><a href="#103-图召回流程">10.3 图召回流程</a></li>
+    <li><a href="#104-图召回的实现方式">10.4 图召回的实现方式</a></li>
+    <li><a href="#105-图召回的优点和缺点">10.5 图召回的优点和缺点</a></li>
+    <li><a href="#106-适用场景">10.6 适用场景</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#111-rerank-不是召回但通常紧跟召回">11.1 rerank 不是召回，但通常紧跟召回</a></li>
+    <li><a href="#112-cross-encoder-rerank">11.2 Cross-Encoder Rerank</a></li>
+    <li><a href="#113-llm-rerank">11.3 LLM Rerank</a></li>
+    <li><a href="#114-rerank-适用场景">11.4 rerank 适用场景</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#121-按问题类型选">12.1 按问题类型选</a></li>
+    <li><a href="#122-按知识库类型选">12.2 按知识库类型选</a></li>
+    <li><a href="#123-一个通用生产级起点">12.3 一个通用生产级起点</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#131-召回评估看什么">13.1 召回评估看什么</a></li>
+    <li><a href="#132-recallk">13.2 Recall@k</a></li>
+    <li><a href="#133-mrr">13.3 MRR</a></li>
+    <li><a href="#134-ndcg">13.4 NDCG</a></li>
+    <li><a href="#135-召回评估集怎么做">13.5 召回评估集怎么做</a></li>
+    <li><a href="#136-召回失败排查">13.6 召回失败排查</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#141-不要只调-top-k">14.1 不要只调 top-k</a></li>
+    <li><a href="#142-不要只依赖向量检索">14.2 不要只依赖向量检索</a></li>
+    <li><a href="#143-title-和-section_path-很重要">14.3 title 和 section_path 很重要</a></li>
+    <li><a href="#144-权限过滤要前置">14.4 权限过滤要前置</a></li>
+    <li><a href="#145-线上失败样本要回流">14.5 线上失败样本要回流</a></li>
+  </ol>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/ai/" >
+                Ai
+            </a>
+        
+            <a href="/categories/rag/" >
+                Rag
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/rag-%E5%8F%AC%E5%9B%9E%E8%AF%A6%E8%A7%A3%E6%A3%80%E7%B4%A2%E7%AD%96%E7%95%A5%E6%A0%B8%E5%BF%83%E7%AE%97%E6%B3%95%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E9%80%82%E7%94%A8%E5%9C%BA%E6%99%AF/">RAG 召回详解：检索策略、核心算法、工程实现与适用场景</a>
+        </h2>
+    
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">May 06, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h1 id="写在前面">写在前面
+</h1><p>在 RAG 系统里，很多人会把注意力放在大模型、prompt、向量数据库上。</p>
+<p>但真正决定效果上限的，往往是召回。</p>
+<p>因为 RAG 的基本链路是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户问题
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">检索外部知识
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">把检索结果放进上下文
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">让大模型生成答案
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果召回阶段没有把正确证据找出来，后面的模型再强，也很难凭空答对。</p>
+<p>所以这篇文章只聚焦一个问题：</p>
+<blockquote>
+<p>RAG 里到底有哪些召回策略，它们背后的算法是什么，工程上怎么实现，分别适合什么场景？</p></blockquote>
+<p>这篇会覆盖：</p>
+<ol>
+<li>召回在 RAG 链路里的位置</li>
+<li>BM25 关键词召回</li>
+<li>向量语义召回</li>
+<li>混合召回</li>
+<li>多路召回</li>
+<li>查询改写与查询扩展</li>
+<li>metadata filter</li>
+<li>parent-child retrieval</li>
+<li>summary index</li>
+<li>graph retrieval</li>
+<li>rerank 和召回的关系</li>
+<li>召回评估与调优</li>
+</ol>
+<h1 id="一先理解召回的目标">一、先理解召回的目标
+</h1><h2 id="11-召回不是最终排序">1.1 召回不是最终排序
+</h2><p>在 RAG 里，召回的职责不是直接选出最终答案，而是：</p>
+<blockquote>
+<p>从大量知识片段中，找出一批“可能相关”的候选证据。</p></blockquote>
+<p>它和排序的职责不同。</p>
+<p>召回关注：</p>
+<ul>
+<li>正确证据有没有进入候选集</li>
+<li>候选集覆盖是否足够</li>
+<li>是否漏掉关键文档</li>
+<li>是否覆盖不同表达方式</li>
+</ul>
+<p>排序关注：</p>
+<ul>
+<li>哪些候选更相关</li>
+<li>正确候选是否排在前面</li>
+<li>噪声是否被压下去</li>
+<li>最终放进 prompt 的内容是否干净</li>
+</ul>
+<p>所以召回阶段更重视 <code>Recall</code>，排序阶段更重视 <code>Precision</code>。</p>
+<h2 id="12-召回失败是-rag-最致命的问题">1.2 召回失败是 RAG 最致命的问题
+</h2><p>RAG 常见失败可以分成三种：</p>
+<ol>
+<li>没召回正确证据</li>
+<li>召回了但排序靠后</li>
+<li>证据在上下文里，但模型没用好</li>
+</ol>
+<p>其中第一种最致命。</p>
+<p>如果正确证据根本没有进入候选集，后面的 rerank、prompt、LLM 基本都救不回来。</p>
+<p>所以排查 RAG 效果时，第一件事应该是：</p>
+<blockquote>
+<p>对失败问题查看召回 top-k 结果里有没有正确 chunk。</p></blockquote>
+<p>如果没有，就先不要改 prompt。</p>
+<h1 id="二rag-召回的基础对象">二、RAG 召回的基础对象
+</h1><h2 id="21-检索对象通常是-chunk">2.1 检索对象通常是 chunk
+</h2><p>RAG 不是直接检索整篇文档，而是检索切分后的 <code>chunk</code>。</p>
+<p>例如一篇产品手册可能被切成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">doc_001_chunk_001: 登录流程
+</span></span><span class="line"><span class="cl">doc_001_chunk_002: 密码重置
+</span></span><span class="line"><span class="cl">doc_001_chunk_003: 权限申请
+</span></span><span class="line"><span class="cl">doc_001_chunk_004: API 调用限制
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">接口调用次数有限制吗？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>系统应该召回 <code>doc_001_chunk_004</code>，而不是整篇产品手册。</p>
+<p>所以召回质量和 chunk 质量强相关。</p>
+<p>如果 chunk 切得太碎，正确证据可能不完整。</p>
+<p>如果 chunk 切得太大，召回结果噪声会很多。</p>
+<h2 id="22-一个索引记录通常包含什么">2.2 一个索引记录通常包含什么
+</h2><p>一个可检索的 chunk 通常不只包含正文。</p>
+<p>更完整的结构类似：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;billing_doc_003_chunk_012&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;doc_id&#34;</span><span class="p">:</span> <span class="s2">&#34;billing_doc_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;title&#34;</span><span class="p">:</span> <span class="s2">&#34;计费系统说明&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;section_path&#34;</span><span class="p">:</span> <span class="s2">&#34;套餐规则 &gt; Pro 套餐 &gt; API 调用限制&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;content&#34;</span><span class="p">:</span> <span class="s2">&#34;Pro 套餐每月包含 100 万次 API 调用，超出部分按量计费。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;metadata&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;product&#34;</span><span class="p">:</span> <span class="s2">&#34;billing&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;region&#34;</span><span class="p">:</span> <span class="s2">&#34;cn&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;version&#34;</span><span class="p">:</span> <span class="s2">&#34;2026-04&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;doc_status&#34;</span><span class="p">:</span> <span class="s2">&#34;active&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;permission_group&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;billing_team&#34;</span><span class="p">,</span> <span class="s2">&#34;support_team&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>其中：</p>
+<ul>
+<li><code>content</code> 用于关键词检索和 embedding</li>
+<li><code>section_path</code> 可以增强语义</li>
+<li><code>metadata</code> 用于过滤和排序</li>
+<li><code>chunk_id</code> 用于评估和引用</li>
+</ul>
+<p>生产系统里不要只存一段裸文本。</p>
+<h1 id="三bm25-关键词召回">三、BM25 关键词召回
+</h1><h2 id="31-bm25-解决什么问题">3.1 BM25 解决什么问题
+</h2><p>BM25 是传统搜索系统里非常经典的关键词检索算法。</p>
+<p>它适合处理：</p>
+<ul>
+<li>错误码</li>
+<li>API 名称</li>
+<li>类名函数名</li>
+<li>版本号</li>
+<li>法条编号</li>
+<li>商品型号</li>
+<li>人名地名</li>
+<li>精确术语</li>
+</ul>
+<p>例如用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">ERR_CONN_RESET 是什么原因？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这类问题的核心不是语义相似，而是文本里有没有精确出现 <code>ERR_CONN_RESET</code>。</p>
+<p>向量检索可能会把它理解成“连接错误”，召回一堆泛泛的网络故障文档。</p>
+<p>BM25 则更容易命中包含这个错误码的片段。</p>
+<h2 id="32-bm25-的核心思想">3.2 BM25 的核心思想
+</h2><p>BM25 主要考虑三件事：</p>
+<ol>
+<li>查询词是否出现在文档里</li>
+<li>查询词在文档里出现多少次</li>
+<li>查询词在整个语料库里是否稀有</li>
+</ol>
+<p>一个词越稀有，它越有区分度。</p>
+<p>例如在技术文档里：</p>
+<ul>
+<li>“接口”这个词很常见，区分度低</li>
+<li><code>OrderService.create()</code> 很少见，区分度高</li>
+</ul>
+<p>BM25 会更重视后者。</p>
+<h2 id="33-bm25-的简化公式">3.3 BM25 的简化公式
+</h2><p>BM25 的常见形式可以简化理解为：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">score(D, Q) = sum( IDF(qi) * TF(qi, D) 的饱和函数 * 文档长度归一化因子 )
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>其中：</p>
+<ul>
+<li><code>Q</code> 是用户查询</li>
+<li><code>D</code> 是文档或 chunk</li>
+<li><code>qi</code> 是查询里的词</li>
+<li><code>sum(...)</code> 表示对 query 中每个词 <code>qi</code> 的整项得分求和</li>
+<li><code>TF</code> 表示词在当前文档中出现的频率</li>
+<li><code>IDF</code> 表示这个词在全库中的稀有程度</li>
+<li>文档长度归一化用于避免长文档天然占优</li>
+</ul>
+<p>更接近实际的公式是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">score(D, Q) =
+</span></span><span class="line"><span class="cl">sum(
+</span></span><span class="line"><span class="cl">  IDF(qi) * ( f(qi, D) * (k1 + 1) )
+</span></span><span class="line"><span class="cl">  / ( f(qi, D) + k1 * (1 - b + b * |D| / avgdl) )
+</span></span><span class="line"><span class="cl">)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>参数含义：</p>
+<ul>
+<li><code>f(qi, D)</code>：词 <code>qi</code> 在文档 <code>D</code> 中出现的次数</li>
+<li><code>|D|</code>：当前文档长度</li>
+<li><code>avgdl</code>：平均文档长度</li>
+<li><code>k1</code>：控制词频增长的饱和速度</li>
+<li><code>b</code>：控制文档长度归一化强度</li>
+</ul>
+<p>不需要死记公式，但要理解两个关键点：</p>
+<ul>
+<li>稀有词更重要</li>
+<li>词频增加会提高分数，但不是无限线性提高</li>
+</ul>
+<h2 id="34-bm25-的工程实现">3.4 BM25 的工程实现
+</h2><p>工程上通常不会自己手写 BM25，而是使用搜索引擎。</p>
+<p>常见选择：</p>
+<ul>
+<li>Elasticsearch</li>
+<li>OpenSearch</li>
+<li>Lucene</li>
+<li>PostgreSQL full-text search</li>
+<li>SQLite FTS</li>
+</ul>
+<p>一个简化的 Elasticsearch 查询类似：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;query&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;match&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;content&#34;</span><span class="p">:</span> <span class="s2">&#34;v2.3.17 导出接口 403&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">  <span class="p">},</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;size&#34;</span><span class="p">:</span> <span class="mi">50</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>更常见的是组合字段：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;query&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;multi_match&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;query&#34;</span><span class="p">:</span> <span class="s2">&#34;v2.3.17 导出接口 403&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;fields&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;title^3&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;section_path^2&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;content&#34;</span>
+</span></span><span class="line"><span class="cl">      <span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">  <span class="p">},</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;size&#34;</span><span class="p">:</span> <span class="mi">50</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里的 <code>title^3</code> 表示标题命中权重更高。</p>
+<p>这对 RAG 很有用，因为标题和章节路径通常是强信号。</p>
+<h2 id="35-如果-embedding-已经放进向量数据库bm25-怎么做">3.5 如果 embedding 已经放进向量数据库，BM25 怎么做
+</h2><p>这里要明确一个点：</p>
+<blockquote>
+<p>embedding 放进向量数据库，并不等于 BM25 也在向量数据库里完成。</p></blockquote>
+<p>向量检索依赖的是 <code>embedding</code>。</p>
+<p>BM25 依赖的是原始文本的倒排索引。</p>
+<p>所以同一个 chunk 通常会同时保留两类数据：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">chunk_id
+</span></span><span class="line"><span class="cl">content
+</span></span><span class="line"><span class="cl">metadata
+</span></span><span class="line"><span class="cl">embedding
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>其中：</p>
+<ul>
+<li><code>embedding</code> 给向量检索用</li>
+<li><code>content</code> 给 BM25 / 全文检索用</li>
+<li><code>metadata</code> 给过滤和权限控制用</li>
+<li><code>chunk_id</code> 给多路召回结果合并去重用</li>
+</ul>
+<h3 id="方式一向量数据库和搜索引擎双写">方式一：向量数据库和搜索引擎双写
+</h3><p>这是生产里很常见、也很稳的方案。</p>
+<p>同一份 chunk 写入两套索引：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">chunk 文本 + metadata + embedding -&gt; 向量数据库
+</span></span><span class="line"><span class="cl">chunk 文本 + metadata            -&gt; Elasticsearch / OpenSearch / Lucene
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>查询时并行执行：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户 query
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">向量数据库：向量召回 top 50
+</span></span><span class="line"><span class="cl">搜索引擎：BM25 召回 top 50
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">按 chunk_id 合并去重
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">RRF 或加权融合
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">rerank
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">最终 top-k
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>关键是两边必须使用同一个 <code>chunk_id</code>。</p>
+<p>例如向量库里有：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_chunk_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;content&#34;</span><span class="p">:</span> <span class="s2">&#34;Pro 套餐每月包含 100 万次 API 调用。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;embedding&#34;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.12</span><span class="p">,</span> <span class="mf">-0.08</span><span class="p">,</span> <span class="mf">0.44</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;metadata&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;product&#34;</span><span class="p">:</span> <span class="s2">&#34;billing&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;region&#34;</span><span class="p">:</span> <span class="s2">&#34;cn&#34;</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>搜索引擎里也应该有同一个 <code>chunk_id</code>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_chunk_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;content&#34;</span><span class="p">:</span> <span class="s2">&#34;Pro 套餐每月包含 100 万次 API 调用。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;metadata&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;product&#34;</span><span class="p">:</span> <span class="s2">&#34;billing&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;region&#34;</span><span class="p">:</span> <span class="s2">&#34;cn&#34;</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样两路召回结果才能合并。</p>
+<h3 id="方式二使用同时支持全文检索和向量检索的系统">方式二：使用同时支持全文检索和向量检索的系统
+</h3><p>有些系统可以同时做 BM25 和向量检索。</p>
+<p>例如：</p>
+<ul>
+<li>Elasticsearch：BM25 + <code>dense_vector</code></li>
+<li>OpenSearch：BM25 + k-NN</li>
+<li>PostgreSQL：full-text search + <code>pgvector</code></li>
+<li>Weaviate：BM25 + vector search</li>
+</ul>
+<p>这种方式的好处是系统数量少。</p>
+<p>但也要注意：</p>
+<ul>
+<li>不同系统的 hybrid search 实现不一样</li>
+<li>分数融合方式不一定透明</li>
+<li>过滤条件和排序逻辑要仔细验证</li>
+</ul>
+<p>以 PostgreSQL 为例，可以同时保存：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">rag_chunks</span><span class="w"> </span><span class="p">(</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">chunk_id</span><span class="w"> </span><span class="nb">text</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">content</span><span class="w"> </span><span class="nb">text</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">metadata</span><span class="w"> </span><span class="n">jsonb</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">content_tsv</span><span class="w"> </span><span class="n">tsvector</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">embedding</span><span class="w"> </span><span class="n">vector</span><span class="p">(</span><span class="mi">1536</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></td></tr></table>
+</div>
+</div><p>BM25 或全文检索走 <code>content_tsv</code>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w"> </span><span class="n">chunk_id</span><span class="p">,</span><span class="w"> </span><span class="n">content</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">rag_chunks</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">content_tsv</span><span class="w"> </span><span class="o">@@</span><span class="w"> </span><span class="n">plainto_tsquery</span><span class="p">(</span><span class="s1">&#39;simple&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;导出接口 403&#39;</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">50</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></td></tr></table>
+</div>
+</div><p>向量检索走 <code>embedding</code>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w"> </span><span class="n">chunk_id</span><span class="p">,</span><span class="w"> </span><span class="n">content</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">rag_chunks</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">embedding</span><span class="w"> </span><span class="o">&lt;=&gt;</span><span class="w"> </span><span class="p">:</span><span class="n">query_embedding</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">50</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></td></tr></table>
+</div>
+</div><p>然后仍然可以在应用层按 <code>chunk_id</code> 合并结果。</p>
+<h3 id="方式三使用向量数据库自带的-hybrid-能力">方式三：使用向量数据库自带的 hybrid 能力
+</h3><p>有些向量数据库支持 sparse vector、keyword search 或 hybrid search。</p>
+<p>这时可以在同一个系统里完成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">dense vector search + sparse / keyword search
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>但要确认它具体支持的是什么：</p>
+<ul>
+<li>标准 BM25</li>
+<li>sparse vector</li>
+<li>token match</li>
+<li>自定义 hybrid score</li>
+</ul>
+<p>这些能力名字相似，但算法和效果可能不同。</p>
+<p>所以工程上不要只看“支持 hybrid search”，还要看：</p>
+<ul>
+<li>是否支持中文分词</li>
+<li>是否支持字段权重</li>
+<li>是否支持 metadata filter</li>
+<li>是否能解释 BM25 分数</li>
+<li>是否能独立查看每一路召回结果</li>
+</ul>
+<p>如果系统不透明，排查召回问题会比较困难。</p>
+<h2 id="36-bm25-的优点和缺点">3.6 BM25 的优点和缺点
+</h2><p>优点：</p>
+<ul>
+<li>对精确词匹配非常强</li>
+<li>可解释性好</li>
+<li>成本低</li>
+<li>查询速度快</li>
+<li>适合错误码、编号、术语、代码</li>
+</ul>
+<p>缺点：</p>
+<ul>
+<li>对同义表达不敏感</li>
+<li>用户换一种说法可能召回不到</li>
+<li>依赖分词质量</li>
+<li>对自然语言语义理解弱</li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户问：忘记密码怎么办？
+</span></span><span class="line"><span class="cl">文档写：用户可重置登录凭证。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果关键词重合少，BM25 可能召回不好。</p>
+<h2 id="37-bm25-适用场景">3.7 BM25 适用场景
+</h2><p>BM25 适合：</p>
+<ul>
+<li>技术文档搜索</li>
+<li>API 文档问答</li>
+<li>日志错误码问答</li>
+<li>法律条款问答</li>
+<li>规章制度检索</li>
+<li>电商 SKU 或商品型号检索</li>
+<li>代码仓库问答</li>
+</ul>
+<p>如果知识库里有大量专有名词，不建议只做向量检索。</p>
+<h1 id="四向量语义召回">四、向量语义召回
+</h1><h2 id="41-向量召回解决什么问题">4.1 向量召回解决什么问题
+</h2><p>向量召回解决的是：</p>
+<blockquote>
+<p>用户表达和文档表达不一样，但语义相近。</p></blockquote>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户问：怎么找回账号？
+</span></span><span class="line"><span class="cl">文档写：用户可以通过安全中心重置登录凭证。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这两个句子没有太多关键词重合，但意思接近。</p>
+<p>BM25 可能不稳，向量检索更适合。</p>
+<h2 id="42-embedding-是什么">4.2 embedding 是什么
+</h2><p><code>embedding</code> 会把文本转换成一个高维向量。</p>
+<p>可以把它理解为：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">&#34;忘记密码怎么办&#34; -&gt; [0.12, -0.08, 0.44, ...]
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>语义相近的文本，在向量空间里的距离通常更近。</p>
+<p>所以向量召回的基本流程是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">离线阶段：
+</span></span><span class="line"><span class="cl">chunk 文本 -&gt; embedding 模型 -&gt; chunk 向量 -&gt; 向量索引
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">在线阶段：
+</span></span><span class="line"><span class="cl">用户 query -&gt; embedding 模型 -&gt; query 向量 -&gt; 近邻搜索 -&gt; top-k chunk
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="43-相似度算法">4.3 相似度算法
+</h2><p>向量检索常见相似度包括三种。</p>
+<h3 id="cosine-similarity">Cosine Similarity
+</h3><p>余弦相似度看两个向量的夹角。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">cosine(a, b) = a · b / (|a| * |b|)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>它关注方向是否接近，不太关注向量长度。</p>
+<p>很多文本 embedding 检索会使用它。</p>
+<h3 id="dot-product">Dot Product
+</h3><p>点积直接计算：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">dot(a, b) = sum(ai * bi)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果向量已经归一化，点积和余弦相似度排序结果通常等价。</p>
+<h3 id="euclidean-distance">Euclidean Distance
+</h3><p>欧氏距离看两个向量在空间中的直线距离。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">distance(a, b) = sqrt(sum((ai - bi)^2))
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>距离越小越相似。</p>
+<p>实际使用哪种，要看 embedding 模型和向量数据库的推荐配置。</p>
+<p>不要随便混用。</p>
+<h2 id="44-ann-近似最近邻搜索">4.4 ANN 近似最近邻搜索
+</h2><p>如果数据量很小，可以暴力计算 query 向量和所有 chunk 向量的相似度。</p>
+<p>但真实系统里可能有：</p>
+<ul>
+<li>10 万 chunk</li>
+<li>100 万 chunk</li>
+<li>1 亿 chunk</li>
+</ul>
+<p>逐个计算会很慢。</p>
+<p>所以向量数据库通常使用 ANN，也就是 Approximate Nearest Neighbor，近似最近邻搜索。</p>
+<p>它牺牲一点点精确性，换取大幅查询速度提升。</p>
+<p>常见索引算法包括：</p>
+<ul>
+<li>HNSW</li>
+<li>IVF</li>
+<li>PQ</li>
+<li>ScaNN</li>
+</ul>
+<h2 id="45-hnsw-的基本思想">4.5 HNSW 的基本思想
+</h2><p>HNSW 是 Hierarchical Navigable Small World。</p>
+<p>可以把它理解成一张多层图。</p>
+<p>底层图连接很多近邻点，上层图更稀疏，用于快速跳转。</p>
+<p>查询过程类似：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">从最高层入口点开始
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">找到当前层更接近 query 的节点
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">逐层向下
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">在底层做更细的近邻搜索
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>它的特点：</p>
+<ul>
+<li>查询速度快</li>
+<li>召回质量高</li>
+<li>适合在线检索</li>
+<li>内存占用相对较高</li>
+</ul>
+<p>常见参数：</p>
+<ul>
+<li><code>M</code>：每个节点连接的邻居数量</li>
+<li><code>efConstruction</code>：建索引时搜索范围，越大质量越高但构建越慢</li>
+<li><code>efSearch</code>：查询时搜索范围，越大召回越好但查询越慢</li>
+</ul>
+<p>调参方向：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回不够：提高 efSearch
+</span></span><span class="line"><span class="cl">查询太慢：降低 efSearch 或优化过滤范围
+</span></span><span class="line"><span class="cl">索引质量差：提高 efConstruction
+</span></span><span class="line"><span class="cl">内存太高：降低 M
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="46-ivf-的基本思想">4.6 IVF 的基本思想
+</h2><p>IVF 是 Inverted File Index。</p>
+<p>它会先把向量空间聚类成多个中心。</p>
+<p>离线阶段：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">所有向量 -&gt; 聚类 -&gt; 分配到不同 cluster
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>在线阶段：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">query 向量 -&gt; 找最近的几个 cluster -&gt; 只在这些 cluster 里搜索
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>它的特点：</p>
+<ul>
+<li>适合大规模向量</li>
+<li>查询速度快</li>
+<li>需要训练聚类中心</li>
+<li>如果只查太少 cluster，可能漏召回</li>
+</ul>
+<p>常见参数：</p>
+<ul>
+<li><code>nlist</code>：聚类中心数量</li>
+<li><code>nprobe</code>：查询时探测多少个 cluster</li>
+</ul>
+<p>调参方向：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回不够：提高 nprobe
+</span></span><span class="line"><span class="cl">查询太慢：降低 nprobe
+</span></span><span class="line"><span class="cl">数据规模变大：适当增加 nlist
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="47-pq-的基本思想">4.7 PQ 的基本思想
+</h2><p>PQ 是 Product Quantization，乘积量化。</p>
+<p>它的目标是压缩向量，降低内存和存储成本。</p>
+<p>基本思路是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">原始高维向量
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">拆成多个子向量
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">每个子向量用码本近似表示
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">用较短编码代替原始向量
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>优点：</p>
+<ul>
+<li>节省内存</li>
+<li>支持更大规模索引</li>
+<li>查询成本更低</li>
+</ul>
+<p>缺点：</p>
+<ul>
+<li>有精度损失</li>
+<li>召回可能下降</li>
+<li>调参复杂度更高</li>
+</ul>
+<p>在 RAG 场景里，如果数据量不是特别大，通常先用 HNSW 更简单。</p>
+<p>当数据量和成本压力上来，再考虑 IVF、PQ 等压缩方案。</p>
+<h2 id="48-向量召回的工程实现">4.8 向量召回的工程实现
+</h2><p>常见向量数据库：</p>
+<ul>
+<li>FAISS</li>
+<li>Milvus</li>
+<li>Qdrant</li>
+<li>Weaviate</li>
+<li>pgvector</li>
+<li>Elasticsearch dense_vector</li>
+<li>OpenSearch k-NN</li>
+</ul>
+<p>一个简化的 pgvector 查询类似：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">chunk_id</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">content</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">metadata</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">embedding</span><span class="w"> </span><span class="o">&lt;=&gt;</span><span class="w"> </span><span class="p">:</span><span class="n">query_embedding</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">distance</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">rag_chunks</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">metadata</span><span class="o">-&gt;&gt;</span><span class="s1">&#39;product&#39;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;billing&#39;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">embedding</span><span class="w"> </span><span class="o">&lt;=&gt;</span><span class="w"> </span><span class="p">:</span><span class="n">query_embedding</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">20</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></td></tr></table>
+</div>
+</div><p>一个简化的 Python 流程类似：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">vector_retrieve</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">top_k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">20</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="n">query_embedding</span> <span class="o">=</span> <span class="n">embed</span><span class="p">(</span><span class="n">question</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">results</span> <span class="o">=</span> <span class="n">vector_store</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">        <span class="n">vector</span><span class="o">=</span><span class="n">query_embedding</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="n">top_k</span><span class="o">=</span><span class="n">top_k</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="nb">filter</span><span class="o">=</span><span class="p">{</span><span class="s2">&#34;product&#34;</span><span class="p">:</span> <span class="s2">&#34;billing&#34;</span><span class="p">,</span> <span class="s2">&#34;doc_status&#34;</span><span class="p">:</span> <span class="s2">&#34;active&#34;</span><span class="p">},</span>
+</span></span><span class="line"><span class="cl">    <span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">results</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="49-向量召回的优点和缺点">4.9 向量召回的优点和缺点
+</h2><p>优点：</p>
+<ul>
+<li>能处理同义表达</li>
+<li>适合自然语言问题</li>
+<li>对用户口语化表达更友好</li>
+<li>能找语义相近内容</li>
+</ul>
+<p>缺点：</p>
+<ul>
+<li>对精确符号不稳定</li>
+<li>分数不够直观</li>
+<li>依赖 embedding 模型质量</li>
+<li>对 chunk 质量敏感</li>
+<li>可能召回“看起来相关但不是答案”的内容</li>
+</ul>
+<h2 id="410-向量召回适用场景">4.10 向量召回适用场景
+</h2><p>适合：</p>
+<ul>
+<li>知识库问答</li>
+<li>FAQ 语义搜索</li>
+<li>政策解释</li>
+<li>产品文档问答</li>
+<li>客服问答</li>
+<li>会议纪要检索</li>
+<li>概念解释类问题</li>
+</ul>
+<p>不适合单独处理：</p>
+<ul>
+<li>错误码</li>
+<li>版本号</li>
+<li>代码符号</li>
+<li>法条编号</li>
+<li>商品 SKU</li>
+</ul>
+<p>这些场景通常要加 BM25 或结构化过滤。</p>
+<h1 id="五混合召回">五、混合召回
+</h1><h2 id="51-为什么需要混合召回">5.1 为什么需要混合召回
+</h2><p>BM25 和向量召回各有盲区。</p>
+<p>BM25 擅长精确匹配，但不懂同义表达。</p>
+<p>向量召回擅长语义相似，但对精确术语不稳定。</p>
+<p>所以生产 RAG 里很常见的做法是：</p>
+<blockquote>
+<p>BM25 + 向量召回 + 结果融合 + rerank。</p></blockquote>
+<h2 id="52-典型混合召回流程">5.2 典型混合召回流程
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户 query
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">并行执行 BM25 召回 top 50
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">并行执行向量召回 top 50
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">合并结果
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">去重
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">分数融合
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">rerank
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">取 top 5 到 top 10 进入上下文
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这个流程的目标是：</p>
+<ul>
+<li>BM25 兜住精确匹配</li>
+<li>向量召回兜住语义表达</li>
+<li>rerank 提升最终前排质量</li>
+</ul>
+<h2 id="53-分数归一化">5.3 分数归一化
+</h2><p>混合召回的一个难点是：</p>
+<blockquote>
+<p>BM25 分数和向量相似度不是同一种分数，不能直接相加。</p></blockquote>
+<p>BM25 分数可能是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">12.8
+</span></span><span class="line"><span class="cl">7.4
+</span></span><span class="line"><span class="cl">3.1
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>向量相似度可能是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">0.82
+</span></span><span class="line"><span class="cl">0.79
+</span></span><span class="line"><span class="cl">0.73
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>直接相加没有意义。</p>
+<p>常见处理方式包括：</p>
+<ul>
+<li>min-max normalization</li>
+<li>z-score normalization</li>
+<li>rank-based fusion</li>
+<li>RRF</li>
+</ul>
+<h2 id="54-rrf-融合算法">5.4 RRF 融合算法
+</h2><p>RRF 是 Reciprocal Rank Fusion。</p>
+<p>它不关心原始分数，只关心排名。</p>
+<p>公式是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">RRF(d) = sum( 1 / (k + rank_i(d)) )
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>其中：</p>
+<ul>
+<li><code>d</code> 是某个候选文档</li>
+<li><code>sum(...)</code> 表示对所有召回通道里的排名得分求和</li>
+<li><code>rank_i(d)</code> 是它在第 <code>i</code> 路召回里的排名</li>
+<li><code>k</code> 是平滑常数，常见取 60</li>
+</ul>
+<p>例如一个 chunk：</p>
+<ul>
+<li>在 BM25 里排第 2</li>
+<li>在向量检索里排第 10</li>
+</ul>
+<p>它的 RRF 分数是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1 / (60 + 2) + 1 / (60 + 10)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>RRF 的优点：</p>
+<ul>
+<li>实现简单</li>
+<li>不依赖不同检索器的分数尺度</li>
+<li>对多路召回很友好</li>
+<li>工程上稳定</li>
+</ul>
+<p>简化实现：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">reciprocal_rank_fusion</span><span class="p">(</span><span class="n">result_lists</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">60</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="n">scores</span> <span class="o">=</span> <span class="p">{}</span>
+</span></span><span class="line"><span class="cl">    <span class="n">docs</span> <span class="o">=</span> <span class="p">{}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="n">results</span> <span class="ow">in</span> <span class="n">result_lists</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="k">for</span> <span class="n">rank</span><span class="p">,</span> <span class="n">doc</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">results</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">            <span class="n">doc_id</span> <span class="o">=</span> <span class="n">doc</span><span class="p">[</span><span class="s2">&#34;chunk_id&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">            <span class="n">scores</span><span class="p">[</span><span class="n">doc_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">doc_id</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">k</span> <span class="o">+</span> <span class="n">rank</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="n">docs</span><span class="p">[</span><span class="n">doc_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">doc</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nb">sorted</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">        <span class="n">docs</span><span class="o">.</span><span class="n">values</span><span class="p">(),</span>
+</span></span><span class="line"><span class="cl">        <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">doc</span><span class="p">:</span> <span class="n">scores</span><span class="p">[</span><span class="n">doc</span><span class="p">[</span><span class="s2">&#34;chunk_id&#34;</span><span class="p">]],</span>
+</span></span><span class="line"><span class="cl">        <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">)</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="55-加权融合">5.5 加权融合
+</h2><p>另一种方式是分数归一化后加权：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">final_score = alpha * vector_score + beta * bm25_score
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">final_score = 0.6 * vector_score + 0.4 * bm25_score
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>它的好处是可控。</p>
+<p>缺点是：</p>
+<ul>
+<li>需要归一化</li>
+<li>参数要调</li>
+<li>不同问题类型可能需要不同权重</li>
+</ul>
+<p>例如：</p>
+<ul>
+<li>概念解释类问题：向量权重更高</li>
+<li>错误码类问题：BM25 权重更高</li>
+</ul>
+<h2 id="56-混合召回适用场景">5.6 混合召回适用场景
+</h2><p>混合召回几乎是生产 RAG 的默认推荐方案。</p>
+<p>尤其适合：</p>
+<ul>
+<li>企业知识库</li>
+<li>技术文档</li>
+<li>API 文档</li>
+<li>客服问答</li>
+<li>法律制度</li>
+<li>代码问答</li>
+<li>产品手册</li>
+</ul>
+<p>如果只能选一个通用方案，通常从混合召回开始。</p>
+<h1 id="六多路召回">六、多路召回
+</h1><h2 id="61-多路召回是什么">6.1 多路召回是什么
+</h2><p>多路召回确实和混合召回很像，因为它们都会出现：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">多种检索结果
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">合并
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">去重
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">融合或重排
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>但它们关注的层次不一样。</p>
+<p>一句话区分：</p>
+<blockquote>
+<p>混合召回关注“用哪些检索算法互补”，多路召回关注“从哪些检索通道找候选”。</p></blockquote>
+<p>更具体地说：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>对比项</th>
+          <th>混合召回</th>
+          <th>多路召回</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>关注点</td>
+          <td>检索算法互补</td>
+          <td>检索通道编排</td>
+      </tr>
+      <tr>
+          <td>典型组合</td>
+          <td>BM25 + 向量</td>
+          <td>原始 query、改写 query、扩展 query、标题索引、摘要索引、图关系等</td>
+      </tr>
+      <tr>
+          <td>解决问题</td>
+          <td>语义召回和关键词召回互补</td>
+          <td>单一路径容易漏召回</td>
+      </tr>
+      <tr>
+          <td>粒度</td>
+          <td>偏检索器层面</td>
+          <td>偏策略和流程层面</td>
+      </tr>
+      <tr>
+          <td>常见结果处理</td>
+          <td>分数融合、RRF、rerank</td>
+          <td>多路合并、去重、融合、rerank</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>所以可以这样理解：</p>
+<blockquote>
+<p>混合召回通常是多路召回的一种基础形态，但多路召回不只等于 BM25 + 向量。</p></blockquote>
+<h2 id="62-混合召回和多路召回的关系">6.2 混合召回和多路召回的关系
+</h2><p>最简单的混合召回是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">一路 BM25
+</span></span><span class="line"><span class="cl">一路向量检索
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户 query: &#34;v2.3.17 导出接口 403&#34;
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">通道 1：BM25(&#34;v2.3.17 导出接口 403&#34;)
+</span></span><span class="line"><span class="cl">通道 2：Vector(&#34;v2.3.17 导出接口 403&#34;)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这已经可以叫混合召回，也可以看成两路召回。</p>
+<p>但真实系统里的多路召回可能是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">通道 1：BM25(原始 query)
+</span></span><span class="line"><span class="cl">通道 2：Vector(原始 query)
+</span></span><span class="line"><span class="cl">通道 3：BM25(改写 query)
+</span></span><span class="line"><span class="cl">通道 4：Vector(改写 query)
+</span></span><span class="line"><span class="cl">通道 5：BM25(扩展 query 1)
+</span></span><span class="line"><span class="cl">通道 6：BM25(扩展 query 2)
+</span></span><span class="line"><span class="cl">通道 7：Title BM25(原始 query)
+</span></span><span class="line"><span class="cl">通道 8：Summary Vector(原始 query)
+</span></span><span class="line"><span class="cl">通道 9：Graph Retrieval(识别出的实体)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里不仅混合了 BM25 和向量，还混合了：</p>
+<ul>
+<li>不同 query 版本</li>
+<li>不同索引字段</li>
+<li>不同索引粒度</li>
+<li>不同数据结构</li>
+<li>不同业务规则</li>
+</ul>
+<p>所以多路召回更像一个召回编排框架。</p>
+<p>混合召回只是这个框架里最常见的一组基础通道。</p>
+<h2 id="63-为什么有了混合召回还需要多路召回">6.3 为什么有了混合召回，还需要多路召回
+</h2><p>因为 BM25 + 向量只能解决一部分问题。</p>
+<p>它主要解决的是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">关键词匹配能力 + 语义相似能力
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>但真实 RAG 还会遇到其他问题。</p>
+<h3 id="问题一用户-query-本身不好检索">问题一：用户 query 本身不好检索
+</h3><p>例如用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">这个接口怎么又没权限了？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>即使你同时用 BM25 和向量检索，效果也可能不好。</p>
+<p>因为问题里的“这个接口”没有被消解，“没权限”也没有变成文档里常见的 <code>403 Forbidden</code>、<code>权限配置</code>、<code>角色授权</code>。</p>
+<p>这时需要 query rewrite。</p>
+<p>也就是新增一路：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Vector(导出接口返回 403 Forbidden 的原因和权限配置说明)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="问题二一个问题有多种可能说法">问题二：一个问题有多种可能说法
+</h3><p>例如用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">怎么开通 VPN？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>知识库里可能写的是：</p>
+<ul>
+<li>远程办公权限申请</li>
+<li>VPN 账号配置</li>
+<li>网络访问白名单</li>
+<li>员工入职 IT 权限</li>
+</ul>
+<p>这时只做原始 query 的 BM25 + 向量仍然可能漏。</p>
+<p>需要 query expansion，扩展出多路检索。</p>
+<h3 id="问题三答案在长文档里需要先定位章节">问题三：答案在长文档里，需要先定位章节
+</h3><p>例如用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">数据权限模型是怎么设计的？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>直接查细粒度 chunk，可能只召回局部字段说明。</p>
+<p>更好的做法是增加 summary index 召回：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Summary Vector(数据权限模型是怎么设计的)
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">先找到“权限模型设计”章节
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">再在这个章节下检索原文 chunk
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="问题四问题依赖实体关系">问题四：问题依赖实体关系
+</h3><p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">订单服务创建订单时会影响哪些表？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这不是单纯文本相似问题。</p>
+<p>它可能需要：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">OrderService -&gt; create_order -&gt; writes -&gt; orders
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这时需要图召回或符号索引，而不是只靠 BM25 + 向量。</p>
+<h2 id="64-一个直观例子">6.4 一个直观例子
+</h2><p>假设用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">v2.3.17 导出接口为什么返回 403？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>混合召回通常会做：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">BM25(&#34;v2.3.17 导出接口 403&#34;)
+</span></span><span class="line"><span class="cl">Vector(&#34;v2.3.17 导出接口 403&#34;)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>多路召回可以进一步做：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">BM25(&#34;v2.3.17 导出接口 403&#34;)
+</span></span><span class="line"><span class="cl">Vector(&#34;v2.3.17 导出接口 403&#34;)
+</span></span><span class="line"><span class="cl">BM25(&#34;v2.3.17 export API forbidden&#34;)
+</span></span><span class="line"><span class="cl">Vector(&#34;导出接口返回 403 Forbidden 的权限配置原因&#34;)
+</span></span><span class="line"><span class="cl">Title BM25(&#34;导出接口 权限&#34;)
+</span></span><span class="line"><span class="cl">Metadata filter(version = &#34;v2.3.17&#34;)
+</span></span><span class="line"><span class="cl">Graph retrieval(entity = &#34;导出接口&#34;)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>你会发现，多路召回不是简单地“多加几个 top-k”。</p>
+<p>它是在从不同角度补召回：</p>
+<ul>
+<li>版本号走 metadata 或 BM25</li>
+<li>错误码走 BM25</li>
+<li>语义原因走向量</li>
+<li>标题命中走 title 字段</li>
+<li>接口实体走图或结构化索引</li>
+<li>口语化表达走 query rewrite</li>
+</ul>
+<h2 id="65-多路召回的代价">6.5 多路召回的代价
+</h2><p>多路召回能提高覆盖率，但不是越多越好。</p>
+<p>它会带来：</p>
+<ul>
+<li>延迟增加</li>
+<li>成本增加</li>
+<li>候选噪声增加</li>
+<li>融合逻辑复杂</li>
+<li>排查问题更困难</li>
+</ul>
+<p>所以多路召回应有明确目的。</p>
+<p>不要为了“看起来高级”加很多路。</p>
+<p>更合理的做法是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">先做基础混合召回
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">看失败样本漏在哪里
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">针对性增加一路召回
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">用评估集验证 Recall@k 是否提升
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>例如：</p>
+<ul>
+<li>错误码漏召回：加强 BM25 或字段权重</li>
+<li>指代问题漏召回：增加 query rewrite</li>
+<li>长文档宏观问题漏召回：增加 summary index</li>
+<li>多跳实体问题漏召回：增加 graph retrieval</li>
+<li>标题强相关但正文噪声多：增加 title 字段召回</li>
+</ul>
+<h2 id="66-多路召回有哪些常见通道">6.6 多路召回有哪些常见通道
+</h2><p>多路召回可以包含很多不同通道。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">原始 query 向量召回
+</span></span><span class="line"><span class="cl">原始 query BM25 召回
+</span></span><span class="line"><span class="cl">改写 query 向量召回
+</span></span><span class="line"><span class="cl">扩展 query BM25 召回
+</span></span><span class="line"><span class="cl">标题字段召回
+</span></span><span class="line"><span class="cl">摘要索引召回
+</span></span><span class="line"><span class="cl">metadata 精确召回
+</span></span><span class="line"><span class="cl">图关系扩展召回
+</span></span><span class="line"><span class="cl">历史会话上下文召回
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>它的目标是：</p>
+<blockquote>
+<p>用不同视角找候选，减少单一路径漏召回。</p></blockquote>
+<h2 id="67-原始-query-召回">6.7 原始 query 召回
+</h2><p>这是最基础的一路。</p>
+<p>用户问什么，就拿什么去检索。</p>
+<p>适合：</p>
+<ul>
+<li>问题表达清楚</li>
+<li>术语准确</li>
+<li>上下文依赖少</li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 套餐 API 调用上限是多少？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这类问题直接检索通常效果不错。</p>
+<h2 id="68-改写-query-召回">6.8 改写 query 召回
+</h2><p>用户问题经常是口语化的。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">这个接口怎么又没权限了？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果直接检索，“这个接口”指代不清，“又没权限”也不够具体。</p>
+<p>可以结合会话上下文改写成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">导出接口返回 403 Forbidden 的原因和权限配置说明
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>再去检索。</p>
+<p>常见实现：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">rewrite_query</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">chat_history</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="n">prompt</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&#34;&#34;&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s2">    请把用户问题改写成适合知识库检索的查询语句。
+</span></span></span><span class="line"><span class="cl"><span class="s2">    要求：
+</span></span></span><span class="line"><span class="cl"><span class="s2">    1. 保留关键实体、错误码、接口名、版本号。
+</span></span></span><span class="line"><span class="cl"><span class="s2">    2. 消解指代。
+</span></span></span><span class="line"><span class="cl"><span class="s2">    3. 不要回答问题，只输出检索 query。
+</span></span></span><span class="line"><span class="cl"><span class="s2">
+</span></span></span><span class="line"><span class="cl"><span class="s2">    历史对话：</span><span class="si">{</span><span class="n">chat_history</span><span class="si">}</span><span class="s2">
+</span></span></span><span class="line"><span class="cl"><span class="s2">    当前问题：</span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="s2">
+</span></span></span><span class="line"><span class="cl"><span class="s2">    &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">llm</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>注意：query rewrite 不应该丢失原始 query。</p>
+<p>工程上通常同时检索：</p>
+<ul>
+<li>原始 query</li>
+<li>改写 query</li>
+</ul>
+<p>再合并结果。</p>
+<h2 id="69-查询扩展召回">6.9 查询扩展召回
+</h2><p>查询扩展是把一个问题扩展成多个检索表达。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">原问题：如何开通 VPN？
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">扩展 query：
+</span></span><span class="line"><span class="cl">1. VPN 开通流程
+</span></span><span class="line"><span class="cl">2. 远程办公权限申请
+</span></span><span class="line"><span class="cl">3. 新员工 VPN 账号配置
+</span></span><span class="line"><span class="cl">4. VPN 使用前置条件
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>它适合：</p>
+<ul>
+<li>用户表达太短</li>
+<li>领域术语不确定</li>
+<li>一个问题可能对应多个文档说法</li>
+</ul>
+<p>实现方式：</p>
+<ul>
+<li>基于同义词词典</li>
+<li>基于业务术语表</li>
+<li>基于 LLM 生成多个 query</li>
+<li>基于历史搜索日志挖掘相关 query</li>
+</ul>
+<p>风险：</p>
+<ul>
+<li>query 扩得太宽会引入噪声</li>
+<li>成本增加</li>
+<li>延迟增加</li>
+</ul>
+<p>所以扩展 query 最好控制数量，例如 3 到 5 个。</p>
+<h2 id="610-hyde-召回">6.10 HyDE 召回
+</h2><p>HyDE 是 Hypothetical Document Embeddings。</p>
+<p>它的思路是：</p>
+<blockquote>
+<p>先让模型根据问题生成一个“假想答案”或“假想文档”，再用这个假想文档去做向量检索。</p></blockquote>
+<p>例如用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">什么情况下订单不能退款？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>模型先生成一个假想文档：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">订单不能退款的情况通常包括虚拟商品已发货、超过退款期限、企业合同订单另有约定等。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>然后对这段假想文档做 embedding，用它去检索。</p>
+<p>为什么可能有效？</p>
+<p>因为用户问题有时很短，而假想文档更接近知识库里的答案表述。</p>
+<p>简化流程：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">question
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">LLM 生成 hypothetical document
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">embedding hypothetical document
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">vector search
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>适合：</p>
+<ul>
+<li>用户问题很短</li>
+<li>抽象问题</li>
+<li>概念解释</li>
+<li>文档表达偏答案式</li>
+</ul>
+<p>不适合：</p>
+<ul>
+<li>精确事实</li>
+<li>错误码</li>
+<li>金额、日期、版本号</li>
+<li>高风险场景</li>
+</ul>
+<p>因为 HyDE 生成的假想文档可能带入错误假设。</p>
+<p>工程上最好把 HyDE 作为一路辅助召回，而不是唯一召回。</p>
+<h2 id="611-字段级召回">6.11 字段级召回
+</h2><p>chunk 通常有多个字段：</p>
+<ul>
+<li>title</li>
+<li>section_path</li>
+<li>content</li>
+<li>summary</li>
+<li>keywords</li>
+<li>metadata</li>
+</ul>
+<p>可以针对不同字段建不同召回策略。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">title BM25 召回
+</span></span><span class="line"><span class="cl">content BM25 召回
+</span></span><span class="line"><span class="cl">content vector 召回
+</span></span><span class="line"><span class="cl">summary vector 召回
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>标题命中通常是强信号。</p>
+<p>如果用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">退款规则是什么？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>命中标题“退款规则”的 chunk，通常比正文里偶然出现“退款”的 chunk 更可信。</p>
+<h2 id="612-多路召回的工程结构">6.12 多路召回的工程结构
+</h2><p>一个简化实现可以是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">retrieve</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">user_context</span><span class="p">:</span> <span class="nb">dict</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="n">rewritten</span> <span class="o">=</span> <span class="n">rewrite_query</span><span class="p">(</span><span class="n">question</span><span class="p">,</span> <span class="n">user_context</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&#34;chat_history&#34;</span><span class="p">,</span> <span class="p">[]))</span>
+</span></span><span class="line"><span class="cl">    <span class="n">expanded_queries</span> <span class="o">=</span> <span class="n">expand_query</span><span class="p">(</span><span class="n">question</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="n">result_lists</span> <span class="o">=</span> <span class="p">[]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">result_lists</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">vector_search</span><span class="p">(</span><span class="n">question</span><span class="p">,</span> <span class="n">top_k</span><span class="o">=</span><span class="mi">50</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">    <span class="n">result_lists</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">bm25_search</span><span class="p">(</span><span class="n">question</span><span class="p">,</span> <span class="n">top_k</span><span class="o">=</span><span class="mi">50</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">    <span class="n">result_lists</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">vector_search</span><span class="p">(</span><span class="n">rewritten</span><span class="p">,</span> <span class="n">top_k</span><span class="o">=</span><span class="mi">30</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="n">q</span> <span class="ow">in</span> <span class="n">expanded_queries</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="n">result_lists</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">bm25_search</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">top_k</span><span class="o">=</span><span class="mi">20</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="n">merged</span> <span class="o">=</span> <span class="n">reciprocal_rank_fusion</span><span class="p">(</span><span class="n">result_lists</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">filtered</span> <span class="o">=</span> <span class="n">apply_permission_filter</span><span class="p">(</span><span class="n">merged</span><span class="p">,</span> <span class="n">user_context</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">reranked</span> <span class="o">=</span> <span class="n">rerank</span><span class="p">(</span><span class="n">question</span><span class="p">,</span> <span class="n">filtered</span><span class="p">[:</span><span class="mi">100</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">reranked</span><span class="p">[:</span><span class="mi">10</span><span class="p">]</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>真实系统会更复杂，但核心思想一样：</p>
+<ul>
+<li>多路找候选</li>
+<li>合并去重</li>
+<li>权限过滤</li>
+<li>重排</li>
+<li>控制最终上下文</li>
+</ul>
+<h1 id="七metadata-filter">七、Metadata Filter
+</h1><h2 id="71-metadata-filter-是什么">7.1 metadata filter 是什么
+</h2><p>metadata filter 是基于结构化字段做过滤。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">product = &#34;billing&#34;
+</span></span><span class="line"><span class="cl">region = &#34;cn&#34;
+</span></span><span class="line"><span class="cl">doc_status = &#34;active&#34;
+</span></span><span class="line"><span class="cl">version &gt;= &#34;2026-01&#34;
+</span></span><span class="line"><span class="cl">permission_group in current_user.groups
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>它解决的是：</p>
+<blockquote>
+<p>检索范围不应该只靠文本相似度决定。</p></blockquote>
+<h2 id="72-为什么-metadata-filter-很重要">7.2 为什么 metadata filter 很重要
+</h2><p>假设知识库里有：</p>
+<ul>
+<li>中国区文档</li>
+<li>美国区文档</li>
+<li>旧版文档</li>
+<li>新版文档</li>
+<li>内部文档</li>
+<li>外部公开文档</li>
+</ul>
+<p>用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">发票怎么开？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果不加 metadata filter，系统可能召回：</p>
+<ul>
+<li>美国区发票规则</li>
+<li>旧版发票流程</li>
+<li>内部财务操作文档</li>
+<li>用户无权限查看的文档</li>
+</ul>
+<p>这些内容语义上都相关，但业务上不该用。</p>
+<h2 id="73-metadata-filter-的实现位置">7.3 metadata filter 的实现位置
+</h2><p>metadata filter 最好在召回阶段就生效。</p>
+<p>不要把越权内容召回后再交给 LLM 判断。</p>
+<p>因为一旦越权内容进入 prompt，就已经有泄露风险。</p>
+<p>常见做法：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="nb">filter</span> <span class="o">=</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;product&#34;</span><span class="p">:</span> <span class="s2">&#34;billing&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;region&#34;</span><span class="p">:</span> <span class="s2">&#34;cn&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;doc_status&#34;</span><span class="p">:</span> <span class="s2">&#34;active&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;permission_group&#34;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&#34;$in&#34;</span><span class="p">:</span> <span class="n">current_user</span><span class="o">.</span><span class="n">groups</span><span class="p">},</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">results</span> <span class="o">=</span> <span class="n">vector_store</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">vector</span><span class="o">=</span><span class="n">query_embedding</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">top_k</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">filter</span><span class="o">=</span><span class="nb">filter</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="74-metadata-filter-的风险">7.4 metadata filter 的风险
+</h2><p>metadata filter 也可能造成漏召回。</p>
+<p>例如：</p>
+<ul>
+<li>文档 metadata 标错</li>
+<li>用户所属权限组不同步</li>
+<li>新文档没有写 doc_status</li>
+<li>地区字段不规范</li>
+<li>时间字段格式混乱</li>
+</ul>
+<p>所以 metadata 不是附属信息，而是 RAG 数据治理的一部分。</p>
+<h2 id="75-适用场景">7.5 适用场景
+</h2><p>metadata filter 适合：</p>
+<ul>
+<li>多租户系统</li>
+<li>企业内部知识库</li>
+<li>多产品线文档</li>
+<li>多地区政策</li>
+<li>多版本文档</li>
+<li>权限敏感场景</li>
+<li>时效性强的制度文档</li>
+</ul>
+<h1 id="八parent-child-retrieval">八、Parent-Child Retrieval
+</h1><h2 id="81-它解决什么问题">8.1 它解决什么问题
+</h2><p>RAG 里有一个经典矛盾：</p>
+<ul>
+<li>chunk 小，检索更准，但上下文不完整</li>
+<li>chunk 大，上下文完整，但检索噪声多</li>
+</ul>
+<p>Parent-child retrieval 就是为了解这个矛盾。</p>
+<h2 id="82-基本思想">8.2 基本思想
+</h2><p>索引时保存两种粒度：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">parent chunk：较大的段落或章节
+</span></span><span class="line"><span class="cl">child chunk：较小的检索片段
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>检索时：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用 child chunk 做精准召回
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">找到 child 所属 parent
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">把 parent 或相邻片段交给 LLM
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="83-示例">8.3 示例
+</h2><p>原文：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">退款规则
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">用户在订单支付后 7 天内可以申请退款。
+</span></span><span class="line"><span class="cl">虚拟商品一经发货不支持退款。
+</span></span><span class="line"><span class="cl">企业合同订单以合同条款为准。
+</span></span><span class="line"><span class="cl">退款到账时间通常为 3 到 5 个工作日。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>child chunk 可以是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">虚拟商品一经发货不支持退款。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>parent chunk 是完整小节：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">退款规则：
+</span></span><span class="line"><span class="cl">用户在订单支付后 7 天内可以申请退款。
+</span></span><span class="line"><span class="cl">虚拟商品一经发货不支持退款。
+</span></span><span class="line"><span class="cl">企业合同订单以合同条款为准。
+</span></span><span class="line"><span class="cl">退款到账时间通常为 3 到 5 个工作日。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">虚拟商品能退款吗？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>检索命中 child 后，把 parent 带给模型，模型就能同时看到规则、例外和上下文。</p>
+<h2 id="84-工程实现">8.4 工程实现
+</h2><p>索引表可以设计成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">parents:
+</span></span><span class="line"><span class="cl">  parent_id
+</span></span><span class="line"><span class="cl">  doc_id
+</span></span><span class="line"><span class="cl">  section_path
+</span></span><span class="line"><span class="cl">  content
+</span></span><span class="line"><span class="cl">  metadata
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">children:
+</span></span><span class="line"><span class="cl">  child_id
+</span></span><span class="line"><span class="cl">  parent_id
+</span></span><span class="line"><span class="cl">  content
+</span></span><span class="line"><span class="cl">  embedding
+</span></span><span class="line"><span class="cl">  metadata
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>查询流程：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">parent_child_retrieve</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">top_k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="n">child_results</span> <span class="o">=</span> <span class="n">child_vector_store</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">        <span class="n">vector</span><span class="o">=</span><span class="n">embed</span><span class="p">(</span><span class="n">question</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">        <span class="n">top_k</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="n">parent_ids</span> <span class="o">=</span> <span class="n">dedupe</span><span class="p">([</span><span class="n">r</span><span class="p">[</span><span class="s2">&#34;parent_id&#34;</span><span class="p">]</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">child_results</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl">    <span class="n">parents</span> <span class="o">=</span> <span class="n">parent_store</span><span class="o">.</span><span class="n">batch_get</span><span class="p">(</span><span class="n">parent_ids</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">parents</span><span class="p">[:</span><span class="n">top_k</span><span class="p">]</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>实际系统里还会保留 child 的分数，用于给 parent 排序。</p>
+<h2 id="85-适用场景">8.5 适用场景
+</h2><p>适合：</p>
+<ul>
+<li>长制度文档</li>
+<li>技术文档</li>
+<li>合同条款</li>
+<li>法律法规</li>
+<li>产品手册</li>
+<li>章节结构明显的文档</li>
+</ul>
+<p>不适合：</p>
+<ul>
+<li>本身就是短 FAQ 的知识库</li>
+<li>每条知识已经足够独立的场景</li>
+</ul>
+<h1 id="九summary-index-召回">九、Summary Index 召回
+</h1><h2 id="91-它解决什么问题">9.1 它解决什么问题
+</h2><p>当文档很多、单篇文档很长时，直接 chunk 检索可能不稳定。</p>
+<p>用户问一个宏观问题：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">数据权限模型是怎么设计的？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>答案可能分布在很长的设计文档里。</p>
+<p>如果只查细粒度 chunk，可能召回到局部细节，而不是先找到正确文档或章节。</p>
+<h2 id="92-基本思想">9.2 基本思想
+</h2><p>为文档或章节生成摘要，并对摘要建立索引。</p>
+<p>召回分两步：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">第一步：查 summary index，找到相关文档或章节
+</span></span><span class="line"><span class="cl">第二步：在这些文档或章节内查原文 chunk
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="93-工程实现">9.3 工程实现
+</h2><p>离线阶段：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">文档解析
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">按章节切分
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">为每个章节生成 summary
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">summary embedding 入库
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">原文 chunk embedding 入库
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>在线阶段：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">summary_then_chunk_retrieve</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="n">summary_hits</span> <span class="o">=</span> <span class="n">summary_store</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">        <span class="n">vector</span><span class="o">=</span><span class="n">embed</span><span class="p">(</span><span class="n">question</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">        <span class="n">top_k</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="n">section_ids</span> <span class="o">=</span> <span class="p">[</span><span class="n">hit</span><span class="p">[</span><span class="s2">&#34;section_id&#34;</span><span class="p">]</span> <span class="k">for</span> <span class="n">hit</span> <span class="ow">in</span> <span class="n">summary_hits</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="n">chunk_hits</span> <span class="o">=</span> <span class="n">chunk_store</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">        <span class="n">vector</span><span class="o">=</span><span class="n">embed</span><span class="p">(</span><span class="n">question</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">        <span class="n">top_k</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="nb">filter</span><span class="o">=</span><span class="p">{</span><span class="s2">&#34;section_id&#34;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&#34;$in&#34;</span><span class="p">:</span> <span class="n">section_ids</span><span class="p">}},</span>
+</span></span><span class="line"><span class="cl">    <span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">chunk_hits</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="94-优点和缺点">9.4 优点和缺点
+</h2><p>优点：</p>
+<ul>
+<li>适合长文档</li>
+<li>能先定位章节</li>
+<li>减少全库搜索噪声</li>
+<li>对宏观问题更友好</li>
+</ul>
+<p>缺点：</p>
+<ul>
+<li>摘要质量影响召回</li>
+<li>离线处理成本更高</li>
+<li>摘要可能遗漏细节</li>
+<li>不适合非常精确的字段查询</li>
+</ul>
+<h2 id="95-适用场景">9.5 适用场景
+</h2><p>适合：</p>
+<ul>
+<li>研究报告</li>
+<li>架构设计文档</li>
+<li>长产品手册</li>
+<li>政策文件</li>
+<li>会议纪要</li>
+<li>多章节知识库</li>
+</ul>
+<h1 id="十graph-retrieval">十、Graph Retrieval
+</h1><h2 id="101-图召回解决什么问题">10.1 图召回解决什么问题
+</h2><p>有些问题不是简单的文本相似，而是实体关系问题。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">订单服务依赖哪些下游系统？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">张三负责的项目有哪些相关接口？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">这个政策影响哪些产品线？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这些问题需要利用关系结构。</p>
+<h2 id="102-图里的节点和边">10.2 图里的节点和边
+</h2><p>图召回通常会把知识抽象成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">节点：实体
+</span></span><span class="line"><span class="cl">边：关系
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>例如代码系统里：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">节点：
+</span></span><span class="line"><span class="cl">- OrderService
+</span></span><span class="line"><span class="cl">- PaymentService
+</span></span><span class="line"><span class="cl">- create_order
+</span></span><span class="line"><span class="cl">- orders 表
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">边：
+</span></span><span class="line"><span class="cl">- OrderService 调用 PaymentService
+</span></span><span class="line"><span class="cl">- create_order 写入 orders 表
+</span></span><span class="line"><span class="cl">- PaymentService 依赖 payment_gateway
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>企业知识库里：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">节点：
+</span></span><span class="line"><span class="cl">- 员工
+</span></span><span class="line"><span class="cl">- 部门
+</span></span><span class="line"><span class="cl">- 项目
+</span></span><span class="line"><span class="cl">- 文档
+</span></span><span class="line"><span class="cl">- 产品线
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">边：
+</span></span><span class="line"><span class="cl">- 员工 属于 部门
+</span></span><span class="line"><span class="cl">- 文档 描述 产品线
+</span></span><span class="line"><span class="cl">- 项目 依赖 系统
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="103-图召回流程">10.3 图召回流程
+</h2><p>常见流程：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户问题
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">实体识别
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">实体链接到图节点
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">沿关系边扩展一跳或多跳
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">拿到相关文档、chunk 或实体说明
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">和文本召回结果融合
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">问：订单服务创建订单时会影响哪些表？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>系统识别实体：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">OrderService
+</span></span><span class="line"><span class="cl">create_order
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>图扩展：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">OrderService -&gt; create_order -&gt; writes -&gt; orders
+</span></span><span class="line"><span class="cl">OrderService -&gt; create_order -&gt; writes -&gt; order_items
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>再召回相关代码和设计文档。</p>
+<h2 id="104-图召回的实现方式">10.4 图召回的实现方式
+</h2><p>可以使用：</p>
+<ul>
+<li>Neo4j</li>
+<li>NebulaGraph</li>
+<li>JanusGraph</li>
+<li>PostgreSQL 关系表</li>
+<li>NetworkX</li>
+<li>自研实体关系表</li>
+</ul>
+<p>简化的关系表设计：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">entities:
+</span></span><span class="line"><span class="cl">  entity_id
+</span></span><span class="line"><span class="cl">  entity_name
+</span></span><span class="line"><span class="cl">  entity_type
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">relations:
+</span></span><span class="line"><span class="cl">  source_entity_id
+</span></span><span class="line"><span class="cl">  relation_type
+</span></span><span class="line"><span class="cl">  target_entity_id
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">entity_chunks:
+</span></span><span class="line"><span class="cl">  entity_id
+</span></span><span class="line"><span class="cl">  chunk_id
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>查询时：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">r</span><span class="p">.</span><span class="n">target_entity_id</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">ec</span><span class="p">.</span><span class="n">chunk_id</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">relations</span><span class="w"> </span><span class="n">r</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">JOIN</span><span class="w"> </span><span class="n">entity_chunks</span><span class="w"> </span><span class="n">ec</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="k">ON</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">target_entity_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ec</span><span class="p">.</span><span class="n">entity_id</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">source_entity_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">:</span><span class="n">entity_id</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="k">AND</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">relation_type</span><span class="w"> </span><span class="k">IN</span><span class="w"> </span><span class="p">(</span><span class="s1">&#39;depends_on&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;calls&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;writes&#39;</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="105-图召回的优点和缺点">10.5 图召回的优点和缺点
+</h2><p>优点：</p>
+<ul>
+<li>适合多跳关系问题</li>
+<li>可解释性强</li>
+<li>能处理结构化依赖</li>
+<li>对代码、组织、业务实体很有价值</li>
+</ul>
+<p>缺点：</p>
+<ul>
+<li>构建成本高</li>
+<li>实体抽取和消歧难</li>
+<li>图谱维护成本高</li>
+<li>不适合普通 FAQ 类问题</li>
+</ul>
+<h2 id="106-适用场景">10.6 适用场景
+</h2><p>适合：</p>
+<ul>
+<li>代码库问答</li>
+<li>系统依赖分析</li>
+<li>知识图谱问答</li>
+<li>组织架构问答</li>
+<li>多实体关系推理</li>
+<li>风险影响分析</li>
+</ul>
+<h1 id="十一rerank-和召回的关系">十一、Rerank 和召回的关系
+</h1><h2 id="111-rerank-不是召回但通常紧跟召回">11.1 rerank 不是召回，但通常紧跟召回
+</h2><p>召回负责找候选。</p>
+<p>rerank 负责把候选重新排序。</p>
+<p>常见流程：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">多路召回 top 100
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">去重
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">rerank
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">取 top 5 到 top 10
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">上下文组装
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="112-cross-encoder-rerank">11.2 Cross-Encoder Rerank
+</h2><p>向量召回通常是双塔结构：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">query -&gt; embedding
+</span></span><span class="line"><span class="cl">chunk -&gt; embedding
+</span></span><span class="line"><span class="cl">计算相似度
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>query 和 chunk 是分别编码的。</p>
+<p>Cross-encoder rerank 则把 query 和 chunk 放在一起编码：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">[query, chunk] -&gt; relevance score
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>它更慢，但判断更精细。</p>
+<p>适合对召回候选做二次排序。</p>
+<h2 id="113-llm-rerank">11.3 LLM Rerank
+</h2><p>也可以让大模型判断相关性。</p>
+<p>例如给模型：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">问题：Pro 套餐 API 调用上限是多少？
+</span></span><span class="line"><span class="cl">候选片段：Pro 套餐每月包含 100 万次 API 调用。
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">请判断候选片段是否能回答问题，输出 0 到 3 分。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>优点：</p>
+<ul>
+<li>灵活</li>
+<li>可解释</li>
+<li>能处理复杂问题</li>
+</ul>
+<p>缺点：</p>
+<ul>
+<li>成本高</li>
+<li>延迟高</li>
+<li>一致性不如专用 reranker</li>
+</ul>
+<p>生产上更常见的是专用 rerank 模型。</p>
+<h2 id="114-rerank-适用场景">11.4 rerank 适用场景
+</h2><p>适合：</p>
+<ul>
+<li>召回结果多</li>
+<li>混合召回后噪声多</li>
+<li>top-k 排名不稳定</li>
+<li>问题需要精细语义判断</li>
+</ul>
+<p>不适合替代召回。</p>
+<p>如果正确 chunk 没进入候选集，rerank 无法发挥作用。</p>
+<h1 id="十二不同召回策略怎么选">十二、不同召回策略怎么选
+</h1><h2 id="121-按问题类型选">12.1 按问题类型选
+</h2><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>问题类型</th>
+          <th>推荐策略</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>概念解释</td>
+          <td>向量召回 + rerank</td>
+      </tr>
+      <tr>
+          <td>精确术语</td>
+          <td>BM25 + metadata filter</td>
+      </tr>
+      <tr>
+          <td>错误码排查</td>
+          <td>BM25 + 向量 + rerank</td>
+      </tr>
+      <tr>
+          <td>API 文档问答</td>
+          <td>BM25 + 向量 + 字段权重</td>
+      </tr>
+      <tr>
+          <td>流程问答</td>
+          <td>向量 + parent-child</td>
+      </tr>
+      <tr>
+          <td>法律制度</td>
+          <td>BM25 + parent-child + metadata</td>
+      </tr>
+      <tr>
+          <td>多版本文档</td>
+          <td>metadata filter + 混合召回</td>
+      </tr>
+      <tr>
+          <td>长报告问答</td>
+          <td>summary index + chunk retrieval</td>
+      </tr>
+      <tr>
+          <td>代码库问答</td>
+          <td>BM25 + 符号索引 + 图召回</td>
+      </tr>
+      <tr>
+          <td>多跳关系问题</td>
+          <td>graph retrieval + 文本召回</td>
+      </tr>
+      <tr>
+          <td>无答案判断</td>
+          <td>高质量召回 + 阈值 + 生成拒答</td>
+      </tr>
+  </tbody>
+</table></div>
+<h2 id="122-按知识库类型选">12.2 按知识库类型选
+</h2><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>知识库类型</th>
+          <th>推荐策略</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>FAQ</td>
+          <td>向量召回 + BM25</td>
+      </tr>
+      <tr>
+          <td>产品文档</td>
+          <td>混合召回 + parent-child</td>
+      </tr>
+      <tr>
+          <td>API 文档</td>
+          <td>BM25 + 向量 + title/path 字段权重</td>
+      </tr>
+      <tr>
+          <td>代码仓库</td>
+          <td>BM25 + symbol index + graph retrieval</td>
+      </tr>
+      <tr>
+          <td>合同制度</td>
+          <td>BM25 + metadata + parent-child</td>
+      </tr>
+      <tr>
+          <td>研究报告</td>
+          <td>summary index + 向量召回</td>
+      </tr>
+      <tr>
+          <td>企业 Wiki</td>
+          <td>混合召回 + metadata filter</td>
+      </tr>
+      <tr>
+          <td>工单记录</td>
+          <td>向量召回 + 时间过滤 + rerank</td>
+      </tr>
+  </tbody>
+</table></div>
+<h2 id="123-一个通用生产级起点">12.3 一个通用生产级起点
+</h2><p>如果没有特殊约束，可以从这个方案开始：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1. 文档按结构切 chunk
+</span></span><span class="line"><span class="cl">2. chunk 入向量索引
+</span></span><span class="line"><span class="cl">3. chunk 入 BM25 索引
+</span></span><span class="line"><span class="cl">4. title、section_path、content 分字段建索引
+</span></span><span class="line"><span class="cl">5. 查询时做 metadata filter
+</span></span><span class="line"><span class="cl">6. BM25 top 50 + vector top 50
+</span></span><span class="line"><span class="cl">7. RRF 合并去重
+</span></span><span class="line"><span class="cl">8. rerank top 100
+</span></span><span class="line"><span class="cl">9. 取 top 5 到 top 10
+</span></span><span class="line"><span class="cl">10. parent-child 或相邻 chunk 补上下文
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这套方案不一定最先进，但很稳。</p>
+<h1 id="十三召回评估">十三、召回评估
+</h1><h2 id="131-召回评估看什么">13.1 召回评估看什么
+</h2><p>召回评估不看最终答案，只看检索结果。</p>
+<p>核心问题是：</p>
+<blockquote>
+<p>正确证据有没有被找出来，排名是否足够靠前？</p></blockquote>
+<p>常见指标：</p>
+<ul>
+<li>Recall@k</li>
+<li>Precision@k</li>
+<li>MRR</li>
+<li>NDCG</li>
+</ul>
+<h2 id="132-recallk">13.2 Recall@k
+</h2><p><code>Recall@k</code> 看正确 chunk 是否出现在前 k 个结果里。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">100 个问题里，有 82 个问题的正确 chunk 出现在 top 10
+</span></span><span class="line"><span class="cl">Recall@10 = 0.82
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>RAG 里非常关注这个指标。</p>
+<p>如果 Recall@50 很低，说明召回链路有问题。</p>
+<h2 id="133-mrr">13.3 MRR
+</h2><p>MRR 看第一个正确结果排在第几位。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">问题 A：正确结果排第 1，得分 1
+</span></span><span class="line"><span class="cl">问题 B：正确结果排第 2，得分 1/2
+</span></span><span class="line"><span class="cl">问题 C：正确结果排第 5，得分 1/5
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>MRR 越高，说明正确结果越靠前。</p>
+<h2 id="134-ndcg">13.4 NDCG
+</h2><p>如果一个问题有多个相关 chunk，而且相关程度不同，可以用 NDCG。</p>
+<p>例如：</p>
+<ul>
+<li>完全相关：3 分</li>
+<li>部分相关：2 分</li>
+<li>弱相关：1 分</li>
+<li>不相关：0 分</li>
+</ul>
+<p>NDCG 能衡量高相关结果是否排在前面。</p>
+<h2 id="135-召回评估集怎么做">13.5 召回评估集怎么做
+</h2><p>每条评估样本至少包含：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;question&#34;</span><span class="p">:</span> <span class="s2">&#34;Pro 套餐每月 API 调用上限是多少？&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;golden_chunk_ids&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;pricing_chunk_003&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;category&#34;</span><span class="p">:</span> <span class="s2">&#34;精确事实&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;metadata_scope&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;product&#34;</span><span class="p">:</span> <span class="s2">&#34;billing&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;region&#34;</span><span class="p">:</span> <span class="s2">&#34;cn&#34;</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果没有 golden chunk，就只能粗略评估答案，很难定位召回问题。</p>
+<h2 id="136-召回失败排查">13.6 召回失败排查
+</h2><p>当一个问题没有召回正确 chunk，可以按这个顺序排查：</p>
+<ol>
+<li>原始文档里有没有正确内容？</li>
+<li>文档解析后内容是否丢失？</li>
+<li>chunk 是否把答案切完整？</li>
+<li>chunk 是否进入索引？</li>
+<li>query 是否表达了正确意图？</li>
+<li>BM25 是否能召回？</li>
+<li>向量检索是否能召回？</li>
+<li>metadata filter 是否误过滤？</li>
+<li>top-k 是否太小？</li>
+<li>多路融合是否把正确结果压低？</li>
+</ol>
+<p>这个顺序可以快速定位问题在哪一层。</p>
+<h1 id="十四常见调优建议">十四、常见调优建议
+</h1><h2 id="141-不要只调-top-k">14.1 不要只调 top-k
+</h2><p>很多人召回不好，第一反应是把 <code>top-k</code> 调大。</p>
+<p>这能提高候选覆盖，但也会带来：</p>
+<ul>
+<li>噪声增加</li>
+<li>rerank 成本增加</li>
+<li>延迟增加</li>
+<li>上下文组装压力增加</li>
+</ul>
+<p>如果 <code>top-k=100</code> 仍然找不到正确结果，问题通常不在 top-k，而在：</p>
+<ul>
+<li>chunk</li>
+<li>query</li>
+<li>embedding</li>
+<li>BM25</li>
+<li>metadata</li>
+<li>索引字段</li>
+</ul>
+<h2 id="142-不要只依赖向量检索">14.2 不要只依赖向量检索
+</h2><p>只做向量检索是很多 RAG demo 的默认方案，但生产中风险很高。</p>
+<p>只要知识库里有：</p>
+<ul>
+<li>编号</li>
+<li>术语</li>
+<li>代码</li>
+<li>配置项</li>
+<li>错误码</li>
+<li>版本号</li>
+</ul>
+<p>就应该考虑 BM25 或其他精确检索。</p>
+<h2 id="143-title-和-section_path-很重要">14.3 title 和 section_path 很重要
+</h2><p>不要只把正文送去索引。</p>
+<p>更好的索引文本通常是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">标题：计费系统说明
+</span></span><span class="line"><span class="cl">章节：套餐规则 &gt; Pro 套餐 &gt; API 调用限制
+</span></span><span class="line"><span class="cl">正文：Pro 套餐每月包含 100 万次 API 调用，超出部分按量计费。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>标题和章节路径能显著增强召回信号。</p>
+<h2 id="144-权限过滤要前置">14.4 权限过滤要前置
+</h2><p>权限过滤不能只靠 prompt。</p>
+<p>错误做法：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">先召回所有内容
+</span></span><span class="line"><span class="cl">再告诉模型不要使用无权限内容
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>正确做法：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回阶段就只搜索当前用户有权限的内容
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>权限是系统约束，不是生成建议。</p>
+<h2 id="145-线上失败样本要回流">14.5 线上失败样本要回流
+</h2><p>召回优化不能只靠离线假问题。</p>
+<p>最有价值的数据来自：</p>
+<ul>
+<li>用户点踩</li>
+<li>用户追问</li>
+<li>客服转人工</li>
+<li>搜索无结果</li>
+<li>答案引用不匹配</li>
+<li>用户重新换词搜索</li>
+</ul>
+<p>这些样本应该进入评估集。</p>
+<h1 id="小结">小结
+</h1><p>RAG 召回不是“向量库 top-k”这么简单。</p>
+<p>一个成熟的召回系统，通常会组合：</p>
+<ul>
+<li>BM25 关键词召回</li>
+<li>向量语义召回</li>
+<li>混合召回</li>
+<li>多 query 召回</li>
+<li>query rewrite</li>
+<li>metadata filter</li>
+<li>parent-child retrieval</li>
+<li>summary index</li>
+<li>graph retrieval</li>
+<li>rerank</li>
+</ul>
+<p>不同策略解决的问题不同：</p>
+<ul>
+<li>BM25 解决精确匹配</li>
+<li>向量检索解决语义相似</li>
+<li>混合召回解决互补</li>
+<li>metadata filter 解决范围和权限</li>
+<li>parent-child 解决检索粒度和上下文完整性的矛盾</li>
+<li>summary index 解决长文档定位</li>
+<li>graph retrieval 解决实体关系和多跳问题</li>
+<li>rerank 解决候选排序质量</li>
+</ul>
+<p>如果只记一句话：</p>
+<blockquote>
+<p>RAG 召回的目标不是“找几段相似文本”，而是稳定、可控、可解释地把正确证据送到模型面前。</p></blockquote>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/ai/">AI</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-rag%E5%AE%8C%E6%95%B4%E6%B5%81%E7%A8%8B%E5%B8%B8%E8%A7%81%E5%AE%9E%E7%8E%B0%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%B8%B8%E8%A7%81%E5%9D%91%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">什么是 RAG：完整流程、常见实现、底层原理、常见坑与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-rag%E5%AE%8C%E6%95%B4%E6%B5%81%E7%A8%8B%E5%B8%B8%E8%A7%81%E5%AE%9E%E7%8E%B0%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%B8%B8%E8%A7%81%E5%9D%91%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">什么是 RAG：完整流程、常见实现、底层原理、常见坑与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/appbuilder-%E7%BB%84%E4%BB%B6mcp-%E4%B8%8E-skills-%E7%9A%84%E5%AF%B9%E6%AF%94%E5%AD%A6%E4%B9%A0/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AppBuilder 组件、MCP 与 Skills 的对比学习</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-mcp%E6%A6%82%E5%BF%B5%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F%E5%BC%80%E5%8F%91%E6%96%B9%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">什么是 MCP：概念、使用方式、开发方法、底层原理与常见面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-harness-%E4%B8%8E-harness-engineering/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">什么是 Harness 与 Harness Engineering</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>
