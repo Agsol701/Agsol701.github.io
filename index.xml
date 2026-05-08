@@ -7,7 +7,1763 @@
         <generator>Hugo -- gohugo.io</generator>
         <language>en</language>
         <copyright>Agsol</copyright>
-        <lastBuildDate>Wed, 06 May 2026 00:00:00 +0000</lastBuildDate><atom:link href="https://Agsol701.github.io/index.xml" rel="self" type="application/rss+xml" /><item>
+        <lastBuildDate>Thu, 07 May 2026 00:00:00 +0000</lastBuildDate><atom:link href="https://Agsol701.github.io/index.xml" rel="self" type="application/rss+xml" /><item>
+        <title>RAG 文档解析详解：从原始文件到可检索知识的工程链路</title>
+        <link>https://Agsol701.github.io/p/rag-%E6%96%87%E6%A1%A3%E8%A7%A3%E6%9E%90%E8%AF%A6%E8%A7%A3%E4%BB%8E%E5%8E%9F%E5%A7%8B%E6%96%87%E4%BB%B6%E5%88%B0%E5%8F%AF%E6%A3%80%E7%B4%A2%E7%9F%A5%E8%AF%86%E7%9A%84%E5%B7%A5%E7%A8%8B%E9%93%BE%E8%B7%AF/</link>
+        <pubDate>Thu, 07 May 2026 00:00:00 +0000</pubDate>
+        
+        <guid>https://Agsol701.github.io/p/rag-%E6%96%87%E6%A1%A3%E8%A7%A3%E6%9E%90%E8%AF%A6%E8%A7%A3%E4%BB%8E%E5%8E%9F%E5%A7%8B%E6%96%87%E4%BB%B6%E5%88%B0%E5%8F%AF%E6%A3%80%E7%B4%A2%E7%9F%A5%E8%AF%86%E7%9A%84%E5%B7%A5%E7%A8%8B%E9%93%BE%E8%B7%AF/</guid>
+        <description>&lt;h1 id=&#34;写在前面&#34;&gt;写在前面
+&lt;/h1&gt;&lt;p&gt;很多人做 RAG，会把重点放在：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;embedding&lt;/li&gt;
+&lt;li&gt;向量数据库&lt;/li&gt;
+&lt;li&gt;BM25&lt;/li&gt;
+&lt;li&gt;rerank&lt;/li&gt;
+&lt;li&gt;prompt&lt;/li&gt;
+&lt;li&gt;大模型生成&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;但在真实项目里，很多效果问题其实发生得更早：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;文档还没有进入索引之前，就已经被解析坏了。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;PDF 双栏顺序错乱&lt;/li&gt;
+&lt;li&gt;表格表头丢失&lt;/li&gt;
+&lt;li&gt;页眉页脚混进正文&lt;/li&gt;
+&lt;li&gt;图片里的文字没有 OCR&lt;/li&gt;
+&lt;li&gt;Markdown 标题层级丢失&lt;/li&gt;
+&lt;li&gt;Word 文档里的批注、脚注、目录处理不当&lt;/li&gt;
+&lt;li&gt;代码块被当成普通段落切碎&lt;/li&gt;
+&lt;li&gt;元数据没有保留下来&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;后面再好的召回和生成，也很难弥补这些问题。&lt;/p&gt;
+&lt;p&gt;所以这篇文章专门讲 RAG 里的文档解析：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;如何把 PDF、Word、HTML、Markdown、图片、表格、代码等原始资料，转换成结构清晰、可切分、可索引、可评估的知识表示。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;这篇会覆盖：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;文档解析在 RAG 中的位置&lt;/li&gt;
+&lt;li&gt;文档解析到底要产出什么&lt;/li&gt;
+&lt;li&gt;不同文件格式怎么处理&lt;/li&gt;
+&lt;li&gt;PDF 解析的常见难点&lt;/li&gt;
+&lt;li&gt;表格、图片、OCR、代码怎么解析&lt;/li&gt;
+&lt;li&gt;清洗、去噪和结构恢复&lt;/li&gt;
+&lt;li&gt;元数据怎么设计&lt;/li&gt;
+&lt;li&gt;解析结果怎么进入 chunk 和索引&lt;/li&gt;
+&lt;li&gt;解析质量怎么评估&lt;/li&gt;
+&lt;li&gt;生产级文档解析链路怎么设计&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h1 id=&#34;一文档解析在-rag-中的位置&#34;&gt;一、文档解析在 RAG 中的位置
+&lt;/h1&gt;&lt;h2 id=&#34;11-rag-不是从-embedding-开始的&#34;&gt;1.1 RAG 不是从 embedding 开始的
+&lt;/h2&gt;&lt;p&gt;一个完整的 RAG 知识入库链路大概是：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;15
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;原始知识源
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;文档采集
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;文档解析
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;清洗与结构化
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;文本切分
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;embedding
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;索引构建
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;检索与生成
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;很多教程会从“切 chunk + embedding”开始讲，但这默认了一个前提：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;你已经有了干净、结构化、顺序正确的文本。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;真实情况往往不是这样。&lt;/p&gt;
+&lt;p&gt;企业知识库里常见的是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;扫描版 PDF&lt;/li&gt;
+&lt;li&gt;Word 制度文档&lt;/li&gt;
+&lt;li&gt;HTML 网页&lt;/li&gt;
+&lt;li&gt;Markdown 技术文档&lt;/li&gt;
+&lt;li&gt;Excel 表格&lt;/li&gt;
+&lt;li&gt;PPT 培训材料&lt;/li&gt;
+&lt;li&gt;图片截图&lt;/li&gt;
+&lt;li&gt;代码仓库&lt;/li&gt;
+&lt;li&gt;工单和聊天记录&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这些内容不能直接拿去 embedding。&lt;/p&gt;
+&lt;h2 id=&#34;12-文档解析的目标&#34;&gt;1.2 文档解析的目标
+&lt;/h2&gt;&lt;p&gt;文档解析不是简单地“提取文本”。&lt;/p&gt;
+&lt;p&gt;更准确地说，它要完成三件事：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;把原始文件里的内容提取出来&lt;/li&gt;
+&lt;li&gt;尽量保留原始结构和语义关系&lt;/li&gt;
+&lt;li&gt;转换成后续切分、检索、引用都能使用的中间表示&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;一个好的解析结果应该能回答这些问题：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;正文是什么？&lt;/li&gt;
+&lt;li&gt;标题层级是什么？&lt;/li&gt;
+&lt;li&gt;表格里的行列关系是什么？&lt;/li&gt;
+&lt;li&gt;图片里有没有重要文字？&lt;/li&gt;
+&lt;li&gt;代码块边界在哪里？&lt;/li&gt;
+&lt;li&gt;这段内容来自哪个文件、哪一页、哪个章节？&lt;/li&gt;
+&lt;li&gt;用户最终看到答案时，能不能追溯到原始来源？&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果只提取出一大坨纯文本，很多信息就丢了。&lt;/p&gt;
+&lt;h1 id=&#34;二文档解析应该产出什么&#34;&gt;二、文档解析应该产出什么
+&lt;/h1&gt;&lt;h2 id=&#34;21-不推荐只产出纯文本&#34;&gt;2.1 不推荐只产出纯文本
+&lt;/h2&gt;&lt;p&gt;最粗糙的解析结果是：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;这是文档全文，这是文档全文，这是文档全文……
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这种结果的问题是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;标题层级丢失&lt;/li&gt;
+&lt;li&gt;表格结构丢失&lt;/li&gt;
+&lt;li&gt;代码块边界丢失&lt;/li&gt;
+&lt;li&gt;页码和来源丢失&lt;/li&gt;
+&lt;li&gt;图片和正文关系丢失&lt;/li&gt;
+&lt;li&gt;后续 chunk 很难切好&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;纯文本可以作为一个字段，但不应该是唯一产物。&lt;/p&gt;
+&lt;h2 id=&#34;22-推荐的中间结构&#34;&gt;2.2 推荐的中间结构
+&lt;/h2&gt;&lt;p&gt;更推荐把文档解析成结构化 block。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;15
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;16
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;17
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;18
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;19
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;20
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;21
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;22
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;23
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;24
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;25
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;26
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;27
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;28
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;29
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;30
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;31
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;32
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;33
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;34
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;35
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;36
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;37
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;38
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;39
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;40
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;doc_id&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;refund_policy_2026&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;source_path&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;s3://kb/policy/refund_policy_2026.pdf&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;title&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;退款规则说明&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;blocks&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      &lt;span class=&#34;nt&#34;&gt;&amp;#34;block_id&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;b001&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      &lt;span class=&#34;nt&#34;&gt;&amp;#34;type&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;heading&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      &lt;span class=&#34;nt&#34;&gt;&amp;#34;level&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;1&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      &lt;span class=&#34;nt&#34;&gt;&amp;#34;text&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;退款规则&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      &lt;span class=&#34;nt&#34;&gt;&amp;#34;page&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;1&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;p&#34;&gt;},&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      &lt;span class=&#34;nt&#34;&gt;&amp;#34;block_id&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;b002&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      &lt;span class=&#34;nt&#34;&gt;&amp;#34;type&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;paragraph&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      &lt;span class=&#34;nt&#34;&gt;&amp;#34;text&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;用户在订单支付后 7 天内可以申请退款。&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      &lt;span class=&#34;nt&#34;&gt;&amp;#34;page&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;1&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      &lt;span class=&#34;nt&#34;&gt;&amp;#34;section_path&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;退款规则&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;]&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;p&#34;&gt;},&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      &lt;span class=&#34;nt&#34;&gt;&amp;#34;block_id&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;b003&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      &lt;span class=&#34;nt&#34;&gt;&amp;#34;type&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;table&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      &lt;span class=&#34;nt&#34;&gt;&amp;#34;page&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;2&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      &lt;span class=&#34;nt&#34;&gt;&amp;#34;section_path&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;退款规则&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;特殊商品&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;],&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      &lt;span class=&#34;nt&#34;&gt;&amp;#34;table&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        &lt;span class=&#34;nt&#34;&gt;&amp;#34;headers&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;商品类型&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;是否支持退款&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;说明&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;],&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        &lt;span class=&#34;nt&#34;&gt;&amp;#34;rows&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;          &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;虚拟商品&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;不支持&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;一经发货不支持退款&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;],&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;          &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;实体商品&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;支持&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;需在 7 天内申请&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;]&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        &lt;span class=&#34;p&#34;&gt;]&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      &lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;p&#34;&gt;],&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;metadata&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;nt&#34;&gt;&amp;#34;created_at&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;2026-04-01&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;nt&#34;&gt;&amp;#34;version&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;2026-04&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;nt&#34;&gt;&amp;#34;department&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;finance&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;nt&#34;&gt;&amp;#34;permission_group&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;support&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;finance&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;]&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这种结构有几个好处：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;后续可以按标题层级切分&lt;/li&gt;
+&lt;li&gt;表格可以单独转换成适合检索的文本&lt;/li&gt;
+&lt;li&gt;引用可以追溯到页码和 block&lt;/li&gt;
+&lt;li&gt;metadata 可以进入权限过滤&lt;/li&gt;
+&lt;li&gt;不同类型内容可以采用不同切分策略&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;23-block-类型怎么设计&#34;&gt;2.3 block 类型怎么设计
+&lt;/h2&gt;&lt;p&gt;常见 block 类型包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;heading&lt;/code&gt;：标题&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;paragraph&lt;/code&gt;：普通段落&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;list&lt;/code&gt;：列表&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;table&lt;/code&gt;：表格&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;image&lt;/code&gt;：图片&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;ocr_text&lt;/code&gt;：OCR 提取文本&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;code&lt;/code&gt;：代码块&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;quote&lt;/code&gt;：引用&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;footnote&lt;/code&gt;：脚注&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;caption&lt;/code&gt;：图注或表注&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;metadata&lt;/code&gt;：文档元信息&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;不要把所有内容都压成 &lt;code&gt;paragraph&lt;/code&gt;。&lt;/p&gt;
+&lt;p&gt;因为不同 block 的处理方式不同：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;表格要保留表头&lt;/li&gt;
+&lt;li&gt;代码要保留缩进和符号&lt;/li&gt;
+&lt;li&gt;图片要保留 OCR 和图注&lt;/li&gt;
+&lt;li&gt;标题要进入 section_path&lt;/li&gt;
+&lt;li&gt;脚注可能要和正文建立关系&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;三不同格式怎么解析&#34;&gt;三、不同格式怎么解析
+&lt;/h1&gt;&lt;h2 id=&#34;31-markdown&#34;&gt;3.1 Markdown
+&lt;/h2&gt;&lt;p&gt;Markdown 是最适合 RAG 的格式之一。&lt;/p&gt;
+&lt;p&gt;因为它天然有结构：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;#&lt;/code&gt; 标题&lt;/li&gt;
+&lt;li&gt;段落&lt;/li&gt;
+&lt;li&gt;列表&lt;/li&gt;
+&lt;li&gt;表格&lt;/li&gt;
+&lt;li&gt;代码块&lt;/li&gt;
+&lt;li&gt;链接&lt;/li&gt;
+&lt;li&gt;图片&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;解析 Markdown 时，重点不是只读取文本，而是保留语法结构。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-markdown&#34; data-lang=&#34;markdown&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gh&#34;&gt;# 退款规则
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gh&#34;&gt;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;## 虚拟商品
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;虚拟商品一经发货不支持退款。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;应该解析成：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;section_path = [&amp;#34;退款规则&amp;#34;, &amp;#34;虚拟商品&amp;#34;]
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;content = &amp;#34;虚拟商品一经发货不支持退款。&amp;#34;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这样后续 chunk 可以带上标题路径：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;标题路径：退款规则 &amp;gt; 虚拟商品
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;正文：虚拟商品一经发货不支持退款。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这比只存正文更容易召回。&lt;/p&gt;
+&lt;h2 id=&#34;32-html&#34;&gt;3.2 HTML
+&lt;/h2&gt;&lt;p&gt;HTML 解析要注意两件事：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;提取正文&lt;/li&gt;
+&lt;li&gt;去掉页面噪声&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;网页里经常有：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;导航栏&lt;/li&gt;
+&lt;li&gt;页脚&lt;/li&gt;
+&lt;li&gt;相关推荐&lt;/li&gt;
+&lt;li&gt;广告&lt;/li&gt;
+&lt;li&gt;评论区&lt;/li&gt;
+&lt;li&gt;侧边栏&lt;/li&gt;
+&lt;li&gt;面包屑&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果全部提取，会污染知识库。&lt;/p&gt;
+&lt;p&gt;更合理的做法是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;优先提取 &lt;code&gt;article&lt;/code&gt;、&lt;code&gt;main&lt;/code&gt; 等正文区域&lt;/li&gt;
+&lt;li&gt;保留 &lt;code&gt;h1&lt;/code&gt; 到 &lt;code&gt;h6&lt;/code&gt; 标题层级&lt;/li&gt;
+&lt;li&gt;保留 &lt;code&gt;table&lt;/code&gt;、&lt;code&gt;code&lt;/code&gt;、&lt;code&gt;pre&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;提取链接文本和 URL&lt;/li&gt;
+&lt;li&gt;去掉 nav、footer、script、style、aside&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;HTML 里的链接也很重要。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-html&#34; data-lang=&#34;html&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;&amp;lt;&lt;/span&gt;&lt;span class=&#34;nt&#34;&gt;a&lt;/span&gt; &lt;span class=&#34;na&#34;&gt;href&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;&lt;span class=&#34;s&#34;&gt;&amp;#34;/docs/auth&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;&amp;gt;&lt;/span&gt;权限配置说明&lt;span class=&#34;p&#34;&gt;&amp;lt;/&lt;/span&gt;&lt;span class=&#34;nt&#34;&gt;a&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;&amp;gt;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;解析时可以保留成：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;链接文本：权限配置说明
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;URL：/docs/auth
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这对来源追溯和文档关系构建有用。&lt;/p&gt;
+&lt;h2 id=&#34;33-word&#34;&gt;3.3 Word
+&lt;/h2&gt;&lt;p&gt;Word 文档常见于企业制度、合同、报告。&lt;/p&gt;
+&lt;p&gt;解析重点包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;标题样式&lt;/li&gt;
+&lt;li&gt;段落&lt;/li&gt;
+&lt;li&gt;编号列表&lt;/li&gt;
+&lt;li&gt;表格&lt;/li&gt;
+&lt;li&gt;页眉页脚&lt;/li&gt;
+&lt;li&gt;脚注尾注&lt;/li&gt;
+&lt;li&gt;批注&lt;/li&gt;
+&lt;li&gt;修订痕迹&lt;/li&gt;
+&lt;li&gt;内嵌图片&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Word 的难点在于：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;很多结构不是靠纯文本表达，而是靠样式表达。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;例如一个段落看起来是标题，但纯文本里没有 &lt;code&gt;#&lt;/code&gt;。&lt;/p&gt;
+&lt;p&gt;解析时应该尽量读取样式信息：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Heading 1 -&amp;gt; 一级标题
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Heading 2 -&amp;gt; 二级标题
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Normal -&amp;gt; 正文段落
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;List Paragraph -&amp;gt; 列表
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;对于制度文档，编号也很关键：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;第 3.2.1 条
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;（一）
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;1.
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这些编号应该保留，因为用户经常按条款编号检索。&lt;/p&gt;
+&lt;h2 id=&#34;34-pdf&#34;&gt;3.4 PDF
+&lt;/h2&gt;&lt;p&gt;PDF 是 RAG 文档解析里最麻烦的格式之一。&lt;/p&gt;
+&lt;p&gt;因为 PDF 本质上更接近“版式文件”，不是结构化文档。&lt;/p&gt;
+&lt;p&gt;它关心的是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;文字放在哪个坐标&lt;/li&gt;
+&lt;li&gt;字体是什么&lt;/li&gt;
+&lt;li&gt;图片在哪里&lt;/li&gt;
+&lt;li&gt;页面怎么渲染&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;但它不一定明确告诉你：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;哪个是标题&lt;/li&gt;
+&lt;li&gt;哪个是正文&lt;/li&gt;
+&lt;li&gt;哪个表格属于哪个段落&lt;/li&gt;
+&lt;li&gt;多栏阅读顺序是什么&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以 PDF 解析经常出问题。&lt;/p&gt;
+&lt;p&gt;PDF 可以粗略分成两类：&lt;/p&gt;
+&lt;h3 id=&#34;文本型-pdf&#34;&gt;文本型 PDF
+&lt;/h3&gt;&lt;p&gt;文本型 PDF 里本身有可复制文字。&lt;/p&gt;
+&lt;p&gt;可以直接抽取文字、坐标、字体、页码等信息。&lt;/p&gt;
+&lt;p&gt;常见问题是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;阅读顺序错乱&lt;/li&gt;
+&lt;li&gt;页眉页脚混入正文&lt;/li&gt;
+&lt;li&gt;表格变成散乱文本&lt;/li&gt;
+&lt;li&gt;脚注插入正文中间&lt;/li&gt;
+&lt;li&gt;多栏排版顺序错误&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;扫描型-pdf&#34;&gt;扫描型 PDF
+&lt;/h3&gt;&lt;p&gt;扫描型 PDF 本质上是一张张图片。&lt;/p&gt;
+&lt;p&gt;这类文档必须做 OCR。&lt;/p&gt;
+&lt;p&gt;常见问题是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;OCR 识别错误&lt;/li&gt;
+&lt;li&gt;表格线干扰识别&lt;/li&gt;
+&lt;li&gt;印章、水印干扰&lt;/li&gt;
+&lt;li&gt;倾斜页面影响识别&lt;/li&gt;
+&lt;li&gt;低清晰度导致漏字&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以 PDF 解析不能只用一种方法。&lt;/p&gt;
+&lt;p&gt;工程上通常要先判断：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;这个 PDF 是文本型，还是扫描型？
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;再决定走文本抽取还是 OCR。&lt;/p&gt;
+&lt;h2 id=&#34;35-excel-和-csv&#34;&gt;3.5 Excel 和 CSV
+&lt;/h2&gt;&lt;p&gt;Excel 和 CSV 不应该简单转成一段纯文本。&lt;/p&gt;
+&lt;p&gt;表格的核心是行列关系。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;套餐&lt;/th&gt;
+          &lt;th&gt;月费&lt;/th&gt;
+          &lt;th&gt;API 调用次数&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Basic&lt;/td&gt;
+          &lt;td&gt;99&lt;/td&gt;
+          &lt;td&gt;10 万&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Pro&lt;/td&gt;
+          &lt;td&gt;299&lt;/td&gt;
+          &lt;td&gt;100 万&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;如果转成：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Basic 99 10 万 Pro 299 100 万
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;语义基本丢了。&lt;/p&gt;
+&lt;p&gt;更好的方式是把每一行转换成带表头的记录：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;套餐=Basic，月费=99，API 调用次数=10 万。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;套餐=Pro，月费=299，API 调用次数=100 万。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;如果表格有标题，也要保留：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;表格标题：套餐价格表
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;套餐=Pro，月费=299，API 调用次数=100 万。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h2 id=&#34;36-ppt&#34;&gt;3.6 PPT
+&lt;/h2&gt;&lt;p&gt;PPT 常见于培训资料、产品介绍、方案汇报。&lt;/p&gt;
+&lt;p&gt;解析 PPT 时要注意：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;每页标题&lt;/li&gt;
+&lt;li&gt;文本框顺序&lt;/li&gt;
+&lt;li&gt;图片和图注&lt;/li&gt;
+&lt;li&gt;表格&lt;/li&gt;
+&lt;li&gt;备注区&lt;/li&gt;
+&lt;li&gt;层级缩进&lt;/li&gt;
+&lt;li&gt;页码&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;PPT 的难点是：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;视觉布局很重要，但文本抽取顺序可能不等于阅读顺序。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;例如左边是问题，右边是答案，抽取工具可能先读右边，再读左边。&lt;/p&gt;
+&lt;p&gt;所以 PPT 解析最好保留：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;slide number&lt;/li&gt;
+&lt;li&gt;text box 坐标&lt;/li&gt;
+&lt;li&gt;字体大小&lt;/li&gt;
+&lt;li&gt;加粗信息&lt;/li&gt;
+&lt;li&gt;是否标题区域&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这样才能恢复更合理的阅读顺序。&lt;/p&gt;
+&lt;h2 id=&#34;37-代码仓库&#34;&gt;3.7 代码仓库
+&lt;/h2&gt;&lt;p&gt;代码不是普通文本。&lt;/p&gt;
+&lt;p&gt;解析代码仓库时，重点不是“把所有文件读出来”，而是建立结构。&lt;/p&gt;
+&lt;p&gt;常见信息包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;repo&lt;/li&gt;
+&lt;li&gt;branch&lt;/li&gt;
+&lt;li&gt;file_path&lt;/li&gt;
+&lt;li&gt;language&lt;/li&gt;
+&lt;li&gt;class&lt;/li&gt;
+&lt;li&gt;function&lt;/li&gt;
+&lt;li&gt;method&lt;/li&gt;
+&lt;li&gt;docstring&lt;/li&gt;
+&lt;li&gt;import&lt;/li&gt;
+&lt;li&gt;call relation&lt;/li&gt;
+&lt;li&gt;symbol name&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;repo&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;order-service&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;file_path&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;services/order.py&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;language&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;python&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;symbol_type&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;function&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;symbol_name&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;create_order&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;content&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;def create_order(...): ...&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;metadata&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;nt&#34;&gt;&amp;#34;branch&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;main&amp;#34;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这样用户问：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;create_order 里什么时候会扣库存？
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;系统才能按函数、文件路径、符号名召回。&lt;/p&gt;
+&lt;h1 id=&#34;四pdf-解析的重点难题&#34;&gt;四、PDF 解析的重点难题
+&lt;/h1&gt;&lt;h2 id=&#34;41-阅读顺序&#34;&gt;4.1 阅读顺序
+&lt;/h2&gt;&lt;p&gt;PDF 里的文字通常带坐标，但不一定带阅读顺序。&lt;/p&gt;
+&lt;p&gt;双栏 PDF 最常见的问题是：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;左栏第一行
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;右栏第一行
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;左栏第二行
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;右栏第二行
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;被错误抽成：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;左栏第一行 右栏第一行 左栏第二行 右栏第二行
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;正确阅读顺序应该是：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;左栏第一行 左栏第二行 ... 右栏第一行 右栏第二行 ...
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;解决思路：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;根据坐标聚类文本块&lt;/li&gt;
+&lt;li&gt;识别栏位&lt;/li&gt;
+&lt;li&gt;按栏位内从上到下排序&lt;/li&gt;
+&lt;li&gt;再按栏位从左到右合并&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;42-页眉页脚&#34;&gt;4.2 页眉页脚
+&lt;/h2&gt;&lt;p&gt;页眉页脚会严重污染检索。&lt;/p&gt;
+&lt;p&gt;例如每一页都有：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;某某公司内部资料
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;第 12 页
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Confidential
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;如果不去掉，这些重复内容会进入大量 chunk。&lt;/p&gt;
+&lt;p&gt;后果是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;embedding 被噪声稀释&lt;/li&gt;
+&lt;li&gt;BM25 召回重复页眉&lt;/li&gt;
+&lt;li&gt;chunk 之间相似度异常高&lt;/li&gt;
+&lt;li&gt;召回结果可读性变差&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;常见处理方式：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;统计每页固定位置重复文本&lt;/li&gt;
+&lt;li&gt;删除高频重复页眉页脚&lt;/li&gt;
+&lt;li&gt;根据坐标区域过滤顶部和底部文本&lt;/li&gt;
+&lt;li&gt;保留页码为 metadata，而不是正文&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;43-表格识别&#34;&gt;4.3 表格识别
+&lt;/h2&gt;&lt;p&gt;PDF 表格经常被抽成散乱文本。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;套餐 月费 API调用次数 Basic 99 10万 Pro 299 100万
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;模型很难稳定理解。&lt;/p&gt;
+&lt;p&gt;更好的解析结果应该是：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;8
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;type&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;table&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;headers&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;套餐&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;月费&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;API 调用次数&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;],&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;rows&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;Basic&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;99&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;10 万&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;],&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;Pro&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;299&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;100 万&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;]&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;p&#34;&gt;]&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;表格转文本时，要显式带上表头：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;套餐=Pro，月费=299，API 调用次数=100 万。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h2 id=&#34;44-脚注和引用&#34;&gt;4.4 脚注和引用
+&lt;/h2&gt;&lt;p&gt;脚注如果处理不好，会插入正文中间。&lt;/p&gt;
+&lt;p&gt;例如原文：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;企业订单以合同约定为准。¹
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;¹ 合同订单不适用普通退款规则。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;粗糙解析可能变成：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;企业订单以合同约定为准。合同订单不适用普通退款规则。其他正文继续……
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这不一定错误，但会破坏原有结构。&lt;/p&gt;
+&lt;p&gt;更好的方式是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;正文保留脚注标记&lt;/li&gt;
+&lt;li&gt;脚注作为单独 block&lt;/li&gt;
+&lt;li&gt;建立正文 block 和脚注 block 的引用关系&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;45-水印和印章&#34;&gt;4.5 水印和印章
+&lt;/h2&gt;&lt;p&gt;企业 PDF 里经常有：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;水印&lt;/li&gt;
+&lt;li&gt;印章&lt;/li&gt;
+&lt;li&gt;批注&lt;/li&gt;
+&lt;li&gt;电子签名&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这些内容可能被 OCR 识别成正文。&lt;/p&gt;
+&lt;p&gt;常见处理方式：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;低透明度文字过滤&lt;/li&gt;
+&lt;li&gt;固定角度水印过滤&lt;/li&gt;
+&lt;li&gt;重复水印文本过滤&lt;/li&gt;
+&lt;li&gt;印章区域作为图片 metadata 保留&lt;/li&gt;
+&lt;li&gt;不把印章 OCR 文本直接混进正文&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;五表格解析&#34;&gt;五、表格解析
+&lt;/h1&gt;&lt;h2 id=&#34;51-为什么表格不能简单平铺&#34;&gt;5.1 为什么表格不能简单平铺
+&lt;/h2&gt;&lt;p&gt;表格的意义来自行列关系。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;地区&lt;/th&gt;
+          &lt;th&gt;报销上限&lt;/th&gt;
+          &lt;th&gt;审批人&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;北京&lt;/td&gt;
+          &lt;td&gt;500 元&lt;/td&gt;
+          &lt;td&gt;部门经理&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;上海&lt;/td&gt;
+          &lt;td&gt;600 元&lt;/td&gt;
+          &lt;td&gt;财务经理&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;如果变成：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;北京 500 元 部门经理 上海 600 元 财务经理
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;就很难判断哪个金额对应哪个地区。&lt;/p&gt;
+&lt;h2 id=&#34;52-表格的几种转换方式&#34;&gt;5.2 表格的几种转换方式
+&lt;/h2&gt;&lt;h3 id=&#34;行记录格式&#34;&gt;行记录格式
+&lt;/h3&gt;&lt;p&gt;适合用于检索：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;地区=北京，报销上限=500 元，审批人=部门经理。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;地区=上海，报销上限=600 元，审批人=财务经理。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h3 id=&#34;markdown-表格格式&#34;&gt;Markdown 表格格式
+&lt;/h3&gt;&lt;p&gt;适合给 LLM 阅读：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-markdown&#34; data-lang=&#34;markdown&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;| 地区 | 报销上限 | 审批人 |
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;|------|----------|--------|
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;| 北京 | 500 元 | 部门经理 |
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;| 上海 | 600 元 | 财务经理 |
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h3 id=&#34;json-格式&#34;&gt;JSON 格式
+&lt;/h3&gt;&lt;p&gt;适合系统处理：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;7
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;headers&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;地区&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;报销上限&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;审批人&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;],&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;rows&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;北京&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;500 元&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;部门经理&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;],&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;上海&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;600 元&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;财务经理&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;]&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;p&#34;&gt;]&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;生产系统里可以同时保留：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;原始表格 JSON&lt;/li&gt;
+&lt;li&gt;用于检索的行记录文本&lt;/li&gt;
+&lt;li&gt;用于生成的 Markdown 表格&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;53-合并单元格怎么处理&#34;&gt;5.3 合并单元格怎么处理
+&lt;/h2&gt;&lt;p&gt;合并单元格很容易造成语义丢失。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;华东区
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  上海 600 元
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  杭州 500 元
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;如果解析后只看到：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;上海 600 元
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;杭州 500 元
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;就丢了“华东区”。&lt;/p&gt;
+&lt;p&gt;处理方式是把父级单元格向下填充：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;区域=华东区，城市=上海，报销上限=600 元。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;区域=华东区，城市=杭州，报销上限=500 元。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h2 id=&#34;54-多级表头怎么处理&#34;&gt;5.4 多级表头怎么处理
+&lt;/h2&gt;&lt;p&gt;多级表头也要展开。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        2026 年
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;地区    Q1预算  Q2预算
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;北京    100万   120万
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;可以转换成：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;地区=北京，年份=2026，季度=Q1，预算=100 万。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;地区=北京，年份=2026，季度=Q2，预算=120 万。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这样检索和生成都会更稳定。&lt;/p&gt;
+&lt;h1 id=&#34;六图片与-ocr&#34;&gt;六、图片与 OCR
+&lt;/h1&gt;&lt;h2 id=&#34;61-哪些图片需要-ocr&#34;&gt;6.1 哪些图片需要 OCR
+&lt;/h2&gt;&lt;p&gt;不是所有图片都值得 OCR。&lt;/p&gt;
+&lt;p&gt;需要 OCR 的通常是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;扫描件&lt;/li&gt;
+&lt;li&gt;截图&lt;/li&gt;
+&lt;li&gt;表格图片&lt;/li&gt;
+&lt;li&gt;流程图&lt;/li&gt;
+&lt;li&gt;合同盖章页&lt;/li&gt;
+&lt;li&gt;带文字说明的产品截图&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;不一定需要 OCR 的是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;纯装饰图片&lt;/li&gt;
+&lt;li&gt;背景图&lt;/li&gt;
+&lt;li&gt;无信息量图标&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;62-ocr-前处理&#34;&gt;6.2 OCR 前处理
+&lt;/h2&gt;&lt;p&gt;OCR 质量很依赖图片质量。&lt;/p&gt;
+&lt;p&gt;常见前处理包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;去噪&lt;/li&gt;
+&lt;li&gt;倾斜校正&lt;/li&gt;
+&lt;li&gt;提升对比度&lt;/li&gt;
+&lt;li&gt;二值化&lt;/li&gt;
+&lt;li&gt;裁剪边框&lt;/li&gt;
+&lt;li&gt;放大低分辨率图片&lt;/li&gt;
+&lt;li&gt;去水印&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果 OCR 结果差，先不要急着换大模型，应该先看图像质量。&lt;/p&gt;
+&lt;h2 id=&#34;63-ocr-结果怎么入库&#34;&gt;6.3 OCR 结果怎么入库
+&lt;/h2&gt;&lt;p&gt;OCR 文本不要无脑混入正文。&lt;/p&gt;
+&lt;p&gt;更好的结构是：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;7
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;type&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;image&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;page&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;3&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;caption&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;审批流程图&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;ocr_text&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;提交申请 -&amp;gt; 部门审批 -&amp;gt; 财务审批 -&amp;gt; 打款&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;bbox&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;120&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;80&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;500&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;320&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;]&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;进入检索时，可以转成：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;图片说明：审批流程图
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;OCR 文字：提交申请 -&amp;gt; 部门审批 -&amp;gt; 财务审批 -&amp;gt; 打款
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这样模型知道这些文字来自图片，而不是普通正文。&lt;/p&gt;
+&lt;h2 id=&#34;64-流程图和架构图&#34;&gt;6.4 流程图和架构图
+&lt;/h2&gt;&lt;p&gt;流程图、架构图只 OCR 文字通常不够。&lt;/p&gt;
+&lt;p&gt;因为关键关系在箭头和布局里。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;用户 -&amp;gt; API 网关 -&amp;gt; 订单服务 -&amp;gt; 支付服务
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;如果 OCR 只识别出：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;用户 API 网关 订单服务 支付服务
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;关系就丢了。&lt;/p&gt;
+&lt;p&gt;更好的方式是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;OCR 识别节点文字&lt;/li&gt;
+&lt;li&gt;识别箭头方向&lt;/li&gt;
+&lt;li&gt;生成结构化描述&lt;/li&gt;
+&lt;li&gt;必要时让视觉模型生成图像摘要&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;架构图描述：用户请求先进入 API 网关，再转发到订单服务，订单服务调用支付服务完成付款。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h1 id=&#34;七清洗与去噪&#34;&gt;七、清洗与去噪
+&lt;/h1&gt;&lt;h2 id=&#34;71-常见噪声&#34;&gt;7.1 常见噪声
+&lt;/h2&gt;&lt;p&gt;文档解析后的常见噪声包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;页眉页脚&lt;/li&gt;
+&lt;li&gt;页码&lt;/li&gt;
+&lt;li&gt;目录重复文本&lt;/li&gt;
+&lt;li&gt;水印&lt;/li&gt;
+&lt;li&gt;广告&lt;/li&gt;
+&lt;li&gt;导航栏&lt;/li&gt;
+&lt;li&gt;版权声明&lt;/li&gt;
+&lt;li&gt;空行过多&lt;/li&gt;
+&lt;li&gt;乱码&lt;/li&gt;
+&lt;li&gt;OCR 错字&lt;/li&gt;
+&lt;li&gt;重复段落&lt;/li&gt;
+&lt;li&gt;无意义符号&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这些噪声会影响：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;chunk 质量&lt;/li&gt;
+&lt;li&gt;embedding 表达&lt;/li&gt;
+&lt;li&gt;BM25 命中&lt;/li&gt;
+&lt;li&gt;rerank 判断&lt;/li&gt;
+&lt;li&gt;LLM 生成质量&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;72-去噪原则&#34;&gt;7.2 去噪原则
+&lt;/h2&gt;&lt;p&gt;去噪不是越狠越好。&lt;/p&gt;
+&lt;p&gt;应该遵循：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;明确无信息量的内容可以删除&lt;/li&gt;
+&lt;li&gt;有来源价值的信息转成 metadata&lt;/li&gt;
+&lt;li&gt;不确定是否重要的内容先保留&lt;/li&gt;
+&lt;li&gt;对删除规则保留日志&lt;/li&gt;
+&lt;li&gt;高风险文档不要做不可追溯清洗&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;例如页码不应该进入正文，但可以进入 metadata：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;page&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;12&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h2 id=&#34;73-重复内容处理&#34;&gt;7.3 重复内容处理
+&lt;/h2&gt;&lt;p&gt;重复内容常见于：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;页眉页脚&lt;/li&gt;
+&lt;li&gt;文档模板&lt;/li&gt;
+&lt;li&gt;免责声明&lt;/li&gt;
+&lt;li&gt;多版本拷贝&lt;/li&gt;
+&lt;li&gt;HTML 导航栏&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;处理方式：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;按页统计高频文本&lt;/li&gt;
+&lt;li&gt;按文档统计重复段落&lt;/li&gt;
+&lt;li&gt;基于 hash 去重&lt;/li&gt;
+&lt;li&gt;基于相似度去重&lt;/li&gt;
+&lt;li&gt;对模板文本建立黑名单&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;但要小心：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;法律条款、制度声明虽然重复，也可能有意义，不能盲删。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;h1 id=&#34;八结构恢复&#34;&gt;八、结构恢复
+&lt;/h1&gt;&lt;h2 id=&#34;81-标题层级恢复&#34;&gt;8.1 标题层级恢复
+&lt;/h2&gt;&lt;p&gt;标题层级对 RAG 很重要。&lt;/p&gt;
+&lt;p&gt;它会影响：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;chunk 切分&lt;/li&gt;
+&lt;li&gt;section_path&lt;/li&gt;
+&lt;li&gt;检索信号&lt;/li&gt;
+&lt;li&gt;引用展示&lt;/li&gt;
+&lt;li&gt;答案上下文&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Markdown 和 HTML 比较容易拿到标题层级。&lt;/p&gt;
+&lt;p&gt;PDF 和 Word 需要根据：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;字体大小&lt;/li&gt;
+&lt;li&gt;加粗&lt;/li&gt;
+&lt;li&gt;编号模式&lt;/li&gt;
+&lt;li&gt;缩进&lt;/li&gt;
+&lt;li&gt;坐标位置&lt;/li&gt;
+&lt;li&gt;样式名称&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;来推断标题。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;一、退款规则
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;1.1 普通商品
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;1.2 虚拟商品
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;应该恢复成：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;退款规则
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  普通商品
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  虚拟商品
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h2 id=&#34;82-section_path&#34;&gt;8.2 section_path
+&lt;/h2&gt;&lt;p&gt;&lt;code&gt;section_path&lt;/code&gt; 是 RAG 文档解析里非常重要的字段。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;section_path&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;售后规则&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;退款规则&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;虚拟商品&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;]&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;后续 chunk 可以拼成：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;标题路径：售后规则 &amp;gt; 退款规则 &amp;gt; 虚拟商品
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;正文：虚拟商品一经发货不支持退款。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这能明显增强召回。&lt;/p&gt;
+&lt;p&gt;因为用户经常问：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;虚拟商品怎么退款？
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;如果正文里只有：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;一经发货不支持。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;没有标题路径，检索会很差。&lt;/p&gt;
+&lt;h2 id=&#34;83-列表结构恢复&#34;&gt;8.3 列表结构恢复
+&lt;/h2&gt;&lt;p&gt;列表也不能全部压平。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;申请退款需要满足：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;1. 支付后 7 天内
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;2. 商品未发货
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;3. 非企业合同订单
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;如果拆散成三个孤立段落，条件关系会变弱。&lt;/p&gt;
+&lt;p&gt;更好的方式是保留列表关系：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;9
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;type&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;list&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;intro&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;申请退款需要满足：&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;items&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;s2&#34;&gt;&amp;#34;支付后 7 天内&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;s2&#34;&gt;&amp;#34;商品未发货&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;s2&#34;&gt;&amp;#34;非企业合同订单&amp;#34;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;p&#34;&gt;]&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;转成检索文本：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;申请退款需要满足：支付后 7 天内；商品未发货；非企业合同订单。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h1 id=&#34;九元数据设计&#34;&gt;九、元数据设计
+&lt;/h1&gt;&lt;h2 id=&#34;91-为什么元数据重要&#34;&gt;9.1 为什么元数据重要
+&lt;/h2&gt;&lt;p&gt;元数据决定 RAG 系统能不能做：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;权限过滤&lt;/li&gt;
+&lt;li&gt;版本过滤&lt;/li&gt;
+&lt;li&gt;时间过滤&lt;/li&gt;
+&lt;li&gt;来源追溯&lt;/li&gt;
+&lt;li&gt;多租户隔离&lt;/li&gt;
+&lt;li&gt;产品线过滤&lt;/li&gt;
+&lt;li&gt;文档状态控制&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果没有 metadata，检索只能靠文本相似度。&lt;/p&gt;
+&lt;p&gt;这在企业场景里很危险。&lt;/p&gt;
+&lt;h2 id=&#34;92-常见元数据字段&#34;&gt;9.2 常见元数据字段
+&lt;/h2&gt;&lt;p&gt;常见字段包括：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;15
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;16
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;17
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;18
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;19
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;doc_id&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;refund_policy_2026&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;chunk_id&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;refund_policy_2026_chunk_001&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;source_type&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;pdf&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;source_path&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;s3://kb/policy/refund_policy_2026.pdf&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;title&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;退款规则说明&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;author&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;财务部&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;department&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;finance&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;product&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;billing&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;region&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;cn&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;language&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;zh&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;version&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;2026-04&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;doc_status&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;active&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;created_at&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;2026-04-01&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;updated_at&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;2026-04-18&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;permission_group&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;support&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;finance&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;],&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;page&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;3&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;section_path&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;售后规则&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;退款规则&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;]&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这些字段不一定都需要，但要根据业务场景提前设计。&lt;/p&gt;
+&lt;h2 id=&#34;93-metadata-和正文的区别&#34;&gt;9.3 metadata 和正文的区别
+&lt;/h2&gt;&lt;p&gt;有些信息不应该混进正文。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;页码&lt;/li&gt;
+&lt;li&gt;文件路径&lt;/li&gt;
+&lt;li&gt;权限组&lt;/li&gt;
+&lt;li&gt;文档状态&lt;/li&gt;
+&lt;li&gt;更新时间&lt;/li&gt;
+&lt;li&gt;租户 ID&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这些更适合做 metadata。&lt;/p&gt;
+&lt;p&gt;正文用于语义理解。&lt;/p&gt;
+&lt;p&gt;metadata 用于过滤、排序、权限和追溯。&lt;/p&gt;
+&lt;h1 id=&#34;十解析结果如何进入-chunk&#34;&gt;十、解析结果如何进入 chunk
+&lt;/h1&gt;&lt;h2 id=&#34;101-不同-block-不同切法&#34;&gt;10.1 不同 block 不同切法
+&lt;/h2&gt;&lt;p&gt;文档解析之后，不应该立刻把全文按固定长度切开。&lt;/p&gt;
+&lt;p&gt;更合理的是根据 block 类型切分：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;block 类型&lt;/th&gt;
+          &lt;th&gt;推荐处理&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;heading&lt;/td&gt;
+          &lt;td&gt;更新 section_path，不单独入 chunk&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;paragraph&lt;/td&gt;
+          &lt;td&gt;和相邻同主题段落组合&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;list&lt;/td&gt;
+          &lt;td&gt;保留 intro 和 items&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;table&lt;/td&gt;
+          &lt;td&gt;转成行记录或 Markdown 表格&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;image&lt;/td&gt;
+          &lt;td&gt;使用 caption + OCR + 图像摘要&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;code&lt;/td&gt;
+          &lt;td&gt;按函数、类、文件结构切&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;footnote&lt;/td&gt;
+          &lt;td&gt;和引用正文建立关系&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h2 id=&#34;102-chunk-应该带上解析上下文&#34;&gt;10.2 chunk 应该带上解析上下文
+&lt;/h2&gt;&lt;p&gt;一个好的 chunk 不只是正文：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;chunk_id&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;refund_policy_2026_chunk_008&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;doc_id&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;refund_policy_2026&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;section_path&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;售后规则&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;退款规则&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;虚拟商品&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;],&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;content&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;虚拟商品一经发货不支持退款。&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;page_start&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;3&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;page_end&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;3&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;source_blocks&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;b021&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;],&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;metadata&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;nt&#34;&gt;&amp;#34;version&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;2026-04&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;nt&#34;&gt;&amp;#34;region&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;cn&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;nt&#34;&gt;&amp;#34;permission_group&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;support&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;finance&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;]&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;进入 embedding 的文本可以是：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;标题路径：售后规则 &amp;gt; 退款规则 &amp;gt; 虚拟商品
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;正文：虚拟商品一经发货不支持退款。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这样比只 embedding 正文更稳。&lt;/p&gt;
+&lt;h2 id=&#34;103-保留-source_blocks&#34;&gt;10.3 保留 source_blocks
+&lt;/h2&gt;&lt;p&gt;&lt;code&gt;source_blocks&lt;/code&gt; 很重要。&lt;/p&gt;
+&lt;p&gt;它可以用于：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;引用回溯&lt;/li&gt;
+&lt;li&gt;答案溯源&lt;/li&gt;
+&lt;li&gt;高亮原文&lt;/li&gt;
+&lt;li&gt;解析错误排查&lt;/li&gt;
+&lt;li&gt;重新 chunk 时复用解析结果&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果 chunk 只保存文本，不保存来源 block，后面很难定位问题。&lt;/p&gt;
+&lt;h1 id=&#34;十一文档解析质量评估&#34;&gt;十一、文档解析质量评估
+&lt;/h1&gt;&lt;h2 id=&#34;111-评估什么&#34;&gt;11.1 评估什么
+&lt;/h2&gt;&lt;p&gt;文档解析质量可以从这些维度看：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;文本是否完整&lt;/li&gt;
+&lt;li&gt;阅读顺序是否正确&lt;/li&gt;
+&lt;li&gt;标题层级是否正确&lt;/li&gt;
+&lt;li&gt;表格结构是否保留&lt;/li&gt;
+&lt;li&gt;图片 OCR 是否准确&lt;/li&gt;
+&lt;li&gt;页眉页脚是否去除&lt;/li&gt;
+&lt;li&gt;元数据是否完整&lt;/li&gt;
+&lt;li&gt;引用页码是否准确&lt;/li&gt;
+&lt;li&gt;是否有乱码和重复内容&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;112-抽样人工检查&#34;&gt;11.2 抽样人工检查
+&lt;/h2&gt;&lt;p&gt;文档解析很难只靠自动指标。&lt;/p&gt;
+&lt;p&gt;建议每次入库前抽样看：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;原始文档&lt;/li&gt;
+&lt;li&gt;解析后的 block&lt;/li&gt;
+&lt;li&gt;生成的 chunk&lt;/li&gt;
+&lt;li&gt;召回结果&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;尤其要重点抽查：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;PDF&lt;/li&gt;
+&lt;li&gt;扫描件&lt;/li&gt;
+&lt;li&gt;表格多的文档&lt;/li&gt;
+&lt;li&gt;合同和制度&lt;/li&gt;
+&lt;li&gt;长文档&lt;/li&gt;
+&lt;li&gt;多栏排版文档&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;113-常见自动检查&#34;&gt;11.3 常见自动检查
+&lt;/h2&gt;&lt;p&gt;可以做一些自动质量检查：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;空文档比例&lt;/li&gt;
+&lt;li&gt;OCR 文本置信度&lt;/li&gt;
+&lt;li&gt;平均每页字符数&lt;/li&gt;
+&lt;li&gt;重复段落比例&lt;/li&gt;
+&lt;li&gt;乱码字符比例&lt;/li&gt;
+&lt;li&gt;表格解析失败数量&lt;/li&gt;
+&lt;li&gt;标题层级异常数量&lt;/li&gt;
+&lt;li&gt;chunk 过短或过长比例&lt;/li&gt;
+&lt;li&gt;metadata 缺失比例&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;如果某个 30 页 PDF 解析后只有 200 个字，大概率解析失败。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;又比如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;如果每页都出现同一句话，大概率是页眉页脚或水印。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h1 id=&#34;十二生产级解析链路&#34;&gt;十二、生产级解析链路
+&lt;/h1&gt;&lt;h2 id=&#34;121-推荐流程&#34;&gt;12.1 推荐流程
+&lt;/h2&gt;&lt;p&gt;一个生产级文档解析链路可以设计成：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;15
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;16
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;17
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;18
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;19
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;20
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;21
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;22
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;23
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;24
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;25
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;文档上传
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;文件类型识别
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;文本型 / 扫描型判断
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;格式专用解析器
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;OCR 或版面分析
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;block 结构生成
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;清洗去噪
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;标题层级和 section_path 恢复
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;表格、图片、代码特殊处理
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;metadata 补充
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;质量检查
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;chunk 生成
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;索引入库
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h2 id=&#34;122-解析失败要可重试&#34;&gt;12.2 解析失败要可重试
+&lt;/h2&gt;&lt;p&gt;文档解析经常失败。&lt;/p&gt;
+&lt;p&gt;失败原因包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;文件损坏&lt;/li&gt;
+&lt;li&gt;加密 PDF&lt;/li&gt;
+&lt;li&gt;图片太模糊&lt;/li&gt;
+&lt;li&gt;OCR 超时&lt;/li&gt;
+&lt;li&gt;格式不规范&lt;/li&gt;
+&lt;li&gt;表格结构复杂&lt;/li&gt;
+&lt;li&gt;文件太大&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以系统要有：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;解析状态&lt;/li&gt;
+&lt;li&gt;错误日志&lt;/li&gt;
+&lt;li&gt;重试机制&lt;/li&gt;
+&lt;li&gt;人工修正入口&lt;/li&gt;
+&lt;li&gt;原始文件保留&lt;/li&gt;
+&lt;li&gt;解析版本记录&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;7
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;doc_id&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;contract_001&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;parse_status&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;failed&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;parse_error&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;encrypted_pdf&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;parser_version&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;pdf_parser_v3&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;created_at&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;2026-05-07&amp;#34;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h2 id=&#34;123-解析版本要可追踪&#34;&gt;12.3 解析版本要可追踪
+&lt;/h2&gt;&lt;p&gt;解析逻辑会不断变化。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;换了 OCR&lt;/li&gt;
+&lt;li&gt;改了表格解析&lt;/li&gt;
+&lt;li&gt;加了页眉页脚过滤&lt;/li&gt;
+&lt;li&gt;调整了标题识别规则&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这些都会影响 chunk 和召回。&lt;/p&gt;
+&lt;p&gt;所以应该记录：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;parser_name&lt;/li&gt;
+&lt;li&gt;parser_version&lt;/li&gt;
+&lt;li&gt;parse_time&lt;/li&gt;
+&lt;li&gt;clean_rules_version&lt;/li&gt;
+&lt;li&gt;chunk_rules_version&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;否则线上效果变化时，很难追溯原因。&lt;/p&gt;
+&lt;h2 id=&#34;124-原始文件不要丢&#34;&gt;12.4 原始文件不要丢
+&lt;/h2&gt;&lt;p&gt;不要只保存解析结果。&lt;/p&gt;
+&lt;p&gt;原始文件也要保留。&lt;/p&gt;
+&lt;p&gt;原因是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;解析规则会升级&lt;/li&gt;
+&lt;li&gt;需要重新入库&lt;/li&gt;
+&lt;li&gt;用户可能要看原文&lt;/li&gt;
+&lt;li&gt;答案引用需要跳回原文件&lt;/li&gt;
+&lt;li&gt;解析错误需要排查&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;RAG 的知识库不是一次性处理任务，而是持续演进的数据资产。&lt;/p&gt;
+&lt;h1 id=&#34;十三常见工具选择&#34;&gt;十三、常见工具选择
+&lt;/h1&gt;&lt;h2 id=&#34;131-工具类型&#34;&gt;13.1 工具类型
+&lt;/h2&gt;&lt;p&gt;文档解析通常会组合多类工具：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;PDF 文本抽取&lt;/li&gt;
+&lt;li&gt;PDF 版面分析&lt;/li&gt;
+&lt;li&gt;OCR&lt;/li&gt;
+&lt;li&gt;HTML 正文抽取&lt;/li&gt;
+&lt;li&gt;Markdown parser&lt;/li&gt;
+&lt;li&gt;Word parser&lt;/li&gt;
+&lt;li&gt;Excel parser&lt;/li&gt;
+&lt;li&gt;代码 parser&lt;/li&gt;
+&lt;li&gt;表格识别&lt;/li&gt;
+&lt;li&gt;图像理解模型&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;不要期待一个工具解决所有格式。&lt;/p&gt;
+&lt;h2 id=&#34;132-常见工具举例&#34;&gt;13.2 常见工具举例
+&lt;/h2&gt;&lt;p&gt;下面只是常见类型示例，不代表唯一选择。&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;任务&lt;/th&gt;
+          &lt;th&gt;常见工具或方案&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;PDF 文本抽取&lt;/td&gt;
+          &lt;td&gt;PyMuPDF、pdfplumber、PDFMiner&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;PDF 表格抽取&lt;/td&gt;
+          &lt;td&gt;Camelot、Tabula、pdfplumber&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;OCR&lt;/td&gt;
+          &lt;td&gt;Tesseract、PaddleOCR、云 OCR 服务&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Word 解析&lt;/td&gt;
+          &lt;td&gt;python-docx、LibreOffice 转换&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Excel 解析&lt;/td&gt;
+          &lt;td&gt;openpyxl、pandas&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;HTML 解析&lt;/td&gt;
+          &lt;td&gt;BeautifulSoup、Readability、trafilatura&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Markdown 解析&lt;/td&gt;
+          &lt;td&gt;markdown-it、mistune、Python-Markdown&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;代码解析&lt;/td&gt;
+          &lt;td&gt;tree-sitter、语言 AST parser&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;综合文档解析&lt;/td&gt;
+          &lt;td&gt;Unstructured、Apache Tika、Docling 等&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;选工具时要看：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;中文支持&lt;/li&gt;
+&lt;li&gt;表格能力&lt;/li&gt;
+&lt;li&gt;OCR 能力&lt;/li&gt;
+&lt;li&gt;版面恢复能力&lt;/li&gt;
+&lt;li&gt;速度&lt;/li&gt;
+&lt;li&gt;成本&lt;/li&gt;
+&lt;li&gt;部署复杂度&lt;/li&gt;
+&lt;li&gt;是否方便保留结构化结果&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;十四常见坑&#34;&gt;十四、常见坑
+&lt;/h1&gt;&lt;h2 id=&#34;141-只看解析文本不看原文对照&#34;&gt;14.1 只看解析文本，不看原文对照
+&lt;/h2&gt;&lt;p&gt;解析结果看起来有文字，不代表正确。&lt;/p&gt;
+&lt;p&gt;必须和原文对照检查：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;顺序是否对&lt;/li&gt;
+&lt;li&gt;表格是否对&lt;/li&gt;
+&lt;li&gt;标题是否对&lt;/li&gt;
+&lt;li&gt;是否漏页&lt;/li&gt;
+&lt;li&gt;是否混入页眉页脚&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;142-把目录当正文&#34;&gt;14.2 把目录当正文
+&lt;/h2&gt;&lt;p&gt;很多 PDF 前几页是目录。&lt;/p&gt;
+&lt;p&gt;如果目录和正文一起入库，用户问某个章节时，可能召回目录页，而不是正文内容。&lt;/p&gt;
+&lt;p&gt;目录不是完全没用，但应该单独标记为 &lt;code&gt;toc&lt;/code&gt;，不要和正文同等处理。&lt;/p&gt;
+&lt;h2 id=&#34;143-表格没有表头&#34;&gt;14.3 表格没有表头
+&lt;/h2&gt;&lt;p&gt;表格行如果不带表头，信息会变得很弱。&lt;/p&gt;
+&lt;p&gt;错误：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Pro 299 100 万
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;正确：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;套餐=Pro，月费=299，API 调用次数=100 万。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h2 id=&#34;144-权限信息没有进入-metadata&#34;&gt;14.4 权限信息没有进入 metadata
+&lt;/h2&gt;&lt;p&gt;如果权限只写在正文里，检索阶段很难做安全过滤。&lt;/p&gt;
+&lt;p&gt;权限、租户、部门、密级这类信息必须进入 metadata。&lt;/p&gt;
+&lt;h2 id=&#34;145-解析结果不可追溯&#34;&gt;14.5 解析结果不可追溯
+&lt;/h2&gt;&lt;p&gt;如果 chunk 没有记录：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;doc_id&lt;/li&gt;
+&lt;li&gt;page&lt;/li&gt;
+&lt;li&gt;source_blocks&lt;/li&gt;
+&lt;li&gt;parser_version&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;那么当用户质疑答案来源时，很难定位。&lt;/p&gt;
+&lt;h1 id=&#34;小结&#34;&gt;小结
+&lt;/h1&gt;&lt;p&gt;RAG 的文档解析不是简单的文件转文本。&lt;/p&gt;
+&lt;p&gt;它的核心任务是：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;把原始资料转换成结构清晰、语义完整、可切分、可检索、可追溯的知识表示。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;文档解析做得好，后面的 chunk、召回、rerank、生成都会受益。&lt;/p&gt;
+&lt;p&gt;文档解析做得差，后面所有环节都在补前面的坑。&lt;/p&gt;
+&lt;p&gt;如果只记住几个关键点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;不要只产出纯文本&lt;/li&gt;
+&lt;li&gt;保留标题层级和 section_path&lt;/li&gt;
+&lt;li&gt;表格要保留行列关系&lt;/li&gt;
+&lt;li&gt;图片和扫描件要处理 OCR&lt;/li&gt;
+&lt;li&gt;页眉页脚、水印、导航栏要去噪&lt;/li&gt;
+&lt;li&gt;metadata 要服务权限、版本、时间和来源追溯&lt;/li&gt;
+&lt;li&gt;chunk 要能回溯到原始 block 和页码&lt;/li&gt;
+&lt;li&gt;解析质量要评估和可重跑&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;真正的生产级 RAG，知识入库链路和模型调用一样重要。&lt;/p&gt;
+</description>
+        </item>
+        <item>
         <title>RAG 召回详解：检索策略、核心算法、工程实现与适用场景</title>
         <link>https://Agsol701.github.io/p/rag-%E5%8F%AC%E5%9B%9E%E8%AF%A6%E8%A7%A3%E6%A3%80%E7%B4%A2%E7%AD%96%E7%95%A5%E6%A0%B8%E5%BF%83%E7%AE%97%E6%B3%95%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E9%80%82%E7%94%A8%E5%9C%BA%E6%99%AF/</link>
         <pubDate>Wed, 06 May 2026 00:00:00 +0000</pubDate>
@@ -1203,7 +2959,7 @@
 &lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
 &lt;td class=&#34;lntd&#34;&gt;
 &lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;一路 BM25
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;一路向量检索
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;一路 向量检索
 &lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
 &lt;/div&gt;
 &lt;/div&gt;&lt;p&gt;例如：&lt;/p&gt;
@@ -2824,1689 +4580,6 @@
 &lt;p&gt;如果只记一句话：&lt;/p&gt;
 &lt;blockquote&gt;
 &lt;p&gt;RAG 召回的目标不是“找几段相似文本”，而是稳定、可控、可解释地把正确证据送到模型面前。&lt;/p&gt;&lt;/blockquote&gt;
-</description>
-        </item>
-        <item>
-        <title>什么是 RAG：完整流程、常见实现、底层原理、常见坑与高频面试题</title>
-        <link>https://Agsol701.github.io/p/%E4%BB%80%E4%B9%88%E6%98%AF-rag%E5%AE%8C%E6%95%B4%E6%B5%81%E7%A8%8B%E5%B8%B8%E8%A7%81%E5%AE%9E%E7%8E%B0%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%B8%B8%E8%A7%81%E5%9D%91%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/</link>
-        <pubDate>Mon, 04 May 2026 00:00:00 +0000</pubDate>
-        
-        <guid>https://Agsol701.github.io/p/%E4%BB%80%E4%B9%88%E6%98%AF-rag%E5%AE%8C%E6%95%B4%E6%B5%81%E7%A8%8B%E5%B8%B8%E8%A7%81%E5%AE%9E%E7%8E%B0%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%B8%B8%E8%A7%81%E5%9D%91%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/</guid>
-        <description>&lt;h1 id=&#34;写在前面&#34;&gt;写在前面
-&lt;/h1&gt;&lt;p&gt;这两年 &lt;code&gt;RAG&lt;/code&gt; 基本已经成了大模型落地里出现频率最高的词之一。&lt;/p&gt;
-&lt;p&gt;很多人会把它简单理解成：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;向量数据库&lt;/li&gt;
-&lt;li&gt;知识库问答&lt;/li&gt;
-&lt;li&gt;embedding 检索&lt;/li&gt;
-&lt;li&gt;给模型外挂记忆&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这些理解都不算完全错，但都不够完整。&lt;/p&gt;
-&lt;p&gt;如果先用一句话做一个总定义：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;&lt;code&gt;RAG&lt;/code&gt;，即 &lt;code&gt;Retrieval-Augmented Generation&lt;/code&gt;，是一种“先检索外部知识，再基于检索结果生成答案”的系统方法。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;p&gt;这里最关键的是两点：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;&lt;code&gt;RAG&lt;/code&gt; 不是单纯的检索系统&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;RAG&lt;/code&gt; 也不是单纯的生成系统&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;它本质上是一套把“知识供给”与“语言生成”组合起来的应用架构。&lt;/p&gt;
-&lt;p&gt;所以这篇文章不只回答“RAG 是什么”，还会系统整理这些问题：&lt;/p&gt;
-&lt;ol&gt;
-&lt;li&gt;一个完整的 RAG 到底分几步&lt;/li&gt;
-&lt;li&gt;常见实现方式有哪些&lt;/li&gt;
-&lt;li&gt;它底层为什么能工作&lt;/li&gt;
-&lt;li&gt;工程上最容易踩哪些坑&lt;/li&gt;
-&lt;li&gt;面试里最常被问什么&lt;/li&gt;
-&lt;li&gt;除了搭建，还应该怎么评估和优化&lt;/li&gt;
-&lt;/ol&gt;
-&lt;h1 id=&#34;一rag-到底是什么&#34;&gt;一、RAG 到底是什么
-&lt;/h1&gt;&lt;h2 id=&#34;11-最直白的理解&#34;&gt;1.1 最直白的理解
-&lt;/h2&gt;&lt;p&gt;可以先把 &lt;code&gt;RAG&lt;/code&gt; 理解成：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;让模型在回答前，先去知识库里“查资料”。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;p&gt;例如用户问：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;“公司的报销流程是什么？”&lt;/p&gt;&lt;/blockquote&gt;
-&lt;p&gt;如果只靠模型参数记忆，它很可能不知道你们公司的内部制度。&lt;/p&gt;
-&lt;p&gt;但如果系统先去：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;内部文档库&lt;/li&gt;
-&lt;li&gt;Wiki&lt;/li&gt;
-&lt;li&gt;产品手册&lt;/li&gt;
-&lt;li&gt;数据库说明&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;里找出最相关的资料，再把这些资料和问题一起交给大模型，那么模型就可以基于这些真实内容来回答。&lt;/p&gt;
-&lt;p&gt;这就是 &lt;code&gt;RAG&lt;/code&gt; 的核心思路。&lt;/p&gt;
-&lt;h2 id=&#34;12-它解决的核心问题是什么&#34;&gt;1.2 它解决的核心问题是什么
-&lt;/h2&gt;&lt;p&gt;&lt;code&gt;RAG&lt;/code&gt; 主要解决的是：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;模型知识不够新、不够专、不够私有时，如何把外部知识动态提供给模型。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;p&gt;这背后通常对应四类痛点。&lt;/p&gt;
-&lt;h3 id=&#34;第一类模型不知道私有知识&#34;&gt;第一类：模型不知道私有知识
-&lt;/h3&gt;&lt;p&gt;比如：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;企业内部制度&lt;/li&gt;
-&lt;li&gt;项目源码&lt;/li&gt;
-&lt;li&gt;私有 API 文档&lt;/li&gt;
-&lt;li&gt;合同、报告、会议纪要&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这些内容通常不会出现在模型训练数据里。&lt;/p&gt;
-&lt;h3 id=&#34;第二类模型知识过期&#34;&gt;第二类：模型知识过期
-&lt;/h3&gt;&lt;p&gt;即使模型很强，它参数里的知识也不是实时更新的。&lt;/p&gt;
-&lt;p&gt;所以：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;最新政策&lt;/li&gt;
-&lt;li&gt;新版本文档&lt;/li&gt;
-&lt;li&gt;刚上线的产品能力&lt;/li&gt;
-&lt;li&gt;当天生成的业务数据&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;都更适合通过检索动态注入。&lt;/p&gt;
-&lt;h3 id=&#34;第三类模型容易幻觉&#34;&gt;第三类：模型容易幻觉
-&lt;/h3&gt;&lt;p&gt;如果没有可靠依据，模型很可能“看起来像在回答，实际上是在猜”。&lt;/p&gt;
-&lt;p&gt;&lt;code&gt;RAG&lt;/code&gt; 的一个重要价值，就是尽量让回答建立在可追溯资料之上。&lt;/p&gt;
-&lt;h3 id=&#34;第四类纯微调成本高且不灵活&#34;&gt;第四类：纯微调成本高且不灵活
-&lt;/h3&gt;&lt;p&gt;如果每次知识更新都靠微调：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;成本高&lt;/li&gt;
-&lt;li&gt;反馈慢&lt;/li&gt;
-&lt;li&gt;数据准备重&lt;/li&gt;
-&lt;li&gt;难以处理高频变更&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;而 &lt;code&gt;RAG&lt;/code&gt; 更适合处理“知识频繁变化”的场景。&lt;/p&gt;
-&lt;h1 id=&#34;二rag-的完整流程&#34;&gt;二、RAG 的完整流程
-&lt;/h1&gt;&lt;p&gt;很多人以为 RAG 只有“切块 + 向量库 + 检索 + 生成”。&lt;/p&gt;
-&lt;p&gt;这其实只说到了主干，没有把工程链路讲完整。&lt;/p&gt;
-&lt;p&gt;一个相对完整的 RAG，通常可以拆成下面几个阶段。&lt;/p&gt;
-&lt;h2 id=&#34;21-数据接入&#34;&gt;2.1 数据接入
-&lt;/h2&gt;&lt;p&gt;先把知识源接进系统。&lt;/p&gt;
-&lt;p&gt;常见来源包括：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;PDF&lt;/li&gt;
-&lt;li&gt;Word&lt;/li&gt;
-&lt;li&gt;Markdown&lt;/li&gt;
-&lt;li&gt;网页&lt;/li&gt;
-&lt;li&gt;FAQ&lt;/li&gt;
-&lt;li&gt;数据库&lt;/li&gt;
-&lt;li&gt;代码仓库&lt;/li&gt;
-&lt;li&gt;工单与聊天记录&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这一阶段的关键，不是“存进去”，而是先解决：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;数据从哪里来&lt;/li&gt;
-&lt;li&gt;更新频率如何&lt;/li&gt;
-&lt;li&gt;权限怎么处理&lt;/li&gt;
-&lt;li&gt;原始格式怎么统一&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;22-文档解析&#34;&gt;2.2 文档解析
-&lt;/h2&gt;&lt;p&gt;原始文档往往不能直接拿去检索。&lt;/p&gt;
-&lt;p&gt;例如 PDF 里可能有：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;页眉页脚&lt;/li&gt;
-&lt;li&gt;表格&lt;/li&gt;
-&lt;li&gt;图片&lt;/li&gt;
-&lt;li&gt;双栏排版&lt;/li&gt;
-&lt;li&gt;OCR 错误&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;所以通常要先做解析，把它转成更适合处理的文本结构。&lt;/p&gt;
-&lt;p&gt;这一步常见操作包括：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;提取正文&lt;/li&gt;
-&lt;li&gt;去噪&lt;/li&gt;
-&lt;li&gt;保留标题层级&lt;/li&gt;
-&lt;li&gt;识别表格和代码块&lt;/li&gt;
-&lt;li&gt;保留文档元数据&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;23-文本切分&#34;&gt;2.3 文本切分
-&lt;/h2&gt;&lt;p&gt;解析后的长文档，通常还要切成多个 &lt;code&gt;chunk&lt;/code&gt;。&lt;/p&gt;
-&lt;p&gt;这是因为：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;embedding 模型有长度限制&lt;/li&gt;
-&lt;li&gt;检索粒度不能太粗&lt;/li&gt;
-&lt;li&gt;LLM 上下文窗口有限&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;切分时常见策略包括：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;固定长度切分&lt;/li&gt;
-&lt;li&gt;滑动窗口切分&lt;/li&gt;
-&lt;li&gt;按标题层级切分&lt;/li&gt;
-&lt;li&gt;按段落语义切分&lt;/li&gt;
-&lt;li&gt;针对代码、表格、问答做定制切分&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;&lt;code&gt;chunk&lt;/code&gt; 设计直接影响后面的召回质量，是 RAG 里最关键的环节之一。&lt;/p&gt;
-&lt;p&gt;这里值得展开讲一下，因为很多 RAG 效果问题，本质都不是“大模型不会答”，而是“知识在进入检索系统之前就已经被切坏了”。&lt;/p&gt;
-&lt;h3 id=&#34;231-chunk-到底是什么&#34;&gt;2.3.1 chunk 到底是什么
-&lt;/h3&gt;&lt;p&gt;&lt;code&gt;chunk&lt;/code&gt; 不是简单的一段文本，而是 RAG 系统里的最小检索单元。&lt;/p&gt;
-&lt;p&gt;也就是说，用户问题进来以后，系统不是直接在整篇文档里找答案，而是在一个个 &lt;code&gt;chunk&lt;/code&gt; 里找最相关的片段。&lt;/p&gt;
-&lt;p&gt;所以 &lt;code&gt;chunk&lt;/code&gt; 同时承担三个角色：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;检索单元：向量库或倒排索引真正召回的是它&lt;/li&gt;
-&lt;li&gt;证据单元：LLM 最终看到的上下文通常也是它&lt;/li&gt;
-&lt;li&gt;评估单元：我们判断有没有召回正确依据时，也经常以它为单位&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这意味着：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;chunk 不是越大越好，也不是越小越好，而是要让“一个 chunk 刚好能表达一个相对完整的问题答案或知识点”。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;h3 id=&#34;232-chunk-太大有什么问题&#34;&gt;2.3.2 chunk 太大有什么问题
-&lt;/h3&gt;&lt;p&gt;如果 chunk 太大，例如一口气切 2000 到 4000 个中文字符，常见问题是：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;一个 chunk 里混入多个主题&lt;/li&gt;
-&lt;li&gt;embedding 表达会被多个语义方向稀释&lt;/li&gt;
-&lt;li&gt;检索命中后上下文 token 成本很高&lt;/li&gt;
-&lt;li&gt;召回结果看起来相关，但真正有用的句子只占很小一部分&lt;/li&gt;
-&lt;li&gt;LLM 容易被同一个 chunk 里的无关信息干扰&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;例如一篇产品文档里同时有：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;登录&lt;/li&gt;
-&lt;li&gt;权限&lt;/li&gt;
-&lt;li&gt;计费&lt;/li&gt;
-&lt;li&gt;API 调用限制&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;如果它们被放进同一个大 chunk，当用户问“API 调用限制是多少”时，这个 chunk 虽然可能被召回，但里面大量登录、权限、计费内容都会变成噪声。&lt;/p&gt;
-&lt;h3 id=&#34;233-chunk-太小有什么问题&#34;&gt;2.3.3 chunk 太小有什么问题
-&lt;/h3&gt;&lt;p&gt;如果 chunk 太小，例如只按 100 到 200 个字硬切，也会有另一类问题：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;标题和正文分离&lt;/li&gt;
-&lt;li&gt;定义和解释分离&lt;/li&gt;
-&lt;li&gt;条件和结论分离&lt;/li&gt;
-&lt;li&gt;表格行之间失去关系&lt;/li&gt;
-&lt;li&gt;问答对被拆散&lt;/li&gt;
-&lt;li&gt;代码函数被截断&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;例如原文是：&lt;/p&gt;
-&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
-&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
-&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;退款规则：
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;1. 订单支付后 7 天内可以申请退款。
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;2. 虚拟商品一经发货不支持退款。
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;3. 企业合同订单以合同条款为准。
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;&lt;p&gt;如果被切成几个过小的片段，系统可能只召回“7 天内可以申请退款”，但漏掉“虚拟商品不支持退款”和“企业合同以合同为准”。最终回答就会不完整，甚至误导用户。&lt;/p&gt;
-&lt;h3 id=&#34;234-常见切分策略怎么选&#34;&gt;2.3.4 常见切分策略怎么选
-&lt;/h3&gt;&lt;p&gt;可以把切分策略分成几类。&lt;/p&gt;
-&lt;h4 id=&#34;固定长度切分&#34;&gt;固定长度切分
-&lt;/h4&gt;&lt;p&gt;这是最简单的方式，例如每 500 个 token 切一段。&lt;/p&gt;
-&lt;p&gt;优点是：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;实现简单&lt;/li&gt;
-&lt;li&gt;速度快&lt;/li&gt;
-&lt;li&gt;对任意文本都能跑&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;缺点是：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;不理解文档结构&lt;/li&gt;
-&lt;li&gt;容易切断段落、表格、代码&lt;/li&gt;
-&lt;li&gt;对复杂文档效果不稳定&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;它适合做 demo 或处理结构很差、无法可靠解析的原始文本，但生产系统里通常不建议只靠它。&lt;/p&gt;
-&lt;h4 id=&#34;带-overlap-的滑动窗口切分&#34;&gt;带 overlap 的滑动窗口切分
-&lt;/h4&gt;&lt;p&gt;滑动窗口是在固定长度基础上增加重叠区。&lt;/p&gt;
-&lt;p&gt;例如：&lt;/p&gt;
-&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
-&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
-&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;chunk_size = 500 tokens
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;overlap = 80 tokens
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;&lt;p&gt;这样第一个 chunk 的末尾 80 个 token，会出现在第二个 chunk 的开头。&lt;/p&gt;
-&lt;p&gt;它的好处是减少“关键信息刚好被切在边界上”的问题。&lt;/p&gt;
-&lt;p&gt;但 overlap 也不是越大越好：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;overlap 太小，边界问题仍然明显&lt;/li&gt;
-&lt;li&gt;overlap 太大，索引膨胀，重复召回增加&lt;/li&gt;
-&lt;li&gt;重复内容过多，会浪费上下文窗口&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;一般可以把 overlap 理解成一种“边界保险”，而不是主要切分方法。&lt;/p&gt;
-&lt;h4 id=&#34;按结构切分&#34;&gt;按结构切分
-&lt;/h4&gt;&lt;p&gt;更推荐的方式，是优先利用文档结构。&lt;/p&gt;
-&lt;p&gt;例如 Markdown、HTML、Word、PDF 解析后，通常可以拿到：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;一级标题&lt;/li&gt;
-&lt;li&gt;二级标题&lt;/li&gt;
-&lt;li&gt;段落&lt;/li&gt;
-&lt;li&gt;列表&lt;/li&gt;
-&lt;li&gt;表格&lt;/li&gt;
-&lt;li&gt;代码块&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这时可以按结构切分：&lt;/p&gt;
-&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
-&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
-&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;标题路径 + 当前小节正文 = 一个 chunk
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;&lt;p&gt;例如：&lt;/p&gt;
-&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
-&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
-&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;文档：支付系统说明
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;章节路径：退款规则 &amp;gt; 虚拟商品
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;正文：虚拟商品一经发货不支持退款，除非商品未完成交付。
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;&lt;p&gt;这样做的好处是：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;chunk 语义更完整&lt;/li&gt;
-&lt;li&gt;标题能增强检索信号&lt;/li&gt;
-&lt;li&gt;召回结果更容易解释&lt;/li&gt;
-&lt;li&gt;引用来源更清晰&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h4 id=&#34;语义切分&#34;&gt;语义切分
-&lt;/h4&gt;&lt;p&gt;语义切分不是按固定长度，而是根据语义边界切。&lt;/p&gt;
-&lt;p&gt;例如把同一主题的几段放在一起，主题变化时再切开。&lt;/p&gt;
-&lt;p&gt;这种方式适合：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;长报告&lt;/li&gt;
-&lt;li&gt;研究文章&lt;/li&gt;
-&lt;li&gt;会议纪要&lt;/li&gt;
-&lt;li&gt;客服知识库&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;但它也有成本：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;实现复杂&lt;/li&gt;
-&lt;li&gt;需要额外模型或规则&lt;/li&gt;
-&lt;li&gt;不同领域的边界判断不一样&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;所以工程上常见做法不是纯语义切分，而是：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;先按文档结构粗切，再在过长的小节里做语义或长度二次切分。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;h3 id=&#34;235-不同内容类型要用不同切分方式&#34;&gt;2.3.5 不同内容类型要用不同切分方式
-&lt;/h3&gt;&lt;p&gt;真实知识库里，最怕“一刀切”。&lt;/p&gt;
-&lt;p&gt;不同内容应该有不同策略。&lt;/p&gt;
-&lt;h4 id=&#34;faq&#34;&gt;FAQ
-&lt;/h4&gt;&lt;p&gt;FAQ 最好保持“一问一答”为一个 chunk。&lt;/p&gt;
-&lt;p&gt;不要把问题和答案拆开，也不要把多个无关 FAQ 混在一起。&lt;/p&gt;
-&lt;p&gt;较好的结构是：&lt;/p&gt;
-&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
-&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
-&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;问题：如何申请退款？
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;答案：用户可以在订单支付后 7 天内申请退款，虚拟商品除外。
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;标签：售后、退款
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;&lt;h4 id=&#34;表格&#34;&gt;表格
-&lt;/h4&gt;&lt;p&gt;表格不能只按纯文本硬切。&lt;/p&gt;
-&lt;p&gt;因为表格的含义通常依赖表头。&lt;/p&gt;
-&lt;p&gt;例如：&lt;/p&gt;
-&lt;table&gt;
-  &lt;thead&gt;
-      &lt;tr&gt;
-          &lt;th&gt;套餐&lt;/th&gt;
-          &lt;th&gt;月费&lt;/th&gt;
-          &lt;th&gt;API 调用次数&lt;/th&gt;
-      &lt;/tr&gt;
-  &lt;/thead&gt;
-  &lt;tbody&gt;
-      &lt;tr&gt;
-          &lt;td&gt;Basic&lt;/td&gt;
-          &lt;td&gt;99&lt;/td&gt;
-          &lt;td&gt;10 万&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;Pro&lt;/td&gt;
-          &lt;td&gt;299&lt;/td&gt;
-          &lt;td&gt;100 万&lt;/td&gt;
-      &lt;/tr&gt;
-  &lt;/tbody&gt;
-&lt;/table&gt;
-&lt;p&gt;如果只召回一行：&lt;/p&gt;
-&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
-&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
-&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Pro 299 100 万
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;&lt;p&gt;模型未必知道每一列代表什么。&lt;/p&gt;
-&lt;p&gt;更好的 chunk 应该保留表头：&lt;/p&gt;
-&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
-&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
-&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;套餐价格表：
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;套餐=Pro，月费=299，API 调用次数=100 万。
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;&lt;h4 id=&#34;代码&#34;&gt;代码
-&lt;/h4&gt;&lt;p&gt;代码知识库要避免把函数、类、注释、调用关系切散。&lt;/p&gt;
-&lt;p&gt;常见方式是按：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;文件&lt;/li&gt;
-&lt;li&gt;类&lt;/li&gt;
-&lt;li&gt;函数&lt;/li&gt;
-&lt;li&gt;方法&lt;/li&gt;
-&lt;li&gt;docstring&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;来切分。&lt;/p&gt;
-&lt;p&gt;同时保留元数据：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;repo&lt;/li&gt;
-&lt;li&gt;branch&lt;/li&gt;
-&lt;li&gt;file_path&lt;/li&gt;
-&lt;li&gt;symbol_name&lt;/li&gt;
-&lt;li&gt;language&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;否则用户问 &lt;code&gt;OrderService.create()&lt;/code&gt; 的行为时，只召回半截函数体，效果会很差。&lt;/p&gt;
-&lt;h4 id=&#34;法律制度合同&#34;&gt;法律、制度、合同
-&lt;/h4&gt;&lt;p&gt;这类文档最重要的是条款编号、适用条件和例外情况。&lt;/p&gt;
-&lt;p&gt;切分时要尽量保留：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;条款编号&lt;/li&gt;
-&lt;li&gt;上下位条款关系&lt;/li&gt;
-&lt;li&gt;生效时间&lt;/li&gt;
-&lt;li&gt;适用范围&lt;/li&gt;
-&lt;li&gt;例外说明&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;否则模型很容易只看到结论，看不到限制条件。&lt;/p&gt;
-&lt;h3 id=&#34;236-一个实用的-chunk-设计原则&#34;&gt;2.3.6 一个实用的 chunk 设计原则
-&lt;/h3&gt;&lt;p&gt;可以用下面几个问题检查 chunk 是否合理：&lt;/p&gt;
-&lt;ol&gt;
-&lt;li&gt;单独看这个 chunk，是否能理解它在讲什么？&lt;/li&gt;
-&lt;li&gt;它是否包含回答一个具体问题所需的最小上下文？&lt;/li&gt;
-&lt;li&gt;标题、正文、表头、代码注释有没有被拆散？&lt;/li&gt;
-&lt;li&gt;里面是否混入太多不相关主题？&lt;/li&gt;
-&lt;li&gt;如果它被召回给模型，模型能不能据此回答而不用猜？&lt;/li&gt;
-&lt;/ol&gt;
-&lt;p&gt;工程上可以先从一个保守配置开始：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;普通中文文档：300 到 800 中文字左右&lt;/li&gt;
-&lt;li&gt;技术文档：按标题层级切分，过长小节再二次切&lt;/li&gt;
-&lt;li&gt;FAQ：一问一答一个 chunk&lt;/li&gt;
-&lt;li&gt;表格：表头和行内容一起结构化&lt;/li&gt;
-&lt;li&gt;代码：按函数、类、文件结构切&lt;/li&gt;
-&lt;li&gt;overlap：一般 10% 到 20% 起步，再根据评估调&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这些不是固定标准，而是调参起点。&lt;/p&gt;
-&lt;p&gt;真正的判断标准只有一个：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;看它能不能稳定召回“足够完整、足够少噪声、可以支撑回答”的证据。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;h2 id=&#34;24-向量化与索引构建&#34;&gt;2.4 向量化与索引构建
-&lt;/h2&gt;&lt;p&gt;切好块之后，通常要把每个 &lt;code&gt;chunk&lt;/code&gt; 转成向量。&lt;/p&gt;
-&lt;p&gt;这一步就是 &lt;code&gt;embedding&lt;/code&gt;。&lt;/p&gt;
-&lt;p&gt;向量化之后，系统会把这些内容连同元数据存进索引中，常见形式包括：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;向量索引&lt;/li&gt;
-&lt;li&gt;倒排索引&lt;/li&gt;
-&lt;li&gt;混合索引&lt;/li&gt;
-&lt;li&gt;图结构索引&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这里的元数据通常包括：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;文档标题&lt;/li&gt;
-&lt;li&gt;来源 URL&lt;/li&gt;
-&lt;li&gt;时间&lt;/li&gt;
-&lt;li&gt;权限标签&lt;/li&gt;
-&lt;li&gt;部门&lt;/li&gt;
-&lt;li&gt;产品线&lt;/li&gt;
-&lt;li&gt;章节路径&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;25-查询理解&#34;&gt;2.5 查询理解
-&lt;/h2&gt;&lt;p&gt;用户问题并不总是适合直接拿去检索。&lt;/p&gt;
-&lt;p&gt;例如用户问：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;“这个东西最近权限改了吗？”&lt;/p&gt;&lt;/blockquote&gt;
-&lt;p&gt;这里的“这个东西”如果没有上下文，检索很难命中。&lt;/p&gt;
-&lt;p&gt;所以很多系统在检索前会先做查询理解，例如：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;query rewrite&lt;/li&gt;
-&lt;li&gt;query expansion&lt;/li&gt;
-&lt;li&gt;指代消解&lt;/li&gt;
-&lt;li&gt;多轮上下文拼接&lt;/li&gt;
-&lt;li&gt;把模糊问题改写成可检索问题&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;26-召回&#34;&gt;2.6 召回
-&lt;/h2&gt;&lt;p&gt;这一步是从索引中找出最相关的候选内容。&lt;/p&gt;
-&lt;p&gt;常见召回方式包括：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;向量相似度召回&lt;/li&gt;
-&lt;li&gt;BM25 关键词召回&lt;/li&gt;
-&lt;li&gt;混合召回&lt;/li&gt;
-&lt;li&gt;多路召回&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;召回阶段重点关注的是：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;尽量别漏掉真正相关内容&lt;/li&gt;
-&lt;li&gt;给后续排序保留足够候选集&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;也就是说，这一阶段更偏“高召回率”。&lt;/p&gt;
-&lt;p&gt;召回是 RAG 里第二个非常关键的环节。切分决定“知识以什么颗粒度进入系统”，召回决定“用户问题来了以后，系统能不能把正确证据找出来”。&lt;/p&gt;
-&lt;h3 id=&#34;261-召回不是排序召回的第一目标是别漏&#34;&gt;2.6.1 召回不是排序，召回的第一目标是别漏
-&lt;/h3&gt;&lt;p&gt;很多人会把召回和排序混在一起。&lt;/p&gt;
-&lt;p&gt;但在检索系统里，它们的职责不同：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;召回：从海量知识里找出一批可能相关的候选&lt;/li&gt;
-&lt;li&gt;排序：在候选里把最相关的放到前面&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;召回阶段最怕的是：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;正确答案根本没有进入候选集。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;p&gt;如果正确 chunk 没有被召回，后面的 rerank、prompt、模型再强也很难补救。&lt;/p&gt;
-&lt;p&gt;所以召回阶段一般更关注：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Recall@k&lt;/li&gt;
-&lt;li&gt;候选覆盖率&lt;/li&gt;
-&lt;li&gt;多路召回互补&lt;/li&gt;
-&lt;li&gt;是否漏掉精确术语&lt;/li&gt;
-&lt;li&gt;是否被权限、时间、产品线等过滤条件误伤&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h3 id=&#34;262-向量召回适合什么&#34;&gt;2.6.2 向量召回适合什么
-&lt;/h3&gt;&lt;p&gt;向量召回擅长处理“意思相近但字面不同”的问题。&lt;/p&gt;
-&lt;p&gt;例如：&lt;/p&gt;
-&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
-&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
-&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;用户问：忘记密码怎么办？
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;文档写：用户可通过账号安全页重置登录凭证。
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;&lt;p&gt;这两个句子字面重合不多，但语义接近，embedding 检索可能命中。&lt;/p&gt;
-&lt;p&gt;向量召回适合：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;自然语言问答&lt;/li&gt;
-&lt;li&gt;概念解释&lt;/li&gt;
-&lt;li&gt;同义表达&lt;/li&gt;
-&lt;li&gt;模糊描述&lt;/li&gt;
-&lt;li&gt;用户不知道准确术语的场景&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;但它不擅长：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;错误码&lt;/li&gt;
-&lt;li&gt;版本号&lt;/li&gt;
-&lt;li&gt;文件路径&lt;/li&gt;
-&lt;li&gt;API 名称&lt;/li&gt;
-&lt;li&gt;订单号&lt;/li&gt;
-&lt;li&gt;法条编号&lt;/li&gt;
-&lt;li&gt;很短的关键词查询&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;因为这些内容的核心不是“语义相近”，而是“字面必须精确”。&lt;/p&gt;
-&lt;h3 id=&#34;263-bm25-关键词召回适合什么&#34;&gt;2.6.3 BM25 关键词召回适合什么
-&lt;/h3&gt;&lt;p&gt;BM25 代表的是传统信息检索里的稀疏检索思路。&lt;/p&gt;
-&lt;p&gt;它更关注：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;词有没有出现&lt;/li&gt;
-&lt;li&gt;出现了几次&lt;/li&gt;
-&lt;li&gt;这个词在语料里是否稀有&lt;/li&gt;
-&lt;li&gt;文档长度是否影响匹配强度&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;BM25 对下面这些场景非常有效：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;&lt;code&gt;ERR_CONN_RESET&lt;/code&gt;&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;OrderService.create&lt;/code&gt;&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;v1.8.2&lt;/code&gt;&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;GB/T 35273&lt;/code&gt;&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;user_id&lt;/code&gt;&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;401 Unauthorized&lt;/code&gt;&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这些查询如果只走向量检索，结果可能很飘。&lt;/p&gt;
-&lt;p&gt;所以一个经验是：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;只要你的知识库里有大量专有名词、编号、代码、错误码、商品型号，就不要只做向量召回。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;h3 id=&#34;264-混合召回为什么常见&#34;&gt;2.6.4 混合召回为什么常见
-&lt;/h3&gt;&lt;p&gt;混合召回就是把多种召回方式结合起来。&lt;/p&gt;
-&lt;p&gt;最常见的是：&lt;/p&gt;
-&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
-&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
-&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;向量召回 top 50
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;BM25 召回 top 50
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;metadata 过滤
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;结果合并去重
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;rerank 重排
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;取最终 top 5 到 top 10
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;&lt;p&gt;它的价值在于互补：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;向量召回补语义&lt;/li&gt;
-&lt;li&gt;BM25 补精确匹配&lt;/li&gt;
-&lt;li&gt;metadata filter 补范围约束&lt;/li&gt;
-&lt;li&gt;rerank 补精细相关性判断&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;例如用户问：&lt;/p&gt;
-&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
-&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
-&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;v2.3.17 版本的导出接口为什么返回 403？
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;&lt;p&gt;这里同时包含：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;版本号：适合关键词&lt;/li&gt;
-&lt;li&gt;接口问题：适合关键词和结构化 metadata&lt;/li&gt;
-&lt;li&gt;403 原因：适合语义检索&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;如果只走一路，很容易漏。&lt;/p&gt;
-&lt;h3 id=&#34;265-多路召回有哪些常见路径&#34;&gt;2.6.5 多路召回有哪些常见路径
-&lt;/h3&gt;&lt;p&gt;生产系统里经常不止两路召回。&lt;/p&gt;
-&lt;p&gt;常见路径包括：&lt;/p&gt;
-&lt;h4 id=&#34;原始-query-召回&#34;&gt;原始 query 召回
-&lt;/h4&gt;&lt;p&gt;直接用用户问题检索。&lt;/p&gt;
-&lt;p&gt;这是基础路径，适合问题表达清楚的情况。&lt;/p&gt;
-&lt;h4 id=&#34;改写-query-召回&#34;&gt;改写 query 召回
-&lt;/h4&gt;&lt;p&gt;先把用户问题改写成更适合检索的形式。&lt;/p&gt;
-&lt;p&gt;例如：&lt;/p&gt;
-&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
-&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
-&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;原问题：这个接口怎么老是没权限？
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;改写后：导出接口返回 403 Forbidden 的原因和权限配置说明
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;&lt;p&gt;它适合口语化、上下文依赖强的问题。&lt;/p&gt;
-&lt;h4 id=&#34;多-query-召回&#34;&gt;多 query 召回
-&lt;/h4&gt;&lt;p&gt;一个问题生成多个检索 query。&lt;/p&gt;
-&lt;p&gt;例如用户问：&lt;/p&gt;
-&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
-&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
-&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;新员工怎么开通 VPN？
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;&lt;p&gt;可以扩展成：&lt;/p&gt;
-&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
-&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
-&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;新员工 VPN 开通流程
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;VPN 权限申请
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;远程办公账号配置
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;&lt;p&gt;这样能提高覆盖率，但也会增加噪声和成本。&lt;/p&gt;
-&lt;h4 id=&#34;metadata-召回或过滤&#34;&gt;metadata 召回或过滤
-&lt;/h4&gt;&lt;p&gt;有些问题必须先确定范围。&lt;/p&gt;
-&lt;p&gt;例如：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;只查 2026 年之后的制度&lt;/li&gt;
-&lt;li&gt;只查中国区文档&lt;/li&gt;
-&lt;li&gt;只查某个产品线&lt;/li&gt;
-&lt;li&gt;只查当前用户有权限看的内容&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这类条件不应该完全交给向量相似度，而应该通过 metadata filter 明确控制。&lt;/p&gt;
-&lt;h4 id=&#34;parent-child-召回&#34;&gt;Parent-child 召回
-&lt;/h4&gt;&lt;p&gt;这是一种很实用的策略。&lt;/p&gt;
-&lt;p&gt;索引时保存两层内容：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;child chunk：较小，用于精准检索&lt;/li&gt;
-&lt;li&gt;parent chunk：较大，用于提供完整上下文&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;检索时先命中小 chunk，再把它所属的父级片段带给模型。&lt;/p&gt;
-&lt;p&gt;它解决的问题是：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;小 chunk 检索准&lt;/li&gt;
-&lt;li&gt;大 chunk 上下文完整&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这对长文档、制度文档、技术文档都很有用。&lt;/p&gt;
-&lt;h4 id=&#34;summary-index-召回&#34;&gt;Summary index 召回
-&lt;/h4&gt;&lt;p&gt;对于特别长的文档，可以先为章节或整篇文档生成摘要索引。&lt;/p&gt;
-&lt;p&gt;检索时先命中摘要，判断可能相关的文档或章节，再进入原文 chunk 做二次检索。&lt;/p&gt;
-&lt;p&gt;它适合：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;文档数量巨大&lt;/li&gt;
-&lt;li&gt;单篇文档很长&lt;/li&gt;
-&lt;li&gt;用户问题比较宏观&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;例如：&lt;/p&gt;
-&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
-&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
-&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;问：我们系统的数据权限模型是怎么设计的？
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;&lt;p&gt;这种问题可能需要先找到“权限设计文档”，再进入具体章节。&lt;/p&gt;
-&lt;h3 id=&#34;266-召回参数怎么理解&#34;&gt;2.6.6 召回参数怎么理解
-&lt;/h3&gt;&lt;p&gt;召回里常见几个参数。&lt;/p&gt;
-&lt;h4 id=&#34;top-k&#34;&gt;top-k
-&lt;/h4&gt;&lt;p&gt;&lt;code&gt;top-k&lt;/code&gt; 表示取前多少个候选。&lt;/p&gt;
-&lt;p&gt;如果 &lt;code&gt;top-k&lt;/code&gt; 太小：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;召回容易漏&lt;/li&gt;
-&lt;li&gt;rerank 没有足够候选&lt;/li&gt;
-&lt;li&gt;答案依据可能不完整&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;如果 &lt;code&gt;top-k&lt;/code&gt; 太大：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;噪声变多&lt;/li&gt;
-&lt;li&gt;成本上升&lt;/li&gt;
-&lt;li&gt;rerank 变慢&lt;/li&gt;
-&lt;li&gt;后续上下文组装压力变大&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;实际系统里常见做法是：&lt;/p&gt;
-&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
-&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
-&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;召回阶段取 top 30 到 top 100
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;rerank 后取 top 5 到 top 10
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;最终进 prompt 的可能只有 3 到 8 段
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;&lt;p&gt;具体值要靠评估集调。&lt;/p&gt;
-&lt;h4 id=&#34;score-threshold&#34;&gt;score threshold
-&lt;/h4&gt;&lt;p&gt;有些系统会设置相似度阈值，低于阈值的结果不返回。&lt;/p&gt;
-&lt;p&gt;它可以减少明显不相关内容，但也可能误伤。&lt;/p&gt;
-&lt;p&gt;尤其不同 embedding 模型、不同向量库、不同相似度算法下，分数分布不一样，不能照搬阈值。&lt;/p&gt;
-&lt;p&gt;更稳的方式是基于评估集观察：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;正确召回通常分数在哪个范围&lt;/li&gt;
-&lt;li&gt;错误召回通常分数在哪个范围&lt;/li&gt;
-&lt;li&gt;两者是否有明显分界&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h4 id=&#34;metadata-filter&#34;&gt;metadata filter
-&lt;/h4&gt;&lt;p&gt;metadata filter 的作用是先限定搜索范围。&lt;/p&gt;
-&lt;p&gt;例如：&lt;/p&gt;
-&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
-&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
-&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;product = &amp;#34;billing&amp;#34;
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;region = &amp;#34;cn&amp;#34;
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;doc_status = &amp;#34;active&amp;#34;
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;permission_group in current_user.groups
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;&lt;p&gt;这类过滤通常应该发生在召回阶段，而不是等 LLM 自己判断。&lt;/p&gt;
-&lt;p&gt;因为一旦越权内容进入 prompt，就已经产生安全风险。&lt;/p&gt;
-&lt;h3 id=&#34;267-召回失败怎么排查&#34;&gt;2.6.7 召回失败怎么排查
-&lt;/h3&gt;&lt;p&gt;当用户说“RAG 没答对”时，不要一上来就改 prompt。&lt;/p&gt;
-&lt;p&gt;可以按下面顺序排查召回：&lt;/p&gt;
-&lt;ol&gt;
-&lt;li&gt;正确答案是否存在于原始知识库？&lt;/li&gt;
-&lt;li&gt;文档解析后，正确内容是否还在？&lt;/li&gt;
-&lt;li&gt;chunk 是否把正确内容切完整？&lt;/li&gt;
-&lt;li&gt;query 是否表达了正确意图？&lt;/li&gt;
-&lt;li&gt;向量召回 top-k 里有没有正确 chunk？&lt;/li&gt;
-&lt;li&gt;BM25 召回 top-k 里有没有正确 chunk？&lt;/li&gt;
-&lt;li&gt;metadata filter 是否把正确文档过滤掉？&lt;/li&gt;
-&lt;li&gt;rerank 是否把正确 chunk 排低了？&lt;/li&gt;
-&lt;li&gt;context packing 是否把正确 chunk 丢掉了？&lt;/li&gt;
-&lt;/ol&gt;
-&lt;p&gt;这条链路能帮助你定位问题属于哪一层。&lt;/p&gt;
-&lt;p&gt;一个很重要的判断是：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;如果正确 chunk 没进入召回候选，这是召回问题；如果进入候选但没进最终上下文，可能是重排或上下文组装问题；如果进入上下文但回答仍然错，才重点看 prompt 和生成模型。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;h2 id=&#34;27-重排&#34;&gt;2.7 重排
-&lt;/h2&gt;&lt;p&gt;召回出来的结果不一定顺序最好，所以通常还会有 &lt;code&gt;rerank&lt;/code&gt;。&lt;/p&gt;
-&lt;p&gt;重排的作用是：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;在候选集合里，把真正最相关的内容排到前面。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;p&gt;常见方式包括：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;cross-encoder rerank&lt;/li&gt;
-&lt;li&gt;基于大模型打分&lt;/li&gt;
-&lt;li&gt;结合 metadata 规则重排&lt;/li&gt;
-&lt;li&gt;基于时间、权限、来源可信度重排&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;很多线上系统的实际效果提升，往往就来自“召回后再排一次”。&lt;/p&gt;
-&lt;h2 id=&#34;28-上下文组装&#34;&gt;2.8 上下文组装
-&lt;/h2&gt;&lt;p&gt;不是把召回结果一股脑塞给模型就行。&lt;/p&gt;
-&lt;p&gt;还要解决：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;选哪几段&lt;/li&gt;
-&lt;li&gt;按什么顺序放&lt;/li&gt;
-&lt;li&gt;是否去重&lt;/li&gt;
-&lt;li&gt;是否合并相邻片段&lt;/li&gt;
-&lt;li&gt;是否附带来源信息&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这一阶段本质上是在做：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;context packing&lt;/p&gt;&lt;/blockquote&gt;
-&lt;p&gt;也就是在有限 token 预算里，把最有价值的信息装进去。&lt;/p&gt;
-&lt;h2 id=&#34;29-生成答案&#34;&gt;2.9 生成答案
-&lt;/h2&gt;&lt;p&gt;把用户问题和检索结果一起交给大模型，让模型生成最终回答。&lt;/p&gt;
-&lt;p&gt;这一阶段常见设计包括：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;严格基于资料回答&lt;/li&gt;
-&lt;li&gt;回答时附上引用&lt;/li&gt;
-&lt;li&gt;资料不足时明确说不知道&lt;/li&gt;
-&lt;li&gt;区分“原文摘录”和“模型总结”&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;210-后处理与反馈闭环&#34;&gt;2.10 后处理与反馈闭环
-&lt;/h2&gt;&lt;p&gt;一个成熟系统通常还有最后几步：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;答案引用对齐&lt;/li&gt;
-&lt;li&gt;敏感信息过滤&lt;/li&gt;
-&lt;li&gt;结果缓存&lt;/li&gt;
-&lt;li&gt;用户反馈收集&lt;/li&gt;
-&lt;li&gt;失败样本回流&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这部分决定系统能不能持续优化，而不是只跑通一次 demo。&lt;/p&gt;
-&lt;h1 id=&#34;三rag-的常见实现方式&#34;&gt;三、RAG 的常见实现方式
-&lt;/h1&gt;&lt;p&gt;RAG 并不是只有一种形态。&lt;/p&gt;
-&lt;h2 id=&#34;31-naive-rag&#34;&gt;3.1 Naive RAG
-&lt;/h2&gt;&lt;p&gt;最基础的做法是：&lt;/p&gt;
-&lt;ol&gt;
-&lt;li&gt;文档切块&lt;/li&gt;
-&lt;li&gt;embedding&lt;/li&gt;
-&lt;li&gt;向量检索 top-k&lt;/li&gt;
-&lt;li&gt;把结果塞给 LLM&lt;/li&gt;
-&lt;/ol&gt;
-&lt;p&gt;这是很多教程里的起点。&lt;/p&gt;
-&lt;p&gt;优点是简单、容易落地。&lt;/p&gt;
-&lt;p&gt;缺点也很明显：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;对 query 表达很敏感&lt;/li&gt;
-&lt;li&gt;容易召回不准&lt;/li&gt;
-&lt;li&gt;chunk 粗糙时效果差&lt;/li&gt;
-&lt;li&gt;缺少 rerank 和多路检索时上限较低&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;32-advanced-rag&#34;&gt;3.2 Advanced RAG
-&lt;/h2&gt;&lt;p&gt;这是最常见的工程升级形态。&lt;/p&gt;
-&lt;p&gt;典型增强点包括：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;更合理的 chunk 策略&lt;/li&gt;
-&lt;li&gt;query rewrite&lt;/li&gt;
-&lt;li&gt;hybrid search&lt;/li&gt;
-&lt;li&gt;rerank&lt;/li&gt;
-&lt;li&gt;metadata filter&lt;/li&gt;
-&lt;li&gt;引用输出&lt;/li&gt;
-&lt;li&gt;缓存和评估&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;很多企业里的“生产级 RAG”，本质上都属于这一类。&lt;/p&gt;
-&lt;h2 id=&#34;33-hybrid-rag&#34;&gt;3.3 Hybrid RAG
-&lt;/h2&gt;&lt;p&gt;也就是混合检索。&lt;/p&gt;
-&lt;p&gt;它通常把：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;稠密检索&lt;/li&gt;
-&lt;li&gt;稀疏检索&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;结合起来。&lt;/p&gt;
-&lt;p&gt;原因是：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;向量检索擅长语义相近&lt;/li&gt;
-&lt;li&gt;关键词检索擅长精确术语、缩写、版本号、错误码&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;例如：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;API 名称&lt;/li&gt;
-&lt;li&gt;订单号&lt;/li&gt;
-&lt;li&gt;类名函数名&lt;/li&gt;
-&lt;li&gt;法条编号&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这类内容，单靠向量检索往往不稳定。&lt;/p&gt;
-&lt;h2 id=&#34;34-graph-rag&#34;&gt;3.4 Graph RAG
-&lt;/h2&gt;&lt;p&gt;当知识之间存在明显关系结构时，会有人引入图。&lt;/p&gt;
-&lt;p&gt;例如：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;实体关系&lt;/li&gt;
-&lt;li&gt;组织架构&lt;/li&gt;
-&lt;li&gt;系统依赖关系&lt;/li&gt;
-&lt;li&gt;代码调用关系&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;它的思路不是只检索文本相似度，而是利用实体和关系做扩展检索与推理。&lt;/p&gt;
-&lt;p&gt;适合：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;多跳问答&lt;/li&gt;
-&lt;li&gt;复杂实体关系问题&lt;/li&gt;
-&lt;li&gt;依赖路径分析&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;35-agentic-rag&#34;&gt;3.5 Agentic RAG
-&lt;/h2&gt;&lt;p&gt;在更复杂的系统里，检索不一定只发生一次。&lt;/p&gt;
-&lt;p&gt;模型可能会：&lt;/p&gt;
-&lt;ol&gt;
-&lt;li&gt;先理解问题&lt;/li&gt;
-&lt;li&gt;决定检索哪类资料&lt;/li&gt;
-&lt;li&gt;看第一次结果够不够&lt;/li&gt;
-&lt;li&gt;不够就继续改写 query 或继续查&lt;/li&gt;
-&lt;li&gt;最后再生成答案&lt;/li&gt;
-&lt;/ol&gt;
-&lt;p&gt;这类做法通常会和 agent、tool use、workflow 编排结合起来。&lt;/p&gt;
-&lt;p&gt;它的特点是更灵活，但系统复杂度也更高。&lt;/p&gt;
-&lt;h2 id=&#34;36-long-context-rag&#34;&gt;3.6 Long-Context RAG
-&lt;/h2&gt;&lt;p&gt;随着上下文窗口变大，一些团队会减少复杂检索层，更多依赖“大上下文直接读”。&lt;/p&gt;
-&lt;p&gt;但这不等于 RAG 失效。&lt;/p&gt;
-&lt;p&gt;更准确地说，是 RAG 的重点会从“强压缩检索”转向：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;更好的筛选&lt;/li&gt;
-&lt;li&gt;更好的排序&lt;/li&gt;
-&lt;li&gt;更好的上下文组织&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;长上下文不是 RAG 的替代品，而是改变了 RAG 的工程权衡。&lt;/p&gt;
-&lt;h1 id=&#34;四rag-的底层原理&#34;&gt;四、RAG 的底层原理
-&lt;/h1&gt;&lt;p&gt;这部分是面试里最容易被问到，也最容易回答空泛的地方。&lt;/p&gt;
-&lt;h2 id=&#34;41-embedding-为什么能检索相似内容&#34;&gt;4.1 embedding 为什么能检索相似内容
-&lt;/h2&gt;&lt;p&gt;&lt;code&gt;embedding&lt;/code&gt; 的核心作用，是把文本映射成高维向量。&lt;/p&gt;
-&lt;p&gt;在这个向量空间里，语义相近的文本，通常距离更近。&lt;/p&gt;
-&lt;p&gt;例如：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;“怎么重置密码”&lt;/li&gt;
-&lt;li&gt;“忘记密码怎么办”&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;虽然字面不完全一样，但 embedding 后可能距离较近。&lt;/p&gt;
-&lt;p&gt;检索时，系统会把用户 query 也转成向量，然后在向量库里找“距离最近”的若干个 &lt;code&gt;chunk&lt;/code&gt;。&lt;/p&gt;
-&lt;p&gt;常见相似度计算方式包括：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;cosine similarity&lt;/li&gt;
-&lt;li&gt;dot product&lt;/li&gt;
-&lt;li&gt;euclidean distance&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;42-为什么还需要关键词检索&#34;&gt;4.2 为什么还需要关键词检索
-&lt;/h2&gt;&lt;p&gt;因为“语义相近”不等于“字面精确”。&lt;/p&gt;
-&lt;p&gt;例如：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;&lt;code&gt;ERR_CONN_RESET&lt;/code&gt;&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;v2.3.17&lt;/code&gt;&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;OrderService.create()&lt;/code&gt;&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这类符号、编号、专有名词，BM25 或倒排索引往往更稳定。&lt;/p&gt;
-&lt;p&gt;所以真实系统里，通常不会只依赖单一路径。&lt;/p&gt;
-&lt;h2 id=&#34;43-chunk-为什么会影响效果&#34;&gt;4.3 chunk 为什么会影响效果
-&lt;/h2&gt;&lt;p&gt;因为检索命中的对象不是整篇文档，而是 chunk。&lt;/p&gt;
-&lt;p&gt;如果 chunk 太大：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;噪声多&lt;/li&gt;
-&lt;li&gt;主题混杂&lt;/li&gt;
-&lt;li&gt;命中后塞进上下文的成本高&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;如果 chunk 太小：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;语义不完整&lt;/li&gt;
-&lt;li&gt;容易丢上下文&lt;/li&gt;
-&lt;li&gt;答案依据被切散&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;所以 RAG 很多问题，不是模型不行，而是 chunk 粒度设计得不对。&lt;/p&gt;
-&lt;h2 id=&#34;44-rerank-为什么有效&#34;&gt;4.4 rerank 为什么有效
-&lt;/h2&gt;&lt;p&gt;召回阶段通常追求“别漏”，所以候选结果里常常混入一些“差不多相关”的内容。&lt;/p&gt;
-&lt;p&gt;而 &lt;code&gt;rerank&lt;/code&gt; 更像第二道筛选：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;它不要求扫全库，只要求在较小候选集里做更精细的相关性判断。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;p&gt;因此它通常能显著改善 top 几条结果的质量。&lt;/p&gt;
-&lt;h2 id=&#34;45-rag-为什么能降低幻觉&#34;&gt;4.5 RAG 为什么能降低幻觉
-&lt;/h2&gt;&lt;p&gt;因为模型不再只靠参数记忆，而是能参考外部证据。&lt;/p&gt;
-&lt;p&gt;但要注意：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;&lt;code&gt;RAG&lt;/code&gt; 只能降低幻觉，不能彻底消灭幻觉。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;p&gt;因为即使检索到了正确内容，也仍然可能出现：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;模型误读资料&lt;/li&gt;
-&lt;li&gt;引用错段落&lt;/li&gt;
-&lt;li&gt;过度总结&lt;/li&gt;
-&lt;li&gt;把多个来源拼错&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;所以 &lt;code&gt;RAG&lt;/code&gt; 本质上是“提升证据供给质量”，不是“自动保证真相”。&lt;/p&gt;
-&lt;h1 id=&#34;五rag-中最容易遇到的坑&#34;&gt;五、RAG 中最容易遇到的坑
-&lt;/h1&gt;&lt;p&gt;真正做 RAG，问题通常不在“能不能跑起来”，而在“为什么效果总是不稳定”。&lt;/p&gt;
-&lt;h2 id=&#34;51-只关注模型不关注数据质量&#34;&gt;5.1 只关注模型，不关注数据质量
-&lt;/h2&gt;&lt;p&gt;这是最常见的问题。&lt;/p&gt;
-&lt;p&gt;如果源文档本身：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;过期&lt;/li&gt;
-&lt;li&gt;冲突&lt;/li&gt;
-&lt;li&gt;OCR 错误严重&lt;/li&gt;
-&lt;li&gt;标题层级混乱&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;那后面检索和生成做得再漂亮，结果也不会稳定。&lt;/p&gt;
-&lt;h2 id=&#34;52-chunk-切分太机械&#34;&gt;5.2 chunk 切分太机械
-&lt;/h2&gt;&lt;p&gt;很多 demo 会直接按固定字数切。&lt;/p&gt;
-&lt;p&gt;这在真实场景里经常导致：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;表格被截断&lt;/li&gt;
-&lt;li&gt;问答对被拆开&lt;/li&gt;
-&lt;li&gt;标题和正文分离&lt;/li&gt;
-&lt;li&gt;代码片段不完整&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;结果就是看起来检索到了，实际上证据不完整。&lt;/p&gt;
-&lt;h2 id=&#34;53-只做向量检索&#34;&gt;5.3 只做向量检索
-&lt;/h2&gt;&lt;p&gt;纯向量检索对很多术语型问题并不稳。&lt;/p&gt;
-&lt;p&gt;特别是这些场景：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;版本号&lt;/li&gt;
-&lt;li&gt;接口名&lt;/li&gt;
-&lt;li&gt;错误码&lt;/li&gt;
-&lt;li&gt;SKU&lt;/li&gt;
-&lt;li&gt;人名、地名、法条编号&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;如果没有关键词或混合检索，经常会漏召回。&lt;/p&gt;
-&lt;h2 id=&#34;54-top-k-拿得过多或过少&#34;&gt;5.4 top-k 拿得过多或过少
-&lt;/h2&gt;&lt;p&gt;&lt;code&gt;top-k&lt;/code&gt; 太小，容易漏关键依据。&lt;/p&gt;
-&lt;p&gt;&lt;code&gt;top-k&lt;/code&gt; 太大，又会导致：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;噪声增加&lt;/li&gt;
-&lt;li&gt;token 浪费&lt;/li&gt;
-&lt;li&gt;模型注意力分散&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这不是固定参数能一劳永逸解决的问题，通常要结合数据集调优。&lt;/p&gt;
-&lt;h2 id=&#34;55-没有做-metadata-过滤&#34;&gt;5.5 没有做 metadata 过滤
-&lt;/h2&gt;&lt;p&gt;如果知识库跨多个部门、产品线、地区、租户，缺少 metadata filter 会让检索结果非常脏。&lt;/p&gt;
-&lt;p&gt;例如本来应该查：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;某个业务线&lt;/li&gt;
-&lt;li&gt;某个语言版本&lt;/li&gt;
-&lt;li&gt;某个时间区间&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;结果系统把不相关范围的文档也拿进来了。&lt;/p&gt;
-&lt;h2 id=&#34;56-把答案质量问题误判成检索问题&#34;&gt;5.6 把“答案质量问题”误判成“检索问题”
-&lt;/h2&gt;&lt;p&gt;有时候检索结果其实是对的，但生成阶段 prompt 不好，导致：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;回答不够保守&lt;/li&gt;
-&lt;li&gt;没按引用回答&lt;/li&gt;
-&lt;li&gt;总结过度&lt;/li&gt;
-&lt;li&gt;没区分事实和推断&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;所以 RAG 调优一定要拆开看：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;是没召回&lt;/li&gt;
-&lt;li&gt;是排序不对&lt;/li&gt;
-&lt;li&gt;还是生成没用好证据&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;57-缺少评估体系&#34;&gt;5.7 缺少评估体系
-&lt;/h2&gt;&lt;p&gt;很多团队调 RAG 靠“手感”。&lt;/p&gt;
-&lt;p&gt;今天换个 embedding，明天改个 prompt，最后却说不清到底哪里变好了。&lt;/p&gt;
-&lt;p&gt;如果没有最基本的评估集和指标，优化会非常低效。&lt;/p&gt;
-&lt;h2 id=&#34;58-忽略权限与安全&#34;&gt;5.8 忽略权限与安全
-&lt;/h2&gt;&lt;p&gt;企业 RAG 很容易踩这个坑。&lt;/p&gt;
-&lt;p&gt;例如：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;检索结果越权&lt;/li&gt;
-&lt;li&gt;敏感字段被带进上下文&lt;/li&gt;
-&lt;li&gt;缓存污染不同用户结果&lt;/li&gt;
-&lt;li&gt;日志里泄露原文&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;所以生产级 RAG 不只是算法问题，还是治理问题。&lt;/p&gt;
-&lt;h1 id=&#34;六rag-的常见技术栈与实现路径&#34;&gt;六、RAG 的常见技术栈与实现路径
-&lt;/h1&gt;&lt;p&gt;如果从工程实现看，常见链路大概是这样：&lt;/p&gt;
-&lt;h2 id=&#34;61-数据处理层&#34;&gt;6.1 数据处理层
-&lt;/h2&gt;&lt;ul&gt;
-&lt;li&gt;文档解析：OCR、PDF parser、HTML parser&lt;/li&gt;
-&lt;li&gt;清洗与标准化：去噪、结构抽取、元数据补充&lt;/li&gt;
-&lt;li&gt;切分：固定窗口、语义切分、结构化切分&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;62-索引层&#34;&gt;6.2 索引层
-&lt;/h2&gt;&lt;ul&gt;
-&lt;li&gt;稠密向量库：Milvus、FAISS、pgvector、Weaviate、Qdrant&lt;/li&gt;
-&lt;li&gt;稀疏检索：Elasticsearch、OpenSearch、Lucene、BM25&lt;/li&gt;
-&lt;li&gt;混合检索：向量 + 倒排&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;63-检索增强层&#34;&gt;6.3 检索增强层
-&lt;/h2&gt;&lt;ul&gt;
-&lt;li&gt;query rewrite&lt;/li&gt;
-&lt;li&gt;multi-query retrieval&lt;/li&gt;
-&lt;li&gt;rerank&lt;/li&gt;
-&lt;li&gt;metadata filtering&lt;/li&gt;
-&lt;li&gt;parent-child retrieval&lt;/li&gt;
-&lt;li&gt;summary index&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;64-生成层&#34;&gt;6.4 生成层
-&lt;/h2&gt;&lt;ul&gt;
-&lt;li&gt;LLM answer synthesis&lt;/li&gt;
-&lt;li&gt;citation grounding&lt;/li&gt;
-&lt;li&gt;refusal when insufficient evidence&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;65-编排层&#34;&gt;6.5 编排层
-&lt;/h2&gt;&lt;ul&gt;
-&lt;li&gt;LangChain&lt;/li&gt;
-&lt;li&gt;LlamaIndex&lt;/li&gt;
-&lt;li&gt;Haystack&lt;/li&gt;
-&lt;li&gt;自研 workflow&lt;/li&gt;
-&lt;li&gt;agent runtime&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这里要注意：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;框架不是 RAG 的本质，数据、检索和评估才是 RAG 的核心。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;h1 id=&#34;七除了搭建还要怎么评估和优化&#34;&gt;七、除了搭建，还要怎么评估和优化
-&lt;/h1&gt;&lt;p&gt;这是很多文章会漏掉，但实际工作里非常重要的一部分。&lt;/p&gt;
-&lt;p&gt;很多 RAG 项目一开始能跑通，但后面会进入一种很低效的状态：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;用户说效果不好&lt;/li&gt;
-&lt;li&gt;工程师改 chunk&lt;/li&gt;
-&lt;li&gt;再换 embedding&lt;/li&gt;
-&lt;li&gt;再改 prompt&lt;/li&gt;
-&lt;li&gt;再调 top-k&lt;/li&gt;
-&lt;li&gt;最后不知道到底哪个改动有效&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这就是缺少评估体系的典型表现。&lt;/p&gt;
-&lt;p&gt;评估的目的不是为了做漂亮报表，而是为了回答三个问题：&lt;/p&gt;
-&lt;ol&gt;
-&lt;li&gt;系统现在到底差在哪里？&lt;/li&gt;
-&lt;li&gt;某次改动到底有没有变好？&lt;/li&gt;
-&lt;li&gt;线上失败样本应该回流到哪一层优化？&lt;/li&gt;
-&lt;/ol&gt;
-&lt;h2 id=&#34;71-至少拆成四层评估&#34;&gt;7.1 至少拆成四层评估
-&lt;/h2&gt;&lt;p&gt;最简单的说法是“检索评估 + 答案评估”，但真实排查时，最好拆得更细一点。&lt;/p&gt;
-&lt;h3 id=&#34;第一层数据评估&#34;&gt;第一层：数据评估
-&lt;/h3&gt;&lt;p&gt;先看知识库本身有没有问题。&lt;/p&gt;
-&lt;p&gt;常见关注点：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;原始文档是否完整&lt;/li&gt;
-&lt;li&gt;文档是否过期&lt;/li&gt;
-&lt;li&gt;是否存在多版本冲突&lt;/li&gt;
-&lt;li&gt;PDF、OCR、表格解析是否正确&lt;/li&gt;
-&lt;li&gt;标题层级和元数据是否保留&lt;/li&gt;
-&lt;li&gt;权限标签是否准确&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;如果数据源错了，后面的检索和生成只会更稳定地犯错。&lt;/p&gt;
-&lt;h3 id=&#34;第二层切分评估&#34;&gt;第二层：切分评估
-&lt;/h3&gt;&lt;p&gt;切分评估关注的是：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;正确知识有没有以合适的颗粒度进入索引。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;p&gt;常见检查点：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;一个 chunk 是否语义完整&lt;/li&gt;
-&lt;li&gt;是否包含标题路径&lt;/li&gt;
-&lt;li&gt;表格是否保留表头&lt;/li&gt;
-&lt;li&gt;FAQ 是否保持问答一体&lt;/li&gt;
-&lt;li&gt;代码是否保留函数或类边界&lt;/li&gt;
-&lt;li&gt;chunk 是否混入太多主题&lt;/li&gt;
-&lt;li&gt;overlap 是否造成大量重复&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这一层通常要抽样人工看，因为 chunk 好坏很难只靠一个指标判断。&lt;/p&gt;
-&lt;h3 id=&#34;第三层检索评估&#34;&gt;第三层：检索评估
-&lt;/h3&gt;&lt;p&gt;常见关注点：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;是否召回了正确文档&lt;/li&gt;
-&lt;li&gt;正确 chunk 排名是否靠前&lt;/li&gt;
-&lt;li&gt;有没有明显漏召回&lt;/li&gt;
-&lt;li&gt;是否误召回了大量相似但不相关内容&lt;/li&gt;
-&lt;li&gt;metadata filter 是否正确生效&lt;/li&gt;
-&lt;li&gt;不同召回路径是否互补&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;检索评估的核心是：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;在不看 LLM 生成的情况下，只看系统有没有把正确证据找出来。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;h3 id=&#34;第四层答案评估&#34;&gt;第四层：答案评估
-&lt;/h3&gt;&lt;p&gt;常见关注点：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;是否基于证据回答&lt;/li&gt;
-&lt;li&gt;是否答到了问题&lt;/li&gt;
-&lt;li&gt;是否有幻觉&lt;/li&gt;
-&lt;li&gt;是否引用正确&lt;/li&gt;
-&lt;li&gt;是否在证据不足时拒答&lt;/li&gt;
-&lt;li&gt;是否把条件、例外、时间范围说清楚&lt;/li&gt;
-&lt;li&gt;是否把多个来源错误拼接&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这层才是最终用户感知到的效果。&lt;/p&gt;
-&lt;p&gt;但要注意：答案错不代表一定是模型错。它可能是数据错、切分错、召回错、排序错，也可能才是生成错。&lt;/p&gt;
-&lt;h2 id=&#34;72-评估集怎么构建&#34;&gt;7.2 评估集怎么构建
-&lt;/h2&gt;&lt;p&gt;没有评估集，就很难系统优化 RAG。&lt;/p&gt;
-&lt;p&gt;一个最小可用的评估集，通常至少包含：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;用户问题&lt;/li&gt;
-&lt;li&gt;标准答案或答案要点&lt;/li&gt;
-&lt;li&gt;应该命中的文档或 chunk&lt;/li&gt;
-&lt;li&gt;问题类型&lt;/li&gt;
-&lt;li&gt;权限或业务范围&lt;/li&gt;
-&lt;li&gt;难度标签&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;可以设计成这样：&lt;/p&gt;
-&lt;table&gt;
-  &lt;thead&gt;
-      &lt;tr&gt;
-          &lt;th&gt;字段&lt;/th&gt;
-          &lt;th&gt;示例&lt;/th&gt;
-      &lt;/tr&gt;
-  &lt;/thead&gt;
-  &lt;tbody&gt;
-      &lt;tr&gt;
-          &lt;td&gt;question&lt;/td&gt;
-          &lt;td&gt;Pro 套餐每月 API 调用上限是多少？&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;expected_answer&lt;/td&gt;
-          &lt;td&gt;Pro 套餐每月 API 调用上限是 100 万次&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;golden_chunk_id&lt;/td&gt;
-          &lt;td&gt;pricing_doc_chunk_003&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;category&lt;/td&gt;
-          &lt;td&gt;产品价格&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;query_type&lt;/td&gt;
-          &lt;td&gt;精确事实&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;metadata_scope&lt;/td&gt;
-          &lt;td&gt;product=billing, region=cn&lt;/td&gt;
-      &lt;/tr&gt;
-  &lt;/tbody&gt;
-&lt;/table&gt;
-&lt;h3 id=&#34;721-问题从哪里来&#34;&gt;7.2.1 问题从哪里来
-&lt;/h3&gt;&lt;p&gt;评估问题最好不要只靠工程师自己编。&lt;/p&gt;
-&lt;p&gt;更好的来源包括：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;真实用户搜索日志&lt;/li&gt;
-&lt;li&gt;客服问答记录&lt;/li&gt;
-&lt;li&gt;工单系统&lt;/li&gt;
-&lt;li&gt;产品 FAQ&lt;/li&gt;
-&lt;li&gt;面试或验收问题&lt;/li&gt;
-&lt;li&gt;线上失败样本&lt;/li&gt;
-&lt;li&gt;高价值业务场景手工补充&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;其中最有价值的是线上失败样本。&lt;/p&gt;
-&lt;p&gt;因为它代表的不是“理论上可能会问什么”，而是“用户真的问了，并且系统真的没答好”。&lt;/p&gt;
-&lt;h3 id=&#34;722-评估集要覆盖哪些问题类型&#34;&gt;7.2.2 评估集要覆盖哪些问题类型
-&lt;/h3&gt;&lt;p&gt;RAG 的问题类型不一样，优化方向也不一样。&lt;/p&gt;
-&lt;p&gt;建议至少覆盖这些类型：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;精确事实：某个字段、金额、日期、配置值是什么&lt;/li&gt;
-&lt;li&gt;术语解释：某个概念是什么意思&lt;/li&gt;
-&lt;li&gt;流程类：某件事应该怎么操作&lt;/li&gt;
-&lt;li&gt;条件判断：什么情况下可以或不可以&lt;/li&gt;
-&lt;li&gt;对比类：A 和 B 有什么区别&lt;/li&gt;
-&lt;li&gt;多跳问题：需要跨多个片段组合回答&lt;/li&gt;
-&lt;li&gt;时效问题：只允许使用最新版本或指定时间范围&lt;/li&gt;
-&lt;li&gt;权限问题：不同用户能看到的答案不同&lt;/li&gt;
-&lt;li&gt;无答案问题：知识库里没有，系统应该拒答&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;尤其要放入“无答案问题”。&lt;/p&gt;
-&lt;p&gt;否则系统可能只学会回答，不学会克制。&lt;/p&gt;
-&lt;h2 id=&#34;73-常见评估指标怎么理解&#34;&gt;7.3 常见评估指标怎么理解
-&lt;/h2&gt;&lt;p&gt;指标不要只背名字，要理解它们分别回答什么问题。&lt;/p&gt;
-&lt;h3 id=&#34;731-检索侧指标&#34;&gt;7.3.1 检索侧指标
-&lt;/h3&gt;&lt;h4 id=&#34;recallk&#34;&gt;Recall@k
-&lt;/h4&gt;&lt;p&gt;&lt;code&gt;Recall@k&lt;/code&gt; 看的是：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;正确 chunk 有没有出现在前 k 个召回结果里。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;p&gt;例如 &lt;code&gt;Recall@10 = 0.85&lt;/code&gt;，意思是 85% 的问题，其正确依据能在前 10 个召回结果里找到。&lt;/p&gt;
-&lt;p&gt;这个指标非常重要，因为如果正确依据没进候选，后面基本没法补救。&lt;/p&gt;
-&lt;h4 id=&#34;precisionk&#34;&gt;Precision@k
-&lt;/h4&gt;&lt;p&gt;&lt;code&gt;Precision@k&lt;/code&gt; 看的是：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;前 k 个结果里，有多少是真相关。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;p&gt;它关心结果纯度。&lt;/p&gt;
-&lt;p&gt;但在 RAG 里，召回阶段通常更重视 Recall，最终进入 prompt 前才更重视 Precision。&lt;/p&gt;
-&lt;h4 id=&#34;mrr&#34;&gt;MRR
-&lt;/h4&gt;&lt;p&gt;&lt;code&gt;MRR&lt;/code&gt; 是 Mean Reciprocal Rank。&lt;/p&gt;
-&lt;p&gt;它关注第一个正确结果排在第几位。&lt;/p&gt;
-&lt;p&gt;例如：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;正确结果排第 1，得分是 1&lt;/li&gt;
-&lt;li&gt;正确结果排第 2，得分是 1/2&lt;/li&gt;
-&lt;li&gt;正确结果排第 5，得分是 1/5&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;它适合衡量：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;正确答案是不是足够靠前。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;h4 id=&#34;ndcg&#34;&gt;NDCG
-&lt;/h4&gt;&lt;p&gt;&lt;code&gt;NDCG&lt;/code&gt; 适合有多级相关性标注的场景。&lt;/p&gt;
-&lt;p&gt;例如：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;3 分：完全相关&lt;/li&gt;
-&lt;li&gt;2 分：部分相关&lt;/li&gt;
-&lt;li&gt;1 分：弱相关&lt;/li&gt;
-&lt;li&gt;0 分：不相关&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;它不仅看有没有相关结果，也看高相关结果是不是排在前面。&lt;/p&gt;
-&lt;h3 id=&#34;732-生成侧指标&#34;&gt;7.3.2 生成侧指标
-&lt;/h3&gt;&lt;p&gt;生成侧常见指标：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;faithfulness&lt;/li&gt;
-&lt;li&gt;answer relevancy&lt;/li&gt;
-&lt;li&gt;groundedness&lt;/li&gt;
-&lt;li&gt;citation accuracy&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这些指标可以这样理解。&lt;/p&gt;
-&lt;h4 id=&#34;faithfulness&#34;&gt;Faithfulness
-&lt;/h4&gt;&lt;p&gt;看答案是否忠实于给定证据。&lt;/p&gt;
-&lt;p&gt;如果上下文里只说“企业合同订单以合同条款为准”，模型却回答“所有订单都可以 7 天无理由退款”，这就是 faithfulness 问题。&lt;/p&gt;
-&lt;h4 id=&#34;answer-relevancy&#34;&gt;Answer relevancy
-&lt;/h4&gt;&lt;p&gt;看答案是否真正回答了用户问题。&lt;/p&gt;
-&lt;p&gt;有时模型没有幻觉，但答偏了。&lt;/p&gt;
-&lt;p&gt;例如用户问“怎么关闭自动续费”，模型回答了一大段“自动续费是什么”，这就是相关性问题。&lt;/p&gt;
-&lt;h4 id=&#34;groundedness&#34;&gt;Groundedness
-&lt;/h4&gt;&lt;p&gt;看答案中的关键结论是否能在证据里找到支撑。&lt;/p&gt;
-&lt;p&gt;它和 faithfulness 很接近，但更强调“每个重要说法是否有依据”。&lt;/p&gt;
-&lt;h4 id=&#34;citation-accuracy&#34;&gt;Citation accuracy
-&lt;/h4&gt;&lt;p&gt;看引用是否准确。&lt;/p&gt;
-&lt;p&gt;常见错误包括：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;引用了不支持该结论的 chunk&lt;/li&gt;
-&lt;li&gt;引用段落和答案内容不匹配&lt;/li&gt;
-&lt;li&gt;引用过期文档&lt;/li&gt;
-&lt;li&gt;引用被权限过滤后不该展示的来源&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;引用不是装饰，它是 RAG 可追溯性的核心。&lt;/p&gt;
-&lt;h2 id=&#34;74-人工评估怎么做&#34;&gt;7.4 人工评估怎么做
-&lt;/h2&gt;&lt;p&gt;自动指标有用，但 RAG 很难完全靠自动评估。&lt;/p&gt;
-&lt;p&gt;一个实用的人工评分表可以包括：&lt;/p&gt;
-&lt;table&gt;
-  &lt;thead&gt;
-      &lt;tr&gt;
-          &lt;th&gt;维度&lt;/th&gt;
-          &lt;th&gt;评分说明&lt;/th&gt;
-      &lt;/tr&gt;
-  &lt;/thead&gt;
-  &lt;tbody&gt;
-      &lt;tr&gt;
-          &lt;td&gt;正确性&lt;/td&gt;
-          &lt;td&gt;答案事实是否正确&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;完整性&lt;/td&gt;
-          &lt;td&gt;是否覆盖关键条件、例外、步骤&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;证据一致性&lt;/td&gt;
-          &lt;td&gt;是否严格基于召回内容&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;引用准确性&lt;/td&gt;
-          &lt;td&gt;引用是否支撑答案&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;简洁性&lt;/td&gt;
-          &lt;td&gt;是否啰嗦或夹杂无关内容&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;安全性&lt;/td&gt;
-          &lt;td&gt;是否泄露敏感或越权信息&lt;/td&gt;
-      &lt;/tr&gt;
-  &lt;/tbody&gt;
-&lt;/table&gt;
-&lt;p&gt;评分时最好把问题拆成两步：&lt;/p&gt;
-&lt;ol&gt;
-&lt;li&gt;先只看召回结果，不看模型答案&lt;/li&gt;
-&lt;li&gt;再看模型答案和引用&lt;/li&gt;
-&lt;/ol&gt;
-&lt;p&gt;这样能避免把所有问题都归咎于模型。&lt;/p&gt;
-&lt;h2 id=&#34;75-rag-错误怎么归因&#34;&gt;7.5 RAG 错误怎么归因
-&lt;/h2&gt;&lt;p&gt;评估的真正价值，是能把错误归因到具体链路。&lt;/p&gt;
-&lt;p&gt;可以按下面这张表排查：&lt;/p&gt;
-&lt;table&gt;
-  &lt;thead&gt;
-      &lt;tr&gt;
-          &lt;th&gt;现象&lt;/th&gt;
-          &lt;th&gt;更可能的问题&lt;/th&gt;
-      &lt;/tr&gt;
-  &lt;/thead&gt;
-  &lt;tbody&gt;
-      &lt;tr&gt;
-          &lt;td&gt;正确内容不在知识库&lt;/td&gt;
-          &lt;td&gt;数据接入问题&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;原文有，解析后没有&lt;/td&gt;
-          &lt;td&gt;文档解析问题&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;解析后有，但 chunk 不完整&lt;/td&gt;
-          &lt;td&gt;切分问题&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;chunk 存在，但召回不到&lt;/td&gt;
-          &lt;td&gt;召回问题&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;召回到了，但排名很低&lt;/td&gt;
-          &lt;td&gt;rerank 或相似度问题&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;排名靠前，但没放进 prompt&lt;/td&gt;
-          &lt;td&gt;上下文组装问题&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;prompt 里有证据，但答错&lt;/td&gt;
-          &lt;td&gt;生成或提示词问题&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;答案对，但引用错&lt;/td&gt;
-          &lt;td&gt;citation 对齐问题&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;不该看到的内容被召回&lt;/td&gt;
-          &lt;td&gt;权限过滤问题&lt;/td&gt;
-      &lt;/tr&gt;
-  &lt;/tbody&gt;
-&lt;/table&gt;
-&lt;p&gt;这个归因表很实用。&lt;/p&gt;
-&lt;p&gt;因为不同问题的解决方式完全不同：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;数据问题靠清洗和治理&lt;/li&gt;
-&lt;li&gt;切分问题靠 chunk 策略&lt;/li&gt;
-&lt;li&gt;召回问题靠 embedding、BM25、hybrid、多 query&lt;/li&gt;
-&lt;li&gt;排序问题靠 rerank&lt;/li&gt;
-&lt;li&gt;生成问题靠 prompt、模型和上下文组织&lt;/li&gt;
-&lt;li&gt;权限问题靠 metadata 和系统设计&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;76-优化时的正确顺序&#34;&gt;7.6 优化时的正确顺序
-&lt;/h2&gt;&lt;p&gt;如果效果不好，一个更稳妥的排查顺序通常是：&lt;/p&gt;
-&lt;ol&gt;
-&lt;li&gt;先看数据源是否干净、完整、最新&lt;/li&gt;
-&lt;li&gt;再看 chunk 是否合理&lt;/li&gt;
-&lt;li&gt;再看召回是否漏&lt;/li&gt;
-&lt;li&gt;再看 rerank 是否有效&lt;/li&gt;
-&lt;li&gt;最后才看 prompt 和模型&lt;/li&gt;
-&lt;/ol&gt;
-&lt;p&gt;因为很多问题，根本不是“模型不够强”，而是前面的知识供给链路出了问题。&lt;/p&gt;
-&lt;p&gt;更具体一点，可以按这个闭环做：&lt;/p&gt;
-&lt;h3 id=&#34;第一步建立-baseline&#34;&gt;第一步：建立 baseline
-&lt;/h3&gt;&lt;p&gt;先固定一套最小系统：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;当前文档集&lt;/li&gt;
-&lt;li&gt;当前 chunk 策略&lt;/li&gt;
-&lt;li&gt;当前 embedding&lt;/li&gt;
-&lt;li&gt;当前召回方式&lt;/li&gt;
-&lt;li&gt;当前 rerank 方式&lt;/li&gt;
-&lt;li&gt;当前 prompt&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;然后在评估集上跑出基础结果。&lt;/p&gt;
-&lt;p&gt;没有 baseline，就无法判断后续改动是提升还是退化。&lt;/p&gt;
-&lt;h3 id=&#34;第二步一次只改一个关键变量&#34;&gt;第二步：一次只改一个关键变量
-&lt;/h3&gt;&lt;p&gt;例如这次只改 chunk：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;从固定长度切分改成按标题切分&lt;/li&gt;
-&lt;li&gt;其他召回、rerank、prompt 都先不动&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;这样才能判断变化来自哪里。&lt;/p&gt;
-&lt;p&gt;如果同时换 embedding、改 chunk、加 rerank、改 prompt，最后很难归因。&lt;/p&gt;
-&lt;h3 id=&#34;第三步先优化召回上限&#34;&gt;第三步：先优化召回上限
-&lt;/h3&gt;&lt;p&gt;先看 &lt;code&gt;Recall@k&lt;/code&gt;。&lt;/p&gt;
-&lt;p&gt;如果 &lt;code&gt;Recall@50&lt;/code&gt; 都很低，说明正确证据没有进入候选集，这时优化 prompt 没意义。&lt;/p&gt;
-&lt;p&gt;应该优先看：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;文档是否进入索引&lt;/li&gt;
-&lt;li&gt;chunk 是否合理&lt;/li&gt;
-&lt;li&gt;query 是否需要 rewrite&lt;/li&gt;
-&lt;li&gt;是否需要 BM25&lt;/li&gt;
-&lt;li&gt;是否需要 hybrid search&lt;/li&gt;
-&lt;li&gt;metadata filter 是否过窄&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h3 id=&#34;第四步再优化-top-结果质量&#34;&gt;第四步：再优化 top 结果质量
-&lt;/h3&gt;&lt;p&gt;如果 &lt;code&gt;Recall@50&lt;/code&gt; 不错，但最终答案仍然差，说明候选里有正确结果，但前排质量不好。&lt;/p&gt;
-&lt;p&gt;这时重点看：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;rerank&lt;/li&gt;
-&lt;li&gt;score 融合&lt;/li&gt;
-&lt;li&gt;去重&lt;/li&gt;
-&lt;li&gt;parent-child retrieval&lt;/li&gt;
-&lt;li&gt;上下文排序&lt;/li&gt;
-&lt;li&gt;相邻 chunk 合并&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h3 id=&#34;第五步最后优化生成&#34;&gt;第五步：最后优化生成
-&lt;/h3&gt;&lt;p&gt;当正确证据已经进入 prompt，但答案仍然不好，再优化生成。&lt;/p&gt;
-&lt;p&gt;常见方向包括：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;要求只基于证据回答&lt;/li&gt;
-&lt;li&gt;证据不足时明确拒答&lt;/li&gt;
-&lt;li&gt;要求列出引用&lt;/li&gt;
-&lt;li&gt;要求区分事实和推断&lt;/li&gt;
-&lt;li&gt;控制答案结构&lt;/li&gt;
-&lt;li&gt;限制模型不要补充未提供信息&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;77-一个可落地的-rag-评估闭环&#34;&gt;7.7 一个可落地的 RAG 评估闭环
-&lt;/h2&gt;&lt;p&gt;可以把生产级 RAG 的评估闭环理解成：&lt;/p&gt;
-&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
-&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;15
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;16
-&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;17
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
-&lt;td class=&#34;lntd&#34;&gt;
-&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;收集真实问题
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;标注标准答案和 golden chunk
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;离线跑评估
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;定位错误层级
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;针对性改数据、chunk、召回、排序或 prompt
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;和 baseline 对比
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;小流量上线
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;收集线上反馈和失败样本
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ↓
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;回流评估集
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;&lt;p&gt;这套闭环跑起来之后，RAG 优化才会从“凭感觉调参”变成“有证据地迭代”。&lt;/p&gt;
-&lt;h2 id=&#34;78-评估里最容易忽略的几件事&#34;&gt;7.8 评估里最容易忽略的几件事
-&lt;/h2&gt;&lt;h3 id=&#34;不要只看平均分&#34;&gt;不要只看平均分
-&lt;/h3&gt;&lt;p&gt;平均分会掩盖关键问题。&lt;/p&gt;
-&lt;p&gt;例如整体准确率 85%，但权限类问题准确率只有 40%，这在企业场景里可能是严重风险。&lt;/p&gt;
-&lt;p&gt;所以要按问题类型分桶看：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;FAQ&lt;/li&gt;
-&lt;li&gt;表格&lt;/li&gt;
-&lt;li&gt;代码&lt;/li&gt;
-&lt;li&gt;权限&lt;/li&gt;
-&lt;li&gt;流程&lt;/li&gt;
-&lt;li&gt;多跳&lt;/li&gt;
-&lt;li&gt;无答案&lt;/li&gt;
-&lt;li&gt;最新政策&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h3 id=&#34;不要只评估有答案的问题&#34;&gt;不要只评估有答案的问题
-&lt;/h3&gt;&lt;p&gt;RAG 系统必须知道什么时候“不知道”。&lt;/p&gt;
-&lt;p&gt;如果评估集全是有答案问题，系统可能会倾向于强行回答。&lt;/p&gt;
-&lt;p&gt;因此要专门放一批：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;知识库没有的问题&lt;/li&gt;
-&lt;li&gt;权限不允许的问题&lt;/li&gt;
-&lt;li&gt;问题太模糊的问题&lt;/li&gt;
-&lt;li&gt;文档证据互相冲突的问题&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h3 id=&#34;不要只在开发集上调参&#34;&gt;不要只在开发集上调参
-&lt;/h3&gt;&lt;p&gt;如果一直对同一批问题调参，很容易过拟合。&lt;/p&gt;
-&lt;p&gt;更好的做法是至少拆成：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;dev set：用于调参&lt;/li&gt;
-&lt;li&gt;test set：用于最终比较&lt;/li&gt;
-&lt;li&gt;online set：来自线上持续回流&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h3 id=&#34;不要忽略成本和延迟&#34;&gt;不要忽略成本和延迟
-&lt;/h3&gt;&lt;p&gt;RAG 评估不只看答案质量。&lt;/p&gt;
-&lt;p&gt;还要看：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;检索耗时&lt;/li&gt;
-&lt;li&gt;rerank 耗时&lt;/li&gt;
-&lt;li&gt;LLM token 成本&lt;/li&gt;
-&lt;li&gt;索引更新成本&lt;/li&gt;
-&lt;li&gt;p95 / p99 延迟&lt;/li&gt;
-&lt;li&gt;缓存命中率&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;一个质量稍高但延迟翻倍的方案，不一定适合线上。&lt;/p&gt;
-&lt;h1 id=&#34;八rag-与微调长上下文agent-的关系&#34;&gt;八、RAG 与微调、长上下文、Agent 的关系
-&lt;/h1&gt;&lt;p&gt;这也是高频讨论点。&lt;/p&gt;
-&lt;h2 id=&#34;81-rag-和微调的区别&#34;&gt;8.1 RAG 和微调的区别
-&lt;/h2&gt;&lt;p&gt;可以这样粗略区分：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;&lt;code&gt;RAG&lt;/code&gt; 主要解决“把外部知识提供给模型”&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;微调&lt;/code&gt; 主要解决“改变模型行为模式或任务适配”&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;例如：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;产品手册更新，优先考虑 &lt;code&gt;RAG&lt;/code&gt;&lt;/li&gt;
-&lt;li&gt;模型语气、格式、任务风格不稳定，可能考虑微调&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;很多场景并不是二选一，而是组合使用。&lt;/p&gt;
-&lt;h2 id=&#34;82-rag-和长上下文的关系&#34;&gt;8.2 RAG 和长上下文的关系
-&lt;/h2&gt;&lt;p&gt;长上下文让模型一次能看更多资料，但它没有解决：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;哪些内容最该看&lt;/li&gt;
-&lt;li&gt;怎么从海量文档中选&lt;/li&gt;
-&lt;li&gt;如何控制成本&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;所以长上下文更多是在改变 RAG 的实现方式，而不是让 RAG 消失。&lt;/p&gt;
-&lt;h2 id=&#34;83-rag-和-agent-的关系&#34;&gt;8.3 RAG 和 Agent 的关系
-&lt;/h2&gt;&lt;p&gt;&lt;code&gt;RAG&lt;/code&gt; 关注的是知识获取与注入。&lt;/p&gt;
-&lt;p&gt;&lt;code&gt;Agent&lt;/code&gt; 关注的是：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;规划&lt;/li&gt;
-&lt;li&gt;决策&lt;/li&gt;
-&lt;li&gt;多步执行&lt;/li&gt;
-&lt;li&gt;工具调用&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;一个 agent 完全可以把 RAG 当成自己的一个能力模块。&lt;/p&gt;
-&lt;p&gt;例如：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;先检索知识库&lt;/li&gt;
-&lt;li&gt;再调用数据库&lt;/li&gt;
-&lt;li&gt;再结合工具结果做决策&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h1 id=&#34;九高频面试题&#34;&gt;九、高频面试题
-&lt;/h1&gt;&lt;p&gt;下面这些问题，在面试和技术交流里都很常见。&lt;/p&gt;
-&lt;h2 id=&#34;91-什么是-rag它解决什么问题&#34;&gt;9.1 什么是 RAG？它解决什么问题？
-&lt;/h2&gt;&lt;p&gt;回答重点：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;先检索、再生成&lt;/li&gt;
-&lt;li&gt;解决知识时效性、私有知识、幻觉和知识注入问题&lt;/li&gt;
-&lt;li&gt;本质是知识增强架构&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;92-rag-的完整流程是什么&#34;&gt;9.2 RAG 的完整流程是什么？
-&lt;/h2&gt;&lt;p&gt;回答时最好按链路说完整：&lt;/p&gt;
-&lt;p&gt;数据接入、解析、切分、向量化、索引构建、查询理解、召回、重排、上下文组装、生成、评估反馈。&lt;/p&gt;
-&lt;h2 id=&#34;93-为什么要切-chunkchunk-太大或太小有什么问题&#34;&gt;9.3 为什么要切 chunk？chunk 太大或太小有什么问题？
-&lt;/h2&gt;&lt;p&gt;回答重点：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;检索对象是 chunk，不是整篇文档&lt;/li&gt;
-&lt;li&gt;太大噪声多、成本高&lt;/li&gt;
-&lt;li&gt;太小语义不完整、上下文丢失&lt;/li&gt;
-&lt;li&gt;chunk 粒度直接影响召回和生成&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;94-向量检索和-bm25-的区别是什么&#34;&gt;9.4 向量检索和 BM25 的区别是什么？
-&lt;/h2&gt;&lt;p&gt;回答重点：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;向量检索偏语义相似&lt;/li&gt;
-&lt;li&gt;BM25 偏关键词匹配&lt;/li&gt;
-&lt;li&gt;术语、编号、错误码这类内容 BM25 往往更稳&lt;/li&gt;
-&lt;li&gt;线上常见做法是 hybrid search&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;95-为什么需要-rerank&#34;&gt;9.5 为什么需要 rerank？
-&lt;/h2&gt;&lt;p&gt;回答重点：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;召回重覆盖，重排重精度&lt;/li&gt;
-&lt;li&gt;候选集里会混入“差不多相关”的内容&lt;/li&gt;
-&lt;li&gt;rerank 可以提升 top 几条结果的质量&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;96-rag-为什么仍然会幻觉&#34;&gt;9.6 RAG 为什么仍然会幻觉？
-&lt;/h2&gt;&lt;p&gt;回答重点：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;检索不到&lt;/li&gt;
-&lt;li&gt;检索到了但排序靠后&lt;/li&gt;
-&lt;li&gt;模型误读证据&lt;/li&gt;
-&lt;li&gt;多段资料拼接错误&lt;/li&gt;
-&lt;li&gt;prompt 没限制好&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;97-rag-和微调怎么选&#34;&gt;9.7 RAG 和微调怎么选？
-&lt;/h2&gt;&lt;p&gt;回答重点：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;知识更新、私有知识，优先 RAG&lt;/li&gt;
-&lt;li&gt;行为模式、格式风格、专任务适配，优先微调&lt;/li&gt;
-&lt;li&gt;二者经常组合&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;98-怎么评估-rag-效果&#34;&gt;9.8 怎么评估 RAG 效果？
-&lt;/h2&gt;&lt;p&gt;回答重点：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;拆成检索评估和生成评估&lt;/li&gt;
-&lt;li&gt;看 Recall@k、MRR、NDCG&lt;/li&gt;
-&lt;li&gt;看 groundedness、faithfulness、citation accuracy&lt;/li&gt;
-&lt;li&gt;最终结合人工标注和业务指标&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;99-rag-最容易踩哪些坑&#34;&gt;9.9 RAG 最容易踩哪些坑？
-&lt;/h2&gt;&lt;p&gt;回答重点：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;数据脏&lt;/li&gt;
-&lt;li&gt;chunk 不合理&lt;/li&gt;
-&lt;li&gt;只做向量检索&lt;/li&gt;
-&lt;li&gt;缺少 metadata filter&lt;/li&gt;
-&lt;li&gt;没有评估集&lt;/li&gt;
-&lt;li&gt;权限控制缺失&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;910-生产级-rag-和-demo-最大区别是什么&#34;&gt;9.10 生产级 RAG 和 demo 最大区别是什么？
-&lt;/h2&gt;&lt;p&gt;回答重点：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;demo 重“跑通”&lt;/li&gt;
-&lt;li&gt;生产级重“稳定、可评估、可治理、可更新、可追踪”&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h1 id=&#34;十一个更实用的理解框架&#34;&gt;十、一个更实用的理解框架
-&lt;/h1&gt;&lt;p&gt;如果你想在工作里更稳地理解 &lt;code&gt;RAG&lt;/code&gt;，可以记住下面这个框架：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;&lt;code&gt;RAG&lt;/code&gt; 不只是“检索 + 生成”，而是一整套“知识进入系统、被索引、被召回、被组织、被模型使用、再被评估和优化”的工程链路。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;p&gt;所以真正决定效果的，通常不只是模型，而是这几层是否都做对了：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;数据质量&lt;/li&gt;
-&lt;li&gt;chunk 设计&lt;/li&gt;
-&lt;li&gt;检索策略&lt;/li&gt;
-&lt;li&gt;排序机制&lt;/li&gt;
-&lt;li&gt;上下文组织&lt;/li&gt;
-&lt;li&gt;生成约束&lt;/li&gt;
-&lt;li&gt;评估闭环&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h1 id=&#34;小结&#34;&gt;小结
-&lt;/h1&gt;&lt;p&gt;&lt;code&gt;RAG&lt;/code&gt; 的本质，是让模型从“只依赖参数记忆回答”，变成“基于外部知识进行回答”。&lt;/p&gt;
-&lt;p&gt;它最核心的价值，不是让系统看起来更聪明，而是让回答：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;更可追溯&lt;/li&gt;
-&lt;li&gt;更适合私有知识&lt;/li&gt;
-&lt;li&gt;更适合动态知识&lt;/li&gt;
-&lt;li&gt;更容易持续优化&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;如果把一句话再说得更工程化一点：&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;&lt;code&gt;RAG&lt;/code&gt; 是大模型应用里最重要的知识供给系统之一，而不是一个单独的检索技巧。&lt;/p&gt;&lt;/blockquote&gt;
 </description>
         </item>
         <item>
