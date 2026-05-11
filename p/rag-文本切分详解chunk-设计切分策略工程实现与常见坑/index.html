@@ -1,0 +1,3640 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 在 RAG 系统里，很多人会把注意力放在：\nembedding 模型 向量数据库 BM25 rerank prompt 大模型生成 但如果把一条失败样本拆开看，经常会发现问题更早就发生了：\n文档在切分阶段就已经被切坏了。\n例如：\n标题和正文被拆开 表格表头和数据行分离 一个完整规则被切成两半 多个无关主题被塞进同一个 chunk 代码函数被截断 FAQ 的问题和答案不在同一个片段里 条款的例外条件被切到下一个 chunk 这类问题后面很难补救。\n因为 RAG 的核心链路通常是：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 原始文档 ↓ 文档解析 ↓ 文本切分 ↓ embedding 与索引 ↓ 召回 ↓ 重排 ↓ 上下文组装 ↓ 大模型生成 切分决定的是：\n">
+<title>RAG 文本切分详解：Chunk 设计、切分策略、工程实现与常见坑</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/rag-%E6%96%87%E6%9C%AC%E5%88%87%E5%88%86%E8%AF%A6%E8%A7%A3chunk-%E8%AE%BE%E8%AE%A1%E5%88%87%E5%88%86%E7%AD%96%E7%95%A5%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E5%B8%B8%E8%A7%81%E5%9D%91/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="RAG 文本切分详解：Chunk 设计、切分策略、工程实现与常见坑">
+<meta property='og:description' content="写在前面 在 RAG 系统里，很多人会把注意力放在：\nembedding 模型 向量数据库 BM25 rerank prompt 大模型生成 但如果把一条失败样本拆开看，经常会发现问题更早就发生了：\n文档在切分阶段就已经被切坏了。\n例如：\n标题和正文被拆开 表格表头和数据行分离 一个完整规则被切成两半 多个无关主题被塞进同一个 chunk 代码函数被截断 FAQ 的问题和答案不在同一个片段里 条款的例外条件被切到下一个 chunk 这类问题后面很难补救。\n因为 RAG 的核心链路通常是：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 原始文档 ↓ 文档解析 ↓ 文本切分 ↓ embedding 与索引 ↓ 召回 ↓ 重排 ↓ 上下文组装 ↓ 大模型生成 切分决定的是：\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/rag-%E6%96%87%E6%9C%AC%E5%88%87%E5%88%86%E8%AF%A6%E8%A7%A3chunk-%E8%AE%BE%E8%AE%A1%E5%88%87%E5%88%86%E7%AD%96%E7%95%A5%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E5%B8%B8%E8%A7%81%E5%9D%91/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='rag' /><meta property='article:published_time' content='2026-05-08T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-08T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="RAG 文本切分详解：Chunk 设计、切分策略、工程实现与常见坑">
+<meta name="twitter:description" content="写在前面 在 RAG 系统里，很多人会把注意力放在：\nembedding 模型 向量数据库 BM25 rerank prompt 大模型生成 但如果把一条失败样本拆开看，经常会发现问题更早就发生了：\n文档在切分阶段就已经被切坏了。\n例如：\n标题和正文被拆开 表格表头和数据行分离 一个完整规则被切成两半 多个无关主题被塞进同一个 chunk 代码函数被截断 FAQ 的问题和答案不在同一个片段里 条款的例外条件被切到下一个 chunk 这类问题后面很难补救。\n因为 RAG 的核心链路通常是：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 原始文档 ↓ 文档解析 ↓ 文本切分 ↓ embedding 与索引 ↓ 召回 ↓ 重排 ↓ 上下文组装 ↓ 大模型生成 切分决定的是：\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ol>
+    <li><a href="#11-文本切分不是为了凑长度">1.1 文本切分不是为了凑长度</a></li>
+    <li><a href="#12-chunk-是-rag-的最小检索单元">1.2 chunk 是 RAG 的最小检索单元</a></li>
+    <li><a href="#13-文本切分在-rag-链路里的位置">1.3 文本切分在 RAG 链路里的位置</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#21-chunk-太大有什么问题">2.1 chunk 太大有什么问题</a></li>
+    <li><a href="#22-chunk-太小有什么问题">2.2 chunk 太小有什么问题</a></li>
+    <li><a href="#23-合适的-chunk-应该是什么样">2.3 合适的 chunk 应该是什么样</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#31-不建议只保存-content">3.1 不建议只保存 content</a></li>
+    <li><a href="#32-推荐的-chunk-结构">3.2 推荐的 chunk 结构</a></li>
+    <li><a href="#33-content-和-content_for_embedding-可以不同">3.3 content 和 content_for_embedding 可以不同</a></li>
+    <li><a href="#34-chunk_id-要稳定">3.4 chunk_id 要稳定</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#41-固定长度切分">4.1 固定长度切分</a></li>
+    <li><a href="#42-滑动窗口切分">4.2 滑动窗口切分</a></li>
+    <li><a href="#43-按段落切分">4.3 按段落切分</a></li>
+    <li><a href="#44-按标题层级切分">4.4 按标题层级切分</a></li>
+    <li><a href="#45-递归切分">4.5 递归切分</a></li>
+    <li><a href="#46-语义切分">4.6 语义切分</a></li>
+    <li><a href="#47-llm-辅助切分">4.7 LLM 辅助切分</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#51-普通说明文档">5.1 普通说明文档</a></li>
+    <li><a href="#52-faq">5.2 FAQ</a></li>
+    <li><a href="#53-表格">5.3 表格</a></li>
+    <li><a href="#54-代码">5.4 代码</a></li>
+    <li><a href="#55-制度法律合同">5.5 制度、法律、合同</a></li>
+    <li><a href="#56-聊天记录和工单">5.6 聊天记录和工单</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#61-为什么需要-parent-child">6.1 为什么需要 parent-child</a></li>
+    <li><a href="#62-基本思想">6.2 基本思想</a></li>
+    <li><a href="#63-parent-child-的数据结构">6.3 parent-child 的数据结构</a></li>
+    <li><a href="#64-parent-child-的适用场景">6.4 parent-child 的适用场景</a></li>
+    <li><a href="#65-parent-不能无限大">6.5 parent 不能无限大</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#71-不存在通用最佳大小">7.1 不存在通用最佳大小</a></li>
+    <li><a href="#72-常见起步配置">7.2 常见起步配置</a></li>
+    <li><a href="#73-中文文档的特殊点">7.3 中文文档的特殊点</a></li>
+    <li><a href="#74-token-长度和字符长度不要混淆">7.4 token 长度和字符长度不要混淆</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#81-推荐流程">8.1 推荐流程</a></li>
+    <li><a href="#82-按-block-类型处理">8.2 按 block 类型处理</a></li>
+    <li><a href="#83-过长-chunk-的二次切分">8.3 过长 chunk 的二次切分</a></li>
+    <li><a href="#84-过短-chunk-的合并">8.4 过短 chunk 的合并</a></li>
+    <li><a href="#85-切分版本要可追踪">8.5 切分版本要可追踪</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#91-切分影响召回">9.1 切分影响召回</a></li>
+    <li><a href="#92-切分影响-rerank">9.2 切分影响 rerank</a></li>
+    <li><a href="#93-切分影响上下文组装">9.3 切分影响上下文组装</a></li>
+    <li><a href="#94-切分影响答案引用">9.4 切分影响答案引用</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#101-不要只看-chunk-数量">10.1 不要只看 chunk 数量</a></li>
+    <li><a href="#102-人工抽样检查">10.2 人工抽样检查</a></li>
+    <li><a href="#103-基于问题集评估">10.3 基于问题集评估</a></li>
+    <li><a href="#104-常见指标">10.4 常见指标</a></li>
+    <li><a href="#105-自动质量检查">10.5 自动质量检查</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#111-只按固定长度切">11.1 只按固定长度切</a></li>
+    <li><a href="#112-标题没有进入-chunk">11.2 标题没有进入 chunk</a></li>
+    <li><a href="#113-表格丢失表头">11.3 表格丢失表头</a></li>
+    <li><a href="#114-overlap-过大">11.4 overlap 过大</a></li>
+    <li><a href="#115-超长表格行不做二次切分">11.5 超长表格行不做二次切分</a></li>
+    <li><a href="#116-chunk-里混入页眉页脚">11.6 chunk 里混入页眉页脚</a></li>
+    <li><a href="#117-chunk-没有权限-metadata">11.7 chunk 没有权限 metadata</a></li>
+    <li><a href="#118-切分后不可追溯">11.8 切分后不可追溯</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#121-先看失败样本">12.1 先看失败样本</a></li>
+    <li><a href="#122-调-chunk_size-要配合-top-k">12.2 调 chunk_size 要配合 top-k</a></li>
+    <li><a href="#123-高价值文档可以用更精细策略">12.3 高价值文档可以用更精细策略</a></li>
+    <li><a href="#124-保留原始文档和中间结果">12.4 保留原始文档和中间结果</a></li>
+    <li><a href="#125-切分策略变化后要重建评估">12.5 切分策略变化后要重建评估</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#141-rag-里为什么要做文本切分">14.1 RAG 里为什么要做文本切分？</a></li>
+    <li><a href="#142-chunk-是越大越好还是越小越好">14.2 chunk 是越大越好还是越小越好？</a></li>
+    <li><a href="#143-固定长度切分有什么问题">14.3 固定长度切分有什么问题？</a></li>
+    <li><a href="#144-overlap-的作用是什么是不是越大越好">14.4 overlap 的作用是什么？是不是越大越好？</a></li>
+    <li><a href="#145-为什么标题路径要进入-chunk">14.5 为什么标题路径要进入 chunk？</a></li>
+    <li><a href="#146-表格为什么不能简单转成纯文本再切">14.6 表格为什么不能简单转成纯文本再切？</a></li>
+    <li><a href="#147-如果表格某一行特别长应该怎么切">14.7 如果表格某一行特别长，应该怎么切？</a></li>
+    <li><a href="#148-表格超长行二次切分后怎么保证子-chunk-属于同一行">14.8 表格超长行二次切分后，怎么保证子 chunk 属于同一行？</a></li>
+    <li><a href="#149-row_id-应该怎么生成">14.9 row_id 应该怎么生成？</a></li>
+    <li><a href="#1410-parent-child-chunk-解决什么问题">14.10 parent-child chunk 解决什么问题？</a></li>
+    <li><a href="#1411-chunk-metadata-一般要保存哪些字段">14.11 chunk metadata 一般要保存哪些字段？</a></li>
+    <li><a href="#1412-如何评估文本切分质量">14.12 如何评估文本切分质量？</a></li>
+  </ol>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/ai/" >
+                Ai
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/rag-%E6%96%87%E6%9C%AC%E5%88%87%E5%88%86%E8%AF%A6%E8%A7%A3chunk-%E8%AE%BE%E8%AE%A1%E5%88%87%E5%88%86%E7%AD%96%E7%95%A5%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E5%B8%B8%E8%A7%81%E5%9D%91/">RAG 文本切分详解：Chunk 设计、切分策略、工程实现与常见坑</a>
+        </h2>
+    
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">May 08, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h1 id="写在前面">写在前面
+</h1><p>在 RAG 系统里，很多人会把注意力放在：</p>
+<ul>
+<li>embedding 模型</li>
+<li>向量数据库</li>
+<li>BM25</li>
+<li>rerank</li>
+<li>prompt</li>
+<li>大模型生成</li>
+</ul>
+<p>但如果把一条失败样本拆开看，经常会发现问题更早就发生了：</p>
+<blockquote>
+<p>文档在切分阶段就已经被切坏了。</p></blockquote>
+<p>例如：</p>
+<ul>
+<li>标题和正文被拆开</li>
+<li>表格表头和数据行分离</li>
+<li>一个完整规则被切成两半</li>
+<li>多个无关主题被塞进同一个 chunk</li>
+<li>代码函数被截断</li>
+<li>FAQ 的问题和答案不在同一个片段里</li>
+<li>条款的例外条件被切到下一个 chunk</li>
+</ul>
+<p>这类问题后面很难补救。</p>
+<p>因为 RAG 的核心链路通常是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">原始文档
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">文档解析
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">文本切分
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">embedding 与索引
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">召回
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">重排
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">上下文组装
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">大模型生成
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>切分决定的是：</p>
+<blockquote>
+<p>知识以什么颗粒度进入检索系统。</p></blockquote>
+<p>如果颗粒度不对，后面的召回、重排、上下文组装都会受到影响。</p>
+<p>所以这篇文章专门讲 RAG 里的文本切分：</p>
+<ol>
+<li>chunk 到底是什么</li>
+<li>为什么文本切分会影响 RAG 效果</li>
+<li>chunk 太大和太小分别有什么问题</li>
+<li>固定长度、滑动窗口、结构切分、语义切分怎么选</li>
+<li>FAQ、表格、代码、制度、合同等不同内容怎么切</li>
+<li>parent-child chunk 怎么设计</li>
+<li>chunk metadata 应该保存什么</li>
+<li>文本切分怎么评估</li>
+<li>工程上常见坑和调优建议</li>
+</ol>
+<h1 id="一先理解文本切分的目标">一、先理解文本切分的目标
+</h1><h2 id="11-文本切分不是为了凑长度">1.1 文本切分不是为了凑长度
+</h2><p>很多入门教程会把文本切分描述成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">把长文档按 500 token 切成若干段
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这只是最粗糙的做法。</p>
+<p>在真实 RAG 系统里，文本切分的目标不是“把长文本切短”，而是：</p>
+<blockquote>
+<p>把文档切成适合检索、适合排序、适合放进上下文、适合支撑回答的知识单元。</p></blockquote>
+<p>也就是说，一个好的 chunk 至少要同时满足四件事：</p>
+<ul>
+<li>能被检索系统准确命中</li>
+<li>单独看也能表达一个相对完整的语义</li>
+<li>放进 prompt 后不会带来太多噪声</li>
+<li>能作为答案依据被追溯和引用</li>
+</ul>
+<p>如果只按长度切，很容易满足了模型输入限制，却破坏了语义结构。</p>
+<h2 id="12-chunk-是-rag-的最小检索单元">1.2 chunk 是 RAG 的最小检索单元
+</h2><p>在大多数 RAG 系统里，检索不是直接发生在整篇文档上，而是发生在一个个 chunk 上。</p>
+<p>例如一篇产品文档可能被切成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">doc_001_chunk_001: 登录方式说明
+</span></span><span class="line"><span class="cl">doc_001_chunk_002: 密码重置流程
+</span></span><span class="line"><span class="cl">doc_001_chunk_003: 账号冻结规则
+</span></span><span class="line"><span class="cl">doc_001_chunk_004: API 调用频率限制
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">接口每分钟最多能调用多少次？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>系统应该召回 <code>doc_001_chunk_004</code>，而不是整篇产品文档。</p>
+<p>所以 chunk 同时承担了几个角色：</p>
+<ul>
+<li>检索单元：向量库、BM25、混合检索真正召回的是它</li>
+<li>排序单元：rerank 通常也是对候选 chunk 打分</li>
+<li>证据单元：最终放进 prompt 的上下文大多来自它</li>
+<li>评估单元：判断召回是否命中时，经常以 chunk 为单位</li>
+<li>引用单元：答案里的来源通常要指向它对应的文档位置</li>
+</ul>
+<p>这意味着：</p>
+<blockquote>
+<p>chunk 不是越大越好，也不是越小越好，而是要让一个 chunk 刚好承载一个可被检索和使用的知识点。</p></blockquote>
+<h2 id="13-文本切分在-rag-链路里的位置">1.3 文本切分在 RAG 链路里的位置
+</h2><p>文本切分处在文档解析之后、索引构建之前。</p>
+<p>更完整的入库链路可以写成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">原始知识源
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">采集与同步
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">文档解析
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">清洗与结构恢复
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">文本切分
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">chunk 生成
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">embedding
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">向量索引 / 倒排索引 / 混合索引
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里有一个很关键的前提：</p>
+<blockquote>
+<p>文本切分依赖文档解析质量。</p></blockquote>
+<p>如果解析阶段已经把标题、表格、代码块、页码、段落顺序弄丢了，切分阶段就只能面对一大坨纯文本，效果自然会变差。</p>
+<p>所以生产级 RAG 里，切分不应该只接收一个字符串，而应该尽量接收结构化 block。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span><span class="lnt">28
+</span><span class="lnt">29
+</span><span class="lnt">30
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;doc_id&#34;</span><span class="p">:</span> <span class="s2">&#34;refund_policy_2026&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;title&#34;</span><span class="p">:</span> <span class="s2">&#34;退款规则说明&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;blocks&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;type&#34;</span><span class="p">:</span> <span class="s2">&#34;heading&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;level&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;text&#34;</span><span class="p">:</span> <span class="s2">&#34;退款规则&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;page&#34;</span><span class="p">:</span> <span class="mi">1</span>
+</span></span><span class="line"><span class="cl">    <span class="p">},</span>
+</span></span><span class="line"><span class="cl">    <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;type&#34;</span><span class="p">:</span> <span class="s2">&#34;paragraph&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;text&#34;</span><span class="p">:</span> <span class="s2">&#34;用户在订单支付后 7 天内可以申请退款。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;page&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;section_path&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;退款规则&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="p">},</span>
+</span></span><span class="line"><span class="cl">    <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;type&#34;</span><span class="p">:</span> <span class="s2">&#34;table&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;page&#34;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;section_path&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;退款规则&#34;</span><span class="p">,</span> <span class="s2">&#34;特殊商品&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;table&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nt">&#34;headers&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;商品类型&#34;</span><span class="p">,</span> <span class="s2">&#34;是否支持退款&#34;</span><span class="p">,</span> <span class="s2">&#34;说明&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">        <span class="nt">&#34;rows&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">          <span class="p">[</span><span class="s2">&#34;虚拟商品&#34;</span><span class="p">,</span> <span class="s2">&#34;不支持&#34;</span><span class="p">,</span> <span class="s2">&#34;一经发货不支持退款&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">          <span class="p">[</span><span class="s2">&#34;实体商品&#34;</span><span class="p">,</span> <span class="s2">&#34;支持&#34;</span><span class="p">,</span> <span class="s2">&#34;需在 7 天内申请&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">        <span class="p">]</span>
+</span></span><span class="line"><span class="cl">      <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">  <span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这种输入能让切分策略更精细，而不是只能机械数 token。</p>
+<h1 id="二chunk-太大和太小的问题">二、chunk 太大和太小的问题
+</h1><h2 id="21-chunk-太大有什么问题">2.1 chunk 太大有什么问题
+</h2><p>如果 chunk 太大，例如一个 chunk 包含 2000 到 4000 个中文字符，常见问题是：</p>
+<ul>
+<li>一个 chunk 里混入多个主题</li>
+<li>embedding 表达会被多个语义方向稀释</li>
+<li>BM25 可能因为很多词都命中而产生噪声</li>
+<li>rerank 只能判断整段相关性，难以定位真正证据</li>
+<li>放进 prompt 后 token 成本高</li>
+<li>大模型容易被无关内容干扰</li>
+</ul>
+<p>例如一个产品文档小节里同时包含：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">登录方式
+</span></span><span class="line"><span class="cl">密码重置
+</span></span><span class="line"><span class="cl">权限申请
+</span></span><span class="line"><span class="cl">套餐限制
+</span></span><span class="line"><span class="cl">API 调用次数
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果它们被放进同一个大 chunk，当用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 套餐 API 调用次数是多少？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这个 chunk 可能会被召回，但里面真正有用的句子只占很小一部分。</p>
+<p>后续模型看到的上下文会变成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">登录支持手机号和邮箱……
+</span></span><span class="line"><span class="cl">密码可以在安全中心重置……
+</span></span><span class="line"><span class="cl">管理员可以为用户分配角色……
+</span></span><span class="line"><span class="cl">Pro 套餐每月包含 100 万次 API 调用……
+</span></span><span class="line"><span class="cl">超出部分按量计费……
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这会带来两个问题：</p>
+<ul>
+<li>检索层面：这个 chunk 的向量不够聚焦</li>
+<li>生成层面：上下文里混入了很多无关信息</li>
+</ul>
+<h2 id="22-chunk-太小有什么问题">2.2 chunk 太小有什么问题
+</h2><p>如果 chunk 太小，例如只按 100 到 200 个字切，也会有另一类问题：</p>
+<ul>
+<li>标题和正文分离</li>
+<li>定义和解释分离</li>
+<li>条件和结论分离</li>
+<li>例外情况和主规则分离</li>
+<li>表格行之间失去关系</li>
+<li>代码函数被截断</li>
+<li>FAQ 的问题和答案被拆开</li>
+</ul>
+<p>例如原文是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">退款规则：
+</span></span><span class="line"><span class="cl">1. 用户在订单支付后 7 天内可以申请退款。
+</span></span><span class="line"><span class="cl">2. 虚拟商品一经发货不支持退款。
+</span></span><span class="line"><span class="cl">3. 企业合同订单以合同条款为准。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果切成三个很小的 chunk：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">chunk_001: 用户在订单支付后 7 天内可以申请退款。
+</span></span><span class="line"><span class="cl">chunk_002: 虚拟商品一经发货不支持退款。
+</span></span><span class="line"><span class="cl">chunk_003: 企业合同订单以合同条款为准。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">虚拟商品付款后 7 天内可以退款吗？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果只召回 <code>chunk_001</code>，模型可能回答“可以”；如果只召回 <code>chunk_002</code>，模型可能回答“不可以”，但缺少对一般规则和例外关系的解释。</p>
+<p>更好的 chunk 应该保留规则之间的关系：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">退款规则：用户在订单支付后 7 天内可以申请退款。但虚拟商品一经发货不支持退款，企业合同订单以合同条款为准。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="23-合适的-chunk-应该是什么样">2.3 合适的 chunk 应该是什么样
+</h2><p>一个好的 chunk 通常具备这些特征：</p>
+<ul>
+<li>主题单一，不混入太多无关内容</li>
+<li>语义完整，单独看能理解它在讲什么</li>
+<li>包含必要上下文，例如标题、章节路径、表头、条款编号</li>
+<li>长度可控，适合 embedding 和 prompt</li>
+<li>可以追溯到原始文档、页码、段落或 block</li>
+<li>对常见用户问题有足够回答能力</li>
+</ul>
+<p>可以用一个简单问题来判断：</p>
+<blockquote>
+<p>如果这个 chunk 被单独召回给大模型，它能不能支撑一个准确回答？</p></blockquote>
+<p>如果不能，通常说明切得太碎或上下文丢了。</p>
+<p>再问另一个问题：</p>
+<blockquote>
+<p>这个 chunk 里是否有很多和用户问题无关的主题？</p></blockquote>
+<p>如果有，通常说明切得太大。</p>
+<h1 id="三chunk-的基本结构设计">三、chunk 的基本结构设计
+</h1><h2 id="31-不建议只保存-content">3.1 不建议只保存 content
+</h2><p>最简单的 chunk 结构是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;id&#34;</span><span class="p">:</span> <span class="s2">&#34;chunk_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;content&#34;</span><span class="p">:</span> <span class="s2">&#34;Pro 套餐每月包含 100 万次 API 调用。&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这种结构能跑 demo，但不适合生产。</p>
+<p>原因是：</p>
+<ul>
+<li>不能追溯来源</li>
+<li>不能做权限过滤</li>
+<li>不能根据版本、产品线、地区过滤</li>
+<li>不能恢复上下文</li>
+<li>不能判断相邻 chunk</li>
+<li>不能做高质量引用</li>
+</ul>
+<p>生产系统里，chunk 应该同时包含正文、上下文、来源和 metadata。</p>
+<h2 id="32-推荐的-chunk-结构">3.2 推荐的 chunk 结构
+</h2><p>一个更完整的 chunk 可以设计成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;billing_doc_003_chunk_012&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;doc_id&#34;</span><span class="p">:</span> <span class="s2">&#34;billing_doc_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;title&#34;</span><span class="p">:</span> <span class="s2">&#34;计费系统说明&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;section_path&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;套餐规则&#34;</span><span class="p">,</span> <span class="s2">&#34;Pro 套餐&#34;</span><span class="p">,</span> <span class="s2">&#34;API 调用限制&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;content&#34;</span><span class="p">:</span> <span class="s2">&#34;Pro 套餐每月包含 100 万次 API 调用，超出部分按量计费。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;content_for_embedding&#34;</span><span class="p">:</span> <span class="s2">&#34;计费系统说明 &gt; 套餐规则 &gt; Pro 套餐 &gt; API 调用限制\nPro 套餐每月包含 100 万次 API 调用，超出部分按量计费。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;source_blocks&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;b021&#34;</span><span class="p">,</span> <span class="s2">&#34;b022&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;metadata&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;file_name&#34;</span><span class="p">:</span> <span class="s2">&#34;billing_policy_2026.pdf&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;page_start&#34;</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;page_end&#34;</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;chunk_index&#34;</span><span class="p">:</span> <span class="mi">12</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;language&#34;</span><span class="p">:</span> <span class="s2">&#34;zh&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;product&#34;</span><span class="p">:</span> <span class="s2">&#34;billing&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;region&#34;</span><span class="p">:</span> <span class="s2">&#34;cn&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;version&#34;</span><span class="p">:</span> <span class="s2">&#34;2026-04&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;doc_status&#34;</span><span class="p">:</span> <span class="s2">&#34;active&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;permission_group&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;billing_team&#34;</span><span class="p">,</span> <span class="s2">&#34;support_team&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里有几个字段很重要。</p>
+<p><code>content</code> 是用户最终可见、可引用的正文。</p>
+<p><code>content_for_embedding</code> 是专门给 embedding 用的文本，可以把标题路径拼进去，增强语义信号。</p>
+<p><code>section_path</code> 用于说明 chunk 在文档中的层级位置。</p>
+<p><code>source_blocks</code> 用于追溯它来自哪些解析 block。</p>
+<p><code>metadata</code> 用于过滤、权限、版本控制、引用展示和调试。</p>
+<h2 id="33-content-和-content_for_embedding-可以不同">3.3 content 和 content_for_embedding 可以不同
+</h2><p>很多系统会直接对 <code>content</code> 做 embedding。</p>
+<p>这可以，但不是总是最佳。</p>
+<p>例如原文正文只有：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">每月包含 100 万次调用，超出部分按量计费。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果不带标题，embedding 模型不知道这里说的是哪个套餐、哪个功能。</p>
+<p>更适合 embedding 的文本可能是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">计费系统说明 &gt; 套餐规则 &gt; Pro 套餐 &gt; API 调用限制
+</span></span><span class="line"><span class="cl">每月包含 100 万次调用，超出部分按量计费。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 套餐 API 调用限制是多少？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>更容易召回。</p>
+<p>但最终展示给用户时，不一定要把完整标题路径都放进正文，可以在引用里展示来源。</p>
+<p>所以工程上可以区分：</p>
+<ul>
+<li><code>content</code>：用于展示、引用、上下文</li>
+<li><code>content_for_embedding</code>：用于向量化</li>
+<li><code>content_for_bm25</code>：用于全文检索，可以包含标题、别名、关键词</li>
+</ul>
+<h2 id="34-chunk_id-要稳定">3.4 chunk_id 要稳定
+</h2><p>chunk_id 不要每次重建都随机生成。</p>
+<p>如果每次重新切分后 id 全变，会影响：</p>
+<ul>
+<li>增量更新</li>
+<li>缓存</li>
+<li>评估集标注</li>
+<li>用户反馈回流</li>
+<li>线上问题排查</li>
+<li>引用链接稳定性</li>
+</ul>
+<p>常见做法是用确定性规则生成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">chunk_id = hash(doc_id + parser_version + chunker_version + source_block_ids + chunk_index)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果文档内容或切分策略变化，chunk_id 可以变化。</p>
+<p>但同一份内容在同一套解析和切分版本下，应该生成一致的 id。</p>
+<h1 id="四常见文本切分策略">四、常见文本切分策略
+</h1><h2 id="41-固定长度切分">4.1 固定长度切分
+</h2><p>固定长度切分是最简单的方式。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">chunk_size = 500 tokens
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>每 500 个 token 切一段。</p>
+<p>优点：</p>
+<ul>
+<li>实现简单</li>
+<li>速度快</li>
+<li>对任意文本都能处理</li>
+<li>适合快速验证 demo</li>
+</ul>
+<p>缺点：</p>
+<ul>
+<li>不理解标题、段落、表格、代码</li>
+<li>容易切断句子和语义</li>
+<li>对复杂文档效果不稳定</li>
+<li>对法律、制度、技术文档风险较高</li>
+</ul>
+<p>固定长度切分适合：</p>
+<ul>
+<li>文档结构非常差</li>
+<li>只是快速做原型</li>
+<li>数据量很大且先追求低成本上线</li>
+<li>内容本身是连续叙述型文本</li>
+</ul>
+<p>但在生产系统里，不建议只靠固定长度切分。</p>
+<h2 id="42-滑动窗口切分">4.2 滑动窗口切分
+</h2><p>滑动窗口是在固定长度基础上增加 overlap。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">chunk_size = 500 tokens
+</span></span><span class="line"><span class="cl">overlap = 80 tokens
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>生成结果类似：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">chunk_001: token 1 - 500
+</span></span><span class="line"><span class="cl">chunk_002: token 421 - 920
+</span></span><span class="line"><span class="cl">chunk_003: token 841 - 1340
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>overlap 的作用是减少边界问题。</p>
+<p>如果关键句刚好出现在两个 chunk 的交界处，overlap 可以让它同时出现在相邻 chunk 中。</p>
+<p>优点：</p>
+<ul>
+<li>简单有效</li>
+<li>能缓解切断上下文的问题</li>
+<li>对纯文本比固定切分更稳</li>
+</ul>
+<p>缺点：</p>
+<ul>
+<li>会增加索引体积</li>
+<li>会产生重复召回</li>
+<li>overlap 太大时浪费 token</li>
+<li>不能从根本上理解文档结构</li>
+</ul>
+<p>overlap 可以理解成：</p>
+<blockquote>
+<p>边界保险，而不是主要切分策略。</p></blockquote>
+<p>一般可以从 10% 到 20% 起步，再根据评估调整。</p>
+<h2 id="43-按段落切分">4.3 按段落切分
+</h2><p>段落切分会优先保留自然段。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">段落 1 + 段落 2 -&gt; chunk_001
+</span></span><span class="line"><span class="cl">段落 3 + 段落 4 -&gt; chunk_002
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>当多个短段落累计超过目标长度时再切开。</p>
+<p>这种方式比固定长度更好，因为它至少不容易切断句子。</p>
+<p>适合：</p>
+<ul>
+<li>博客文章</li>
+<li>说明文档</li>
+<li>帮助手册</li>
+<li>普通知识库</li>
+</ul>
+<p>但它仍然不够。</p>
+<p>因为很多文档的语义依赖标题层级。</p>
+<p>只看段落会导致：</p>
+<ul>
+<li>小节标题和正文分离</li>
+<li>当前段落缺少上级主题</li>
+<li>多级列表关系丢失</li>
+</ul>
+<p>所以段落切分通常要和标题路径结合使用。</p>
+<h2 id="44-按标题层级切分">4.4 按标题层级切分
+</h2><p>结构化文档最推荐优先按标题层级切分。</p>
+<p>例如 Markdown：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-markdown" data-lang="markdown"><span class="line"><span class="cl"><span class="gh"># 计费规则
+</span></span></span><span class="line"><span class="cl"><span class="gh"></span>
+</span></span><span class="line"><span class="cl"><span class="gu">## Pro 套餐
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl">Pro 套餐每月包含 100 万次 API 调用。
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="gu">## Enterprise 套餐
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl">Enterprise 套餐默认不限制调用次数，以合同约定为准。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>可以切成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">chunk_001:
+</span></span><span class="line"><span class="cl">section_path = 计费规则 &gt; Pro 套餐
+</span></span><span class="line"><span class="cl">content = Pro 套餐每月包含 100 万次 API 调用。
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">chunk_002:
+</span></span><span class="line"><span class="cl">section_path = 计费规则 &gt; Enterprise 套餐
+</span></span><span class="line"><span class="cl">content = Enterprise 套餐默认不限制调用次数，以合同约定为准。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>按标题切分的好处：</p>
+<ul>
+<li>chunk 语义更完整</li>
+<li>标题能增强检索信号</li>
+<li>引用来源更清晰</li>
+<li>适合技术文档、制度文档、产品文档</li>
+</ul>
+<p>但也要注意：</p>
+<ul>
+<li>有些小节太短，需要和相邻内容合并</li>
+<li>有些小节太长，需要二次切分</li>
+<li>标题层级解析必须准确</li>
+</ul>
+<p>一个常见策略是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">先按标题层级粗切
+</span></span><span class="line"><span class="cl">如果小节长度合适，直接生成 chunk
+</span></span><span class="line"><span class="cl">如果小节太长，再按段落、语义或长度二次切分
+</span></span><span class="line"><span class="cl">如果小节太短，则和同级相邻小节或父级说明合并
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="45-递归切分">4.5 递归切分
+</h2><p>递归切分是一种常见工程策略。</p>
+<p>它会按一组分隔符从强到弱尝试切分。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">一级标题
+</span></span><span class="line"><span class="cl">二级标题
+</span></span><span class="line"><span class="cl">三级标题
+</span></span><span class="line"><span class="cl">段落
+</span></span><span class="line"><span class="cl">句子
+</span></span><span class="line"><span class="cl">标点
+</span></span><span class="line"><span class="cl">固定长度
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果按一级标题切后仍然太长，就继续按二级标题切。</p>
+<p>如果按段落切后仍然太长，就继续按句子或长度切。</p>
+<p>这种方式的好处是：</p>
+<ul>
+<li>尽量保留高层结构</li>
+<li>在结构不足时仍然能兜底</li>
+<li>实现成本适中</li>
+</ul>
+<p>伪代码可以写成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">split(text, max_size):
+</span></span><span class="line"><span class="cl">  if text &lt;= max_size:
+</span></span><span class="line"><span class="cl">    return [text]
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">  for separator in separators:
+</span></span><span class="line"><span class="cl">    parts = split_by_separator(text, separator)
+</span></span><span class="line"><span class="cl">    if parts can reduce size:
+</span></span><span class="line"><span class="cl">      return merge_small_parts_and_split_large_parts(parts, max_size)
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">  return fixed_length_split(text, max_size)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>递归切分适合做通用切分器的基础版本。</p>
+<p>但如果文档已经被解析成 block，最好基于 block 类型切，而不是只对纯文本递归。</p>
+<h2 id="46-语义切分">4.6 语义切分
+</h2><p>语义切分不是简单按长度或标题，而是根据主题边界切。</p>
+<p>例如一段会议纪要里连续讨论了三个主题：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">登录故障排查
+</span></span><span class="line"><span class="cl">权限模型调整
+</span></span><span class="line"><span class="cl">下季度计费策略
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>语义切分会尝试把主题相近的句子放在一起，主题变化时切开。</p>
+<p>常见实现方式包括：</p>
+<ul>
+<li>使用 embedding 计算相邻句子的语义相似度</li>
+<li>使用 LLM 判断段落边界</li>
+<li>使用主题模型或聚类</li>
+<li>基于标题、关键词、话题转折词做规则判断</li>
+</ul>
+<p>语义切分适合：</p>
+<ul>
+<li>长报告</li>
+<li>会议纪要</li>
+<li>客服对话</li>
+<li>研究文章</li>
+<li>结构不明显但主题变化清晰的文本</li>
+</ul>
+<p>缺点：</p>
+<ul>
+<li>成本更高</li>
+<li>可解释性较弱</li>
+<li>稳定性依赖模型</li>
+<li>不同领域边界标准不一样</li>
+</ul>
+<p>工程上更常见的做法是混合策略：</p>
+<blockquote>
+<p>先用文档结构粗切，再在过长小节里做语义切分。</p></blockquote>
+<h2 id="47-llm-辅助切分">4.7 LLM 辅助切分
+</h2><p>LLM 可以用于更复杂的切分判断。</p>
+<p>例如让模型输出：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">[</span>
+</span></span><span class="line"><span class="cl">  <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;topic&#34;</span><span class="p">:</span> <span class="s2">&#34;退款申请条件&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;start_block&#34;</span><span class="p">:</span> <span class="s2">&#34;b001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;end_block&#34;</span><span class="p">:</span> <span class="s2">&#34;b004&#34;</span>
+</span></span><span class="line"><span class="cl">  <span class="p">},</span>
+</span></span><span class="line"><span class="cl">  <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;topic&#34;</span><span class="p">:</span> <span class="s2">&#34;虚拟商品例外规则&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;start_block&#34;</span><span class="p">:</span> <span class="s2">&#34;b005&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;end_block&#34;</span><span class="p">:</span> <span class="s2">&#34;b006&#34;</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">]</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>它适合处理：</p>
+<ul>
+<li>结构很乱的文档</li>
+<li>需要识别隐含主题边界的文档</li>
+<li>需要保留复杂论证链的长文档</li>
+</ul>
+<p>但不建议把所有文档都交给 LLM 切分。</p>
+<p>原因是：</p>
+<ul>
+<li>成本高</li>
+<li>延迟高</li>
+<li>输出不稳定</li>
+<li>大规模入库时难以排查</li>
+<li>需要额外校验</li>
+</ul>
+<p>更实用的方式是：</p>
+<ul>
+<li>默认使用规则切分</li>
+<li>对疑难文档使用 LLM 辅助</li>
+<li>对高价值文档使用更贵的切分策略</li>
+<li>对 LLM 输出做结构校验</li>
+</ul>
+<h1 id="五不同内容类型怎么切">五、不同内容类型怎么切
+</h1><h2 id="51-普通说明文档">5.1 普通说明文档
+</h2><p>普通说明文档通常包括：</p>
+<ul>
+<li>标题</li>
+<li>段落</li>
+<li>列表</li>
+<li>图片说明</li>
+<li>简单表格</li>
+</ul>
+<p>推荐策略：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">按标题层级切分
+</span></span><span class="line"><span class="cl">过长小节按段落二次切分
+</span></span><span class="line"><span class="cl">给每个 chunk 拼接 section_path
+</span></span><span class="line"><span class="cl">保留页码、来源、版本等 metadata
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>一个 chunk 可以类似：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">文档：账号管理说明
+</span></span><span class="line"><span class="cl">章节：账号安全 &gt; 密码重置
+</span></span><span class="line"><span class="cl">正文：用户可以在账号安全页发起密码重置。系统会向绑定邮箱发送验证码，验证码有效期为 10 分钟。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里标题路径不是装饰，而是重要的检索信号。</p>
+<p>用户问“验证码多久过期”，正文可能只说“有效期为 10 分钟”，如果没有标题路径，召回信号会弱很多。</p>
+<h2 id="52-faq">5.2 FAQ
+</h2><p>FAQ 最好保持一问一答为一个 chunk。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">问题：如何申请退款？
+</span></span><span class="line"><span class="cl">答案：用户可以在订单支付后 7 天内申请退款，虚拟商品一经发货不支持退款。
+</span></span><span class="line"><span class="cl">标签：售后、退款
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>不要把问题和答案拆开。</p>
+<p>也不要把多个无关 FAQ 硬塞到同一个 chunk。</p>
+<p>较好的结构是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;faq_refund_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;type&#34;</span><span class="p">:</span> <span class="s2">&#34;faq&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;question&#34;</span><span class="p">:</span> <span class="s2">&#34;如何申请退款？&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;answer&#34;</span><span class="p">:</span> <span class="s2">&#34;用户可以在订单支付后 7 天内申请退款，虚拟商品一经发货不支持退款。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;content_for_embedding&#34;</span><span class="p">:</span> <span class="s2">&#34;问题：如何申请退款？\n答案：用户可以在订单支付后 7 天内申请退款，虚拟商品一经发货不支持退款。\n标签：售后、退款&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;metadata&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;category&#34;</span><span class="p">:</span> <span class="s2">&#34;售后&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;product&#34;</span><span class="p">:</span> <span class="s2">&#34;mall&#34;</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>FAQ 的检索通常对问题表达很敏感。</p>
+<p>可以额外保存：</p>
+<ul>
+<li>标准问题</li>
+<li>相似问法</li>
+<li>标签</li>
+<li>适用产品</li>
+<li>更新时间</li>
+</ul>
+<h2 id="53-表格">5.3 表格
+</h2><p>表格不能简单平铺成纯文本。</p>
+<p>例如：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>套餐</th>
+          <th>月费</th>
+          <th>API 调用次数</th>
+          <th>适用对象</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Basic</td>
+          <td>99</td>
+          <td>10 万</td>
+          <td>个人开发者</td>
+      </tr>
+      <tr>
+          <td>Pro</td>
+          <td>299</td>
+          <td>100 万</td>
+          <td>中小团队</td>
+      </tr>
+      <tr>
+          <td>Enterprise</td>
+          <td>合同定价</td>
+          <td>不限制</td>
+          <td>大客户</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>如果只把某一行切成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 299 100 万 中小团队
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>模型可能不知道每一列是什么意思。</p>
+<p>更好的方式是把表头带进每一行：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">套餐价格表：
+</span></span><span class="line"><span class="cl">套餐=Pro，月费=299，API 调用次数=100 万，适用对象=中小团队。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>对于小表格，可以整个表格作为一个 chunk：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-markdown" data-lang="markdown"><span class="line"><span class="cl">套餐价格表：
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">| 套餐 | 月费 | API 调用次数 | 适用对象 |
+</span></span><span class="line"><span class="cl">|------|------|--------------|----------|
+</span></span><span class="line"><span class="cl">| Basic | 99 | 10 万 | 个人开发者 |
+</span></span><span class="line"><span class="cl">| Pro | 299 | 100 万 | 中小团队 |
+</span></span><span class="line"><span class="cl">| Enterprise | 合同定价 | 不限制 | 大客户 |
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>对于大表格，可以按行或按行组切分，但每个 chunk 都要保留：</p>
+<ul>
+<li>表名</li>
+<li>表头</li>
+<li>行数据</li>
+<li>单位说明</li>
+<li>备注</li>
+<li>来源页码</li>
+</ul>
+<p>如果某一行的数据量特别大，例如某个单元格里包含很长的规则说明、JSON 配置、日志片段或多段文本，按行切分后仍然可能超过 <code>max_size</code>。</p>
+<p>这时可以继续做二次切分。</p>
+<p>注意，这个检查必须发生在 embedding 之前。</p>
+<p>因为超长 chunk 不只是召回和上下文组装阶段的问题，它首先会影响入库阶段：</p>
+<ul>
+<li>embedding 模型可能有最大输入长度限制</li>
+<li>单条输入过长会导致 tokenizer 和模型前向计算成本升高</li>
+<li>批量 embedding 时，少数超长行会把整个 batch padding 拉长</li>
+<li>自部署 embedding 模型可能直接 OOM 或显存爆掉</li>
+<li>即使服务端自动截断，也会丢失表格行尾部的重要字段</li>
+</ul>
+<p>所以表格切分不能等到召回时再处理。</p>
+<p>更稳的原则是：</p>
+<blockquote>
+<p>写入向量库之前，每个用于 embedding 的 <code>content_for_embedding</code> 都必须已经满足 token 上限。</p></blockquote>
+<p>推荐流程是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">表格
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">按整表、行组或行切分
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">生成 content_for_embedding
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">在 embedding 之前检查每个行 chunk 的 token 长度
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">如果某一行超过 max_size
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">按字段、单元格、段落或句子二次切分
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">每个子 chunk 都保留表级和行级上下文
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">只对二次切分后的合规子 chunk 做 embedding
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>关键点是：</p>
+<blockquote>
+<p>子 chunk 可以变小，但不能丢掉它属于哪张表、哪一行、哪个字段。</p></blockquote>
+<p>例如一行内容是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">套餐=Enterprise
+</span></span><span class="line"><span class="cl">适用对象=大型客户
+</span></span><span class="line"><span class="cl">权限说明=非常长……
+</span></span><span class="line"><span class="cl">配置说明=非常长……
+</span></span><span class="line"><span class="cl">备注=非常长……
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>不要把它切成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">权限说明的后半段……
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样的 chunk 虽然长度变短了，但语义已经不完整。</p>
+<p>更好的子 chunk 应该是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">表：套餐价格表
+</span></span><span class="line"><span class="cl">行：套餐=Enterprise，适用对象=大型客户
+</span></span><span class="line"><span class="cl">字段：权限说明
+</span></span><span class="line"><span class="cl">内容：Enterprise 套餐支持自定义权限模型，可以按部门、角色、项目空间进行授权……
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>或者：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">表：套餐价格表
+</span></span><span class="line"><span class="cl">行：套餐=Enterprise，适用对象=大型客户
+</span></span><span class="line"><span class="cl">字段：配置说明
+</span></span><span class="line"><span class="cl">内容：Enterprise 套餐支持独立配置审批流、权限模板、资源配额和审计策略……
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>也就是说，超长行二次切分后的每个子 chunk 至少应该保留：</p>
+<ul>
+<li>表名</li>
+<li>表头或字段名</li>
+<li>行主键或唯一标识列</li>
+<li>当前字段名</li>
+<li>当前字段内容</li>
+<li>单位说明</li>
+<li>必要备注</li>
+<li>原始行号或 source cell 范围</li>
+<li>parent row chunk 的引用关系</li>
+</ul>
+<p>一个二次切分后的 chunk 可以设计成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003_field_permission_part_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;doc_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;type&#34;</span><span class="p">:</span> <span class="s2">&#34;table_row_field_chunk&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;parent_chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;table_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;table_name&#34;</span><span class="p">:</span> <span class="s2">&#34;套餐价格表&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;row_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;row_index&#34;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;row_key&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;套餐&#34;</span><span class="p">:</span> <span class="s2">&#34;Enterprise&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;适用对象&#34;</span><span class="p">:</span> <span class="s2">&#34;大型客户&#34;</span>
+</span></span><span class="line"><span class="cl">  <span class="p">},</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;field_name&#34;</span><span class="p">:</span> <span class="s2">&#34;权限说明&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;content&#34;</span><span class="p">:</span> <span class="s2">&#34;表：套餐价格表\n行：套餐=Enterprise，适用对象=大型客户\n字段：权限说明\n内容：Enterprise 套餐支持自定义权限模型，可以按部门、角色、项目空间进行授权……&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;content_for_embedding&#34;</span><span class="p">:</span> <span class="s2">&#34;套餐价格表 &gt; Enterprise 套餐 &gt; 权限说明\nEnterprise 套餐支持自定义权限模型，可以按部门、角色、项目空间进行授权……&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;metadata&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;page&#34;</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;source_cells&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;R3C4&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;part_index&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;part_count&#34;</span><span class="p">:</span> <span class="mi">3</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里的 <code>parent_chunk_id</code> 很重要。</p>
+<p>它可以指向原始行 chunk：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;type&#34;</span><span class="p">:</span> <span class="s2">&#34;table_row_chunk&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;table_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;table_name&#34;</span><span class="p">:</span> <span class="s2">&#34;套餐价格表&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;row_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;row_index&#34;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;row_key&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;套餐&#34;</span><span class="p">:</span> <span class="s2">&#34;Enterprise&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;适用对象&#34;</span><span class="p">:</span> <span class="s2">&#34;大型客户&#34;</span>
+</span></span><span class="line"><span class="cl">  <span class="p">},</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;row_summary&#34;</span><span class="p">:</span> <span class="s2">&#34;Enterprise 套餐面向大型客户，合同定价，API 调用次数不限制，支持自定义权限模型和独立审计策略。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;child_chunk_ids&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;pricing_policy_2026_table_001_row_003_field_permission_part_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;pricing_policy_2026_table_001_row_003_field_permission_part_002&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;pricing_policy_2026_table_001_row_003_field_config_part_001&#34;</span>
+</span></span><span class="line"><span class="cl">  <span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>要保证这些二次切分后的子 chunk 属于同一行，不应该只靠 <code>chunk_id</code> 的字符串命名来猜，而应该显式设计行级身份字段。</p>
+<p>推荐使用三层 ID：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">table_id
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">row_id
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">chunk_id
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>其中：</p>
+<ul>
+<li><code>table_id</code>：标识同一张表</li>
+<li><code>row_id</code>：标识同一行</li>
+<li><code>chunk_id</code>：标识这一行拆出来的某个子 chunk</li>
+</ul>
+<p>同一行拆出来的所有字段子 chunk，必须拥有相同的 <code>row_id</code> 和 <code>parent_chunk_id</code>。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">[</span>
+</span></span><span class="line"><span class="cl">  <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003_field_permission_part_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;table_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;row_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;parent_chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;field_name&#34;</span><span class="p">:</span> <span class="s2">&#34;权限说明&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;part_index&#34;</span><span class="p">:</span> <span class="mi">1</span>
+</span></span><span class="line"><span class="cl">  <span class="p">},</span>
+</span></span><span class="line"><span class="cl">  <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003_field_permission_part_002&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;table_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;row_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;parent_chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;field_name&#34;</span><span class="p">:</span> <span class="s2">&#34;权限说明&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;part_index&#34;</span><span class="p">:</span> <span class="mi">2</span>
+</span></span><span class="line"><span class="cl">  <span class="p">},</span>
+</span></span><span class="line"><span class="cl">  <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003_field_config_part_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;table_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;row_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;parent_chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;field_name&#34;</span><span class="p">:</span> <span class="s2">&#34;配置说明&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;part_index&#34;</span><span class="p">:</span> <span class="mi">1</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">]</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>只要 <code>row_id</code> 相同，就可以判断它们来自同一行。</p>
+<p><code>chunk_id</code> 里可以包含 <code>table_001_row_003</code> 这类信息，方便人工调试，但系统关联不应该依赖字符串解析。</p>
+<p>真正用于关联的应该是结构化字段：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;table_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;row_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;parent_chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>row_id</code> 的生成也要尽量稳定。</p>
+<p>如果只使用行号：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">row_id = row_003
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>当表格前面新增或删除一行时，后续所有行号都会变化。</p>
+<p>更稳的方式是优先使用业务主键或组合主键：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">row_id = hash(doc_id + table_id + row_key)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>其中 <code>row_key</code> 来自能唯一标识这一行的列。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;套餐&#34;</span><span class="p">:</span> <span class="s2">&#34;Enterprise&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;适用对象&#34;</span><span class="p">:</span> <span class="s2">&#34;大型客户&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果表格没有天然主键，可以选择多列组合，或者退化为：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">row_id = hash(doc_id + table_id + normalized_row_text)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>但要注意，使用整行文本生成 <code>row_id</code> 时，只要行内容有微小变化，<code>row_id</code> 就会变化。</p>
+<p>所以更推荐：</p>
+<ul>
+<li>有主键列时，用主键列</li>
+<li>没有主键列时，用多列组合</li>
+<li>实在没有稳定列时，再用规范化后的整行文本 hash</li>
+</ul>
+<p>查询时可以利用这些字段做同一行补全：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回某个 table_row_field_chunk
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">读取它的 row_id 和 parent_chunk_id
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">查找同 row_id 的其他字段子 chunk
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">读取 parent row chunk 的 row_summary
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">按 token 预算决定是否补充整行摘要或相邻字段
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>入库时，不建议对超长的原始行 chunk 直接做 embedding。</p>
+<p>更推荐的方式是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">原始行 chunk：
+</span></span><span class="line"><span class="cl">  保存结构、row_key、row_summary、child_chunk_ids
+</span></span><span class="line"><span class="cl">  可以不参与向量检索，或只对 row_summary 做 embedding
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">字段子 chunk：
+</span></span><span class="line"><span class="cl">  控制在 max_size 内
+</span></span><span class="line"><span class="cl">  参与 embedding、BM25、rerank 和最终上下文组装
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样检索时可以先命中更小的字段子 chunk，再根据 <code>parent_chunk_id</code> 找回整行摘要或相关字段。</p>
+<p>在线查询流程可以是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户 query
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">召回 table_row_field_chunk
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">根据 parent_chunk_id 找到 table_row_chunk
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">上下文组装时按 token 预算选择：
+</span></span><span class="line"><span class="cl">    只放字段子 chunk
+</span></span><span class="line"><span class="cl">    字段子 chunk + row_key
+</span></span><span class="line"><span class="cl">    字段子 chunk + row_summary
+</span></span><span class="line"><span class="cl">    字段子 chunk + 相邻字段
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样既能避免 embedding 入库阶段因为单条表格 chunk 过长而 OOM，也能降低 rerank 和 LLM 上下文阶段的压力，同时保留表格语义。</p>
+<h2 id="54-代码">5.4 代码
+</h2><p>代码知识库不能按普通文本硬切。</p>
+<p>更推荐按代码结构切：</p>
+<ul>
+<li>repo</li>
+<li>package / module</li>
+<li>file</li>
+<li>class</li>
+<li>function / method</li>
+<li>docstring</li>
+<li>注释块</li>
+</ul>
+<p>例如一个函数 chunk：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;repo_order_service_create&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;type&#34;</span><span class="p">:</span> <span class="s2">&#34;code&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;content&#34;</span><span class="p">:</span> <span class="s2">&#34;def create_order(user_id, items): ...&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;metadata&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;repo&#34;</span><span class="p">:</span> <span class="s2">&#34;commerce-service&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;branch&#34;</span><span class="p">:</span> <span class="s2">&#34;main&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;file_path&#34;</span><span class="p">:</span> <span class="s2">&#34;services/order_service.py&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;language&#34;</span><span class="p">:</span> <span class="s2">&#34;python&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;symbol_name&#34;</span><span class="p">:</span> <span class="s2">&#34;create_order&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;symbol_type&#34;</span><span class="p">:</span> <span class="s2">&#34;function&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;start_line&#34;</span><span class="p">:</span> <span class="mi">42</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;end_line&#34;</span><span class="p">:</span> <span class="mi">96</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>代码切分要避免：</p>
+<ul>
+<li>函数体被截断</li>
+<li>类定义和方法分离后丢失上下文</li>
+<li>docstring 和实现分离</li>
+<li>文件路径、类名、函数名没有进入 metadata</li>
+<li>只 embedding 代码，不 embedding 注释和符号信息</li>
+</ul>
+<p>对代码 RAG 来说，<code>content_for_embedding</code> 可以包含：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">repo: commerce-service
+</span></span><span class="line"><span class="cl">file: services/order_service.py
+</span></span><span class="line"><span class="cl">symbol: OrderService.create_order
+</span></span><span class="line"><span class="cl">docstring: 创建订单，校验库存并生成支付单
+</span></span><span class="line"><span class="cl">code: ...
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>用户经常会问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">OrderService.create_order 什么时候会抛库存不足？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这类问题同时依赖关键词、符号路径和语义。</p>
+<h2 id="55-制度法律合同">5.5 制度、法律、合同
+</h2><p>制度、法律、合同类文档的切分重点是：</p>
+<ul>
+<li>条款编号</li>
+<li>上下位条款关系</li>
+<li>适用范围</li>
+<li>生效时间</li>
+<li>例外条件</li>
+<li>定义条款</li>
+<li>附件和补充说明</li>
+</ul>
+<p>不要只切结论。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">第十二条 报销期限
+</span></span><span class="line"><span class="cl">员工应在费用发生后 30 日内提交报销申请。因出差、病假等特殊原因无法按期提交的，应在原因消除后 7 日内补交说明。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果只召回：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">员工应在费用发生后 30 日内提交报销申请。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>用户问“病假错过 30 天还能报销吗”时，模型可能答错。</p>
+<p>更好的 chunk 应该包含完整条款：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">第十二条 报销期限：员工应在费用发生后 30 日内提交报销申请。因出差、病假等特殊原因无法按期提交的，应在原因消除后 7 日内补交说明。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>对于这类文档，推荐按条款切分，而不是按固定长度切分。</p>
+<h2 id="56-聊天记录和工单">5.6 聊天记录和工单
+</h2><p>聊天记录和工单不是普通连续文档。</p>
+<p>它们通常有：</p>
+<ul>
+<li>多轮对话</li>
+<li>用户问题</li>
+<li>客服回复</li>
+<li>状态流转</li>
+<li>解决方案</li>
+<li>时间线</li>
+</ul>
+<p>切分时可以按一个完整 case 切，也可以按问题阶段切。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">工单标题：导出接口返回 403
+</span></span><span class="line"><span class="cl">问题描述：用户在 v2.3.17 调用导出接口时返回 403。
+</span></span><span class="line"><span class="cl">排查过程：确认用户缺少 report:export 权限。
+</span></span><span class="line"><span class="cl">解决方案：管理员在角色管理中为用户增加 report:export 权限后恢复。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这种内容如果按聊天轮次切得太碎，用户问“导出接口 403 怎么处理”时可能只召回一段中间对话，缺少最终解决方案。</p>
+<p>推荐保留：</p>
+<ul>
+<li>问题摘要</li>
+<li>原始对话</li>
+<li>最终解决方案</li>
+<li>产品线</li>
+<li>错误码</li>
+<li>版本号</li>
+<li>工单状态</li>
+</ul>
+<h1 id="六parent-child-chunk-设计">六、parent-child chunk 设计
+</h1><h2 id="61-为什么需要-parent-child">6.1 为什么需要 parent-child
+</h2><p>文本切分经常面临一个矛盾：</p>
+<ul>
+<li>小 chunk 检索更准</li>
+<li>大 chunk 上下文更完整</li>
+</ul>
+<p>如果 chunk 很小，向量更聚焦，但可能缺少上下文。</p>
+<p>如果 chunk 很大，上下文完整，但检索噪声更多。</p>
+<p>parent-child chunk 就是为了解决这个矛盾。</p>
+<h2 id="62-基本思想">6.2 基本思想
+</h2><p>索引时保存两层结构：</p>
+<ul>
+<li>child chunk：较小，用于检索</li>
+<li>parent chunk：较大，用于提供上下文</li>
+</ul>
+<p>在线查询时：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户 query
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">检索 child chunk
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">命中 child chunk
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">找到所属 parent chunk
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">把 parent 或 parent 的相关片段放进上下文
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">parent chunk:
+</span></span><span class="line"><span class="cl">退款规则完整小节
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">child chunk 1:
+</span></span><span class="line"><span class="cl">订单支付后 7 天内可以申请退款
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">child chunk 2:
+</span></span><span class="line"><span class="cl">虚拟商品一经发货不支持退款
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">child chunk 3:
+</span></span><span class="line"><span class="cl">企业合同订单以合同条款为准
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>用户问“虚拟商品能退款吗”，检索命中 child chunk 2。</p>
+<p>但最终给模型时，可以带上整个 parent chunk，让模型看到一般规则和例外关系。</p>
+<h2 id="63-parent-child-的数据结构">6.3 parent-child 的数据结构
+</h2><p>可以这样设计：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;child_chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;refund_doc_child_002&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;parent_chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;refund_doc_parent_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;content&#34;</span><span class="p">:</span> <span class="s2">&#34;虚拟商品一经发货不支持退款。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;content_for_embedding&#34;</span><span class="p">:</span> <span class="s2">&#34;退款规则 &gt; 特殊商品\n虚拟商品一经发货不支持退款。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;metadata&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;doc_id&#34;</span><span class="p">:</span> <span class="s2">&#34;refund_doc&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;section_path&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;退款规则&#34;</span><span class="p">,</span> <span class="s2">&#34;特殊商品&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;page&#34;</span><span class="p">:</span> <span class="mi">3</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>parent chunk：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;parent_chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;refund_doc_parent_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;content&#34;</span><span class="p">:</span> <span class="s2">&#34;退款规则：用户在订单支付后 7 天内可以申请退款。虚拟商品一经发货不支持退款。企业合同订单以合同条款为准。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;child_chunk_ids&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;refund_doc_child_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;refund_doc_child_002&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;refund_doc_child_003&#34;</span>
+</span></span><span class="line"><span class="cl">  <span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;metadata&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;doc_id&#34;</span><span class="p">:</span> <span class="s2">&#34;refund_doc&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;section_path&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;退款规则&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;page_start&#34;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;page_end&#34;</span><span class="p">:</span> <span class="mi">4</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="64-parent-child-的适用场景">6.4 parent-child 的适用场景
+</h2><p>适合：</p>
+<ul>
+<li>长文档问答</li>
+<li>制度和合同</li>
+<li>技术文档</li>
+<li>产品手册</li>
+<li>需要完整上下文的规则类问题</li>
+</ul>
+<p>不一定适合：</p>
+<ul>
+<li>极短 FAQ</li>
+<li>每个片段天然独立的知识卡片</li>
+<li>token 预算非常紧的场景</li>
+</ul>
+<h2 id="65-parent-不能无限大">6.5 parent 不能无限大
+</h2><p>parent chunk 也要控制大小。</p>
+<p>如果 parent 是整篇文档，命中一个 child 后把全文塞给模型，等于回到了大 chunk 的问题。</p>
+<p>常见 parent 粒度包括：</p>
+<ul>
+<li>当前小节</li>
+<li>当前标题下的若干段落</li>
+<li>当前条款组</li>
+<li>当前函数所属类</li>
+<li>当前 FAQ 所属主题组</li>
+</ul>
+<p>可以把 parent 理解成：</p>
+<blockquote>
+<p>为 child 补足必要上下文，而不是把所有东西都带上。</p></blockquote>
+<h1 id="七chunk-大小怎么选">七、chunk 大小怎么选
+</h1><h2 id="71-不存在通用最佳大小">7.1 不存在通用最佳大小
+</h2><p>chunk size 没有一个全局最优值。</p>
+<p>它取决于：</p>
+<ul>
+<li>文档类型</li>
+<li>用户问题类型</li>
+<li>embedding 模型长度限制</li>
+<li>rerank 模型长度限制</li>
+<li>LLM 上下文窗口</li>
+<li>是否使用 parent-child</li>
+<li>是否使用 BM25</li>
+<li>是否有结构化 metadata</li>
+</ul>
+<p>所以不要迷信某个固定参数，例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">chunk_size = 512
+</span></span><span class="line"><span class="cl">overlap = 128
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这只能作为起点，不能作为结论。</p>
+<h2 id="72-常见起步配置">7.2 常见起步配置
+</h2><p>可以从下面配置起步：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">普通中文文档：300 到 800 中文字
+</span></span><span class="line"><span class="cl">英文技术文档：300 到 800 tokens
+</span></span><span class="line"><span class="cl">FAQ：一问一答一个 chunk
+</span></span><span class="line"><span class="cl">表格：小表整表，大表按行组切分并保留表头
+</span></span><span class="line"><span class="cl">代码：按函数、类、文件结构切分
+</span></span><span class="line"><span class="cl">制度合同：按条款或条款组切分
+</span></span><span class="line"><span class="cl">overlap：10% 到 20%
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这些只是初始值。</p>
+<p>真正要看评估结果：</p>
+<ul>
+<li>正确证据是否能被召回</li>
+<li>召回片段是否完整</li>
+<li>噪声是否可控</li>
+<li>token 成本是否合理</li>
+<li>rerank 是否能有效排序</li>
+</ul>
+<h2 id="73-中文文档的特殊点">7.3 中文文档的特殊点
+</h2><p>中文没有天然空格分词。</p>
+<p>如果按 token 或字符粗切，要注意：</p>
+<ul>
+<li>不要切断句子</li>
+<li>不要切断编号列表</li>
+<li>不要切断条款</li>
+<li>不要切断表格行</li>
+<li>不要把标题单独切成 chunk</li>
+</ul>
+<p>中文文档建议优先按：</p>
+<ul>
+<li>标题</li>
+<li>段落</li>
+<li>句号、问号、分号</li>
+<li>列表项</li>
+<li>条款编号</li>
+</ul>
+<p>来确定边界。</p>
+<h2 id="74-token-长度和字符长度不要混淆">7.4 token 长度和字符长度不要混淆
+</h2><p>很多模型限制的是 token，不是字符。</p>
+<p>中文、英文、代码、数字、符号在不同 tokenizer 下的 token 数都不同。</p>
+<p>工程上应该实际使用目标模型 tokenizer 估算长度。</p>
+<p>不要简单认为：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1 个中文字符 = 1 个 token
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这在不同模型里并不总成立。</p>
+<p>更稳的方式是：</p>
+<ul>
+<li>切分时用 tokenizer 计算 token 数</li>
+<li>metadata 里记录 <code>token_count</code></li>
+<li>对超长 chunk 做自动检查</li>
+<li>对过短 chunk 做合并检查</li>
+</ul>
+<h1 id="八切分流程的工程实现">八、切分流程的工程实现
+</h1><h2 id="81-推荐流程">8.1 推荐流程
+</h2><p>一个比较稳的文本切分流程可以是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">解析后的 blocks
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">清洗噪声
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">恢复标题层级和 section_path
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">按文档类型选择切分策略
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">按结构生成初始 chunk
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">过长 chunk 二次切分
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">过短 chunk 合并
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">生成 content_for_embedding
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">补充 metadata
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">质量检查
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">写入索引
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里最重要的是：</p>
+<blockquote>
+<p>先结构，后长度。</p></blockquote>
+<p>不要一上来就按长度切。</p>
+<h2 id="82-按-block-类型处理">8.2 按 block 类型处理
+</h2><p>如果解析结果已经有 block 类型，可以按类型处理：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">heading：更新 section_path，不单独生成 chunk
+</span></span><span class="line"><span class="cl">paragraph：按段落累计到当前 section chunk
+</span></span><span class="line"><span class="cl">list：保留列表结构，避免拆散父子项
+</span></span><span class="line"><span class="cl">table：按表格策略转换
+</span></span><span class="line"><span class="cl">code：按代码块或符号结构切分
+</span></span><span class="line"><span class="cl">image_ocr：带上图片说明和页码
+</span></span><span class="line"><span class="cl">footnote：关联到引用它的正文
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样比把所有 block 拼成纯文本再切更可靠。</p>
+<h2 id="83-过长-chunk-的二次切分">8.3 过长 chunk 的二次切分
+</h2><p>按结构切分后，仍然可能出现过长 chunk。</p>
+<p>例如一个二级标题下有几千字。</p>
+<p>这时可以二次切分：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">优先按三级标题
+</span></span><span class="line"><span class="cl">其次按段落
+</span></span><span class="line"><span class="cl">再按句子
+</span></span><span class="line"><span class="cl">最后按长度兜底
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>二次切分时要保留相同的 <code>section_path</code>。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">section_path = [&#34;权限系统&#34;, &#34;角色模型&#34;]
+</span></span><span class="line"><span class="cl">chunk_001 = 角色模型的定义和基本概念
+</span></span><span class="line"><span class="cl">chunk_002 = 角色继承规则
+</span></span><span class="line"><span class="cl">chunk_003 = 角色冲突处理
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>不要因为二次切分就丢掉标题路径。</p>
+<h2 id="84-过短-chunk-的合并">8.4 过短 chunk 的合并
+</h2><p>过短 chunk 也需要处理。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">chunk_001: 注意事项
+</span></span><span class="line"><span class="cl">chunk_002: 请先完成实名认证。
+</span></span><span class="line"><span class="cl">chunk_003: 认证信息提交后不可修改。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果标题和短句分离，召回效果会很差。</p>
+<p>可以合并成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">注意事项：请先完成实名认证。认证信息提交后不可修改。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>合并时要注意：</p>
+<ul>
+<li>优先合并同一 section 下的相邻内容</li>
+<li>不要跨主题合并</li>
+<li>不要把两个独立 FAQ 合并</li>
+<li>不要把不同条款强行合并</li>
+</ul>
+<h2 id="85-切分版本要可追踪">8.5 切分版本要可追踪
+</h2><p>切分策略会不断调整。</p>
+<p>所以每个 chunk 最好记录：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;parser_version&#34;</span><span class="p">:</span> <span class="s2">&#34;parser_v3&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunker_version&#34;</span><span class="p">:</span> <span class="s2">&#34;chunker_v5&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;embedding_model&#34;</span><span class="p">:</span> <span class="s2">&#34;embedding_xxx&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;created_at&#34;</span><span class="p">:</span> <span class="s2">&#34;2026-05-08&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样排查问题时可以知道：</p>
+<ul>
+<li>当前 chunk 是哪一版解析产生的</li>
+<li>使用了哪一版切分策略</li>
+<li>是否需要重建索引</li>
+<li>评估结果对应哪一套入库版本</li>
+</ul>
+<h1 id="九切分和召回重排上下文的关系">九、切分和召回、重排、上下文的关系
+</h1><h2 id="91-切分影响召回">9.1 切分影响召回
+</h2><p>召回阶段拿到的是 chunk。</p>
+<p>如果 chunk 切得不好，召回会直接受影响。</p>
+<p>切得太大：</p>
+<ul>
+<li>向量语义不聚焦</li>
+<li>BM25 噪声变多</li>
+<li>多个主题互相干扰</li>
+</ul>
+<p>切得太小：</p>
+<ul>
+<li>query 和 chunk 语义不完整</li>
+<li>关键条件缺失</li>
+<li>正确证据被拆散到多个 chunk</li>
+</ul>
+<p>所以很多召回问题，本质是切分问题。</p>
+<h2 id="92-切分影响-rerank">9.2 切分影响 rerank
+</h2><p>rerank 通常对 query 和候选 chunk 做相关性判断。</p>
+<p>如果 chunk 里有大量无关内容，rerank 可能分不清这个 chunk 到底是否相关。</p>
+<p>如果 chunk 太短，rerank 可能认为它相关，但它并不能支撑最终回答。</p>
+<p>所以 rerank 不是万能补救。</p>
+<p>它只能在候选质量还不错的前提下，把更相关的排到前面。</p>
+<h2 id="93-切分影响上下文组装">9.3 切分影响上下文组装
+</h2><p>最终进入 prompt 的上下文通常只有几个 chunk。</p>
+<p>如果 chunk 太大：</p>
+<ul>
+<li>能放入的 chunk 数量变少</li>
+<li>证据覆盖不足</li>
+<li>token 成本高</li>
+</ul>
+<p>如果 chunk 太小：</p>
+<ul>
+<li>需要组装很多 chunk 才能回答</li>
+<li>相邻片段合并逻辑变复杂</li>
+<li>模型可能看到碎片化上下文</li>
+</ul>
+<p>所以切分和 context packing 是强相关的。</p>
+<h2 id="94-切分影响答案引用">9.4 切分影响答案引用
+</h2><p>如果 chunk 没有保存来源信息，答案引用会很难做。</p>
+<p>例如用户看到：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">根据知识库，虚拟商品不支持退款。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>但系统无法告诉用户这句话来自：</p>
+<ul>
+<li>哪个文件</li>
+<li>哪一页</li>
+<li>哪个章节</li>
+<li>哪个条款</li>
+<li>哪个表格</li>
+</ul>
+<p>可信度就会下降。</p>
+<p>所以切分时必须保留 source metadata。</p>
+<h1 id="十文本切分质量怎么评估">十、文本切分质量怎么评估
+</h1><h2 id="101-不要只看-chunk-数量">10.1 不要只看 chunk 数量
+</h2><p>很多人只看：</p>
+<ul>
+<li>切出了多少 chunk</li>
+<li>平均长度多少</li>
+<li>最大长度多少</li>
+</ul>
+<p>这些指标有用，但不够。</p>
+<p>真正要看的是：</p>
+<blockquote>
+<p>切出来的 chunk 是否能支撑检索和回答。</p></blockquote>
+<h2 id="102-人工抽样检查">10.2 人工抽样检查
+</h2><p>最直接的方法是抽样检查。</p>
+<p>可以随机抽取 50 到 100 个 chunk，看：</p>
+<ul>
+<li>是否主题单一</li>
+<li>是否语义完整</li>
+<li>是否标题路径正确</li>
+<li>是否表格表头保留</li>
+<li>是否代码块完整</li>
+<li>是否条款编号保留</li>
+<li>是否 metadata 正确</li>
+<li>是否存在明显噪声</li>
+<li>是否能追溯原文</li>
+</ul>
+<p>人工抽样虽然笨，但非常有效。</p>
+<p>很多解析和切分问题，自动指标很难第一时间发现。</p>
+<h2 id="103-基于问题集评估">10.3 基于问题集评估
+</h2><p>更重要的是用问题集评估。</p>
+<p>构造一批测试问题，每个问题标注正确证据 chunk。</p>
+<p>然后观察：</p>
+<ul>
+<li>正确证据是否被召回</li>
+<li>正确 chunk 排名是否靠前</li>
+<li>召回片段是否完整</li>
+<li>是否需要多个 chunk 才能回答</li>
+<li>最终答案是否引用了正确来源</li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;query&#34;</span><span class="p">:</span> <span class="s2">&#34;虚拟商品付款后 7 天内可以退款吗？&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;gold_chunks&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;refund_policy_chunk_003&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;answer_points&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;一般订单 7 天内可退款&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;虚拟商品一经发货不支持退款&#34;</span>
+</span></span><span class="line"><span class="cl">  <span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果正确内容存在于原文，但没有被召回，可能是：</p>
+<ul>
+<li>切分太碎</li>
+<li>标题缺失</li>
+<li>embedding 文本缺少上下文</li>
+<li>metadata 过滤错误</li>
+<li>召回策略不足</li>
+</ul>
+<h2 id="104-常见指标">10.4 常见指标
+</h2><p>切分本身可以配合召回指标一起看。</p>
+<p>常见指标包括：</p>
+<ul>
+<li><code>Recall@k</code>：正确 chunk 是否出现在 top-k 召回结果中</li>
+<li><code>MRR</code>：第一个正确 chunk 的排名是否靠前</li>
+<li><code>NDCG</code>：排序结果整体质量</li>
+<li><code>answer coverage</code>：进入上下文的证据是否覆盖答案要点</li>
+<li><code>context precision</code>：进入上下文的内容有多少是真正有用的</li>
+</ul>
+<p>其中最重要的是：</p>
+<blockquote>
+<p>正确证据有没有以完整形态进入候选集和最终上下文。</p></blockquote>
+<h2 id="105-自动质量检查">10.5 自动质量检查
+</h2><p>可以做一些自动检查：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">chunk 是否为空
+</span></span><span class="line"><span class="cl">chunk 是否超过最大 token
+</span></span><span class="line"><span class="cl">chunk 是否低于最小长度
+</span></span><span class="line"><span class="cl">标题路径是否缺失
+</span></span><span class="line"><span class="cl">metadata 是否缺少 doc_id
+</span></span><span class="line"><span class="cl">表格 chunk 是否包含表头
+</span></span><span class="line"><span class="cl">代码 chunk 是否包含 file_path
+</span></span><span class="line"><span class="cl">是否存在大量重复 chunk
+</span></span><span class="line"><span class="cl">是否存在页眉页脚噪声
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这些检查不能证明切分质量很好，但能发现很多低级问题。</p>
+<h1 id="十一常见坑">十一、常见坑
+</h1><h2 id="111-只按固定长度切">11.1 只按固定长度切
+</h2><p>这是最常见的坑。</p>
+<p>固定长度切分容易切断：</p>
+<ul>
+<li>标题和正文</li>
+<li>表格</li>
+<li>代码</li>
+<li>条款</li>
+<li>列表</li>
+<li>问答对</li>
+</ul>
+<p>如果只是 demo 可以接受，但生产系统最好至少引入结构切分。</p>
+<h2 id="112-标题没有进入-chunk">11.2 标题没有进入 chunk
+</h2><p>很多正文离开标题后就失去语义。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">每月包含 100 万次调用。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果不带标题，模型不知道这是哪个套餐、哪个接口、哪个产品。</p>
+<p>应该变成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">计费规则 &gt; Pro 套餐 &gt; API 调用限制：每月包含 100 万次调用。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>至少在 <code>content_for_embedding</code> 里要带上标题路径。</p>
+<h2 id="113-表格丢失表头">11.3 表格丢失表头
+</h2><p>表格如果只保留行数据，很容易变成无意义文本。</p>
+<p>错误示例：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 299 100 万
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>正确示例：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">套餐=Pro，月费=299，API 调用次数=100 万。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>表头是表格语义的一部分，不是可有可无的格式。</p>
+<h2 id="114-overlap-过大">11.4 overlap 过大
+</h2><p>overlap 能缓解边界问题，但过大会造成：</p>
+<ul>
+<li>索引膨胀</li>
+<li>重复召回</li>
+<li>rerank 候选相似度过高</li>
+<li>上下文里重复内容太多</li>
+<li>成本上升</li>
+</ul>
+<p>如果发现 top-k 里很多结果几乎一样，要检查 overlap 是否过大。</p>
+<h2 id="115-超长表格行不做二次切分">11.5 超长表格行不做二次切分
+</h2><p>有些表格看起来已经按行切分了，但某一行里可能有特别长的字段。</p>
+<p>例如：</p>
+<ul>
+<li>产品配置说明</li>
+<li>权限规则说明</li>
+<li>JSON 示例</li>
+<li>日志样例</li>
+<li>长备注</li>
+<li>多段处理流程</li>
+</ul>
+<p>如果把这一整行直接作为一个 chunk，可能会导致：</p>
+<ul>
+<li>单个 chunk 超过 embedding 模型长度限制</li>
+<li>自部署 embedding 模型在前向计算时显存爆掉</li>
+<li>batch embedding 时因为一条超长样本导致整个 batch padding 变长</li>
+<li>服务端 embedding API 自动截断，导致行尾字段丢失</li>
+<li>rerank 输入过长</li>
+<li>上下文组装时 token 成本过高</li>
+<li>线上推理显存或延迟压力变大</li>
+</ul>
+<p>这里最先出问题的往往不是召回，而是 embedding 入库。</p>
+<p>所以不能把超长行原样写入向量化队列，再指望后面的召回或上下文组装处理。</p>
+<p>处理方式不是把这一行直接硬切成几段，而是按字段或单元格内容二次切分。</p>
+<p>每个子 chunk 都要保留：</p>
+<ul>
+<li>表名</li>
+<li>行主键</li>
+<li>字段名</li>
+<li>part_index</li>
+<li>parent_chunk_id</li>
+<li>source_cells</li>
+</ul>
+<p>二次切分完成后，只对满足长度限制的子 chunk 做 embedding。</p>
+<p>原始行 chunk 可以作为 parent 结构保存，用于追溯和上下文补全；如果要参与向量检索，也应该只对它的 <code>row_summary</code> 做 embedding，而不是对整行长文本做 embedding。</p>
+<p>否则要么 embedding 阶段就可能 OOM，要么命中子 chunk 后，系统只知道一段局部文本，却不知道它来自哪张表、哪一行、哪个字段。</p>
+<h2 id="116-chunk-里混入页眉页脚">11.6 chunk 里混入页眉页脚
+</h2><p>PDF 解析后经常混入：</p>
+<ul>
+<li>公司名称</li>
+<li>页码</li>
+<li>保密声明</li>
+<li>文档版本号</li>
+<li>页眉页脚</li>
+</ul>
+<p>这些内容如果进入 chunk，会污染 embedding 和 BM25。</p>
+<p>例如每个 chunk 都包含：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">XX 公司内部资料 严禁外传
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这会造成大量重复噪声。</p>
+<p>这类内容应该在解析或清洗阶段去掉，或者放入 metadata，而不是正文。</p>
+<h2 id="117-chunk-没有权限-metadata">11.7 chunk 没有权限 metadata
+</h2><p>如果权限信息没有进入 metadata，后面很难做安全过滤。</p>
+<p>错误做法：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">所有 chunk 只存 content 和 embedding
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>正确做法：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;content&#34;</span><span class="p">:</span> <span class="s2">&#34;...&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;metadata&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;permission_group&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;finance&#34;</span><span class="p">,</span> <span class="s2">&#34;manager&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;department&#34;</span><span class="p">:</span> <span class="s2">&#34;finance&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;doc_status&#34;</span><span class="p">:</span> <span class="s2">&#34;active&#34;</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>权限过滤应该发生在召回阶段或召回前，而不是让 LLM 自己判断。</p>
+<h2 id="118-切分后不可追溯">11.8 切分后不可追溯
+</h2><p>如果 chunk 不能追溯回原文位置，后续会很痛苦。</p>
+<p>至少要保留：</p>
+<ul>
+<li>doc_id</li>
+<li>file_name 或 source_url</li>
+<li>page</li>
+<li>section_path</li>
+<li>source_block_ids</li>
+<li>chunk_index</li>
+</ul>
+<p>否则线上用户问“这个答案依据在哪里”，系统无法回答。</p>
+<h1 id="十二调优建议">十二、调优建议
+</h1><h2 id="121-先看失败样本">12.1 先看失败样本
+</h2><p>不要凭感觉调 chunk_size。</p>
+<p>更好的方式是收集失败问题，然后逐条看：</p>
+<ol>
+<li>正确答案是否存在于原始文档</li>
+<li>文档解析后是否还保留</li>
+<li>切分后是否形成完整 chunk</li>
+<li>正确 chunk 是否被召回</li>
+<li>是否被 rerank 排到前面</li>
+<li>是否进入最终上下文</li>
+<li>模型是否基于它回答</li>
+</ol>
+<p>如果第 3 步已经失败，就是切分问题。</p>
+<h2 id="122-调-chunk_size-要配合-top-k">12.2 调 chunk_size 要配合 top-k
+</h2><p>chunk_size 变化会影响 top-k。</p>
+<p>如果 chunk 变小，可能需要更大的 top-k 才能覆盖完整证据。</p>
+<p>如果 chunk 变大，top-k 可以小一点，但上下文噪声会变多。</p>
+<p>所以不要只调一个参数。</p>
+<p>应该联动观察：</p>
+<ul>
+<li>chunk_size</li>
+<li>overlap</li>
+<li>recall top-k</li>
+<li>rerank top-k</li>
+<li>final context chunk 数量</li>
+<li>prompt token 预算</li>
+</ul>
+<h2 id="123-高价值文档可以用更精细策略">12.3 高价值文档可以用更精细策略
+</h2><p>不是所有文档都要用同样切分成本。</p>
+<p>可以分层：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">普通文章：结构切分 + 长度兜底
+</span></span><span class="line"><span class="cl">技术文档：标题层级 + 代码/表格特殊处理
+</span></span><span class="line"><span class="cl">制度合同：条款级切分 + parent-child
+</span></span><span class="line"><span class="cl">高价值知识库：语义切分 + 人工抽检
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样比对所有文档使用同一套粗糙规则更合理。</p>
+<h2 id="124-保留原始文档和中间结果">12.4 保留原始文档和中间结果
+</h2><p>生产系统里不要只保存最终 chunk。</p>
+<p>至少保存：</p>
+<ul>
+<li>原始文件</li>
+<li>解析后的 blocks</li>
+<li>清洗后的 blocks</li>
+<li>chunk 结果</li>
+<li>embedding 和索引版本</li>
+</ul>
+<p>这样当效果不好时，才能定位是哪一层出了问题。</p>
+<h2 id="125-切分策略变化后要重建评估">12.5 切分策略变化后要重建评估
+</h2><p>切分策略变化会影响整个 RAG 链路。</p>
+<p>例如：</p>
+<ul>
+<li>chunk_id 可能变化</li>
+<li>embedding 需要重算</li>
+<li>BM25 索引需要重建</li>
+<li>评估集里的 gold chunk 可能需要更新</li>
+<li>缓存可能失效</li>
+</ul>
+<p>所以切分策略不是一个小改动。</p>
+<p>每次调整后都应该跑一轮召回评估和端到端问答评估。</p>
+<h1 id="十三一个推荐的生产级起点">十三、一个推荐的生产级起点
+</h1><p>如果从零开始做一个通用 RAG 知识库，可以先用下面方案。</p>
+<p>入库阶段：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1. 文档解析成 block
+</span></span><span class="line"><span class="cl">2. 清洗页眉页脚、目录、重复文本
+</span></span><span class="line"><span class="cl">3. 恢复标题层级和 section_path
+</span></span><span class="line"><span class="cl">4. 按文档类型选择策略
+</span></span><span class="line"><span class="cl">5. 普通文档按标题层级切分
+</span></span><span class="line"><span class="cl">6. 过长小节按段落和句子二次切分
+</span></span><span class="line"><span class="cl">7. 表格按表头 + 行记录切分
+</span></span><span class="line"><span class="cl">8. FAQ 保持一问一答
+</span></span><span class="line"><span class="cl">9. 代码按符号结构切分
+</span></span><span class="line"><span class="cl">10. 制度合同按条款切分
+</span></span><span class="line"><span class="cl">11. 给 chunk 增加 content_for_embedding 和 metadata
+</span></span><span class="line"><span class="cl">12. 做自动质量检查
+</span></span><span class="line"><span class="cl">13. 抽样人工检查
+</span></span><span class="line"><span class="cl">14. 写入向量索引和全文索引
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>参数起点：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">普通中文 chunk：300 到 800 中文字
+</span></span><span class="line"><span class="cl">overlap：10% 到 20%
+</span></span><span class="line"><span class="cl">召回 top-k：30 到 100
+</span></span><span class="line"><span class="cl">rerank 后 top-k：5 到 10
+</span></span><span class="line"><span class="cl">最终上下文：3 到 8 段，按 token 预算调整
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>评估方式：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">构造 50 到 200 个典型问题
+</span></span><span class="line"><span class="cl">标注正确证据
+</span></span><span class="line"><span class="cl">观察 Recall@k、MRR、答案覆盖率
+</span></span><span class="line"><span class="cl">对失败样本回看 chunk 是否合理
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这个方案不一定最优，但比“固定 500 token + overlap 100”更接近生产可用。</p>
+<h1 id="十四常见面试题">十四、常见面试题
+</h1><h2 id="141-rag-里为什么要做文本切分">14.1 RAG 里为什么要做文本切分？
+</h2><p>文本切分的核心目的不是简单把长文档切短，而是把文档变成适合检索、排序、上下文组装和答案引用的知识单元。</p>
+<p>如果不切分，直接对整篇文档做 embedding，会有几个问题：</p>
+<ul>
+<li>文档可能超过 embedding 模型输入长度</li>
+<li>向量语义会被多个主题稀释</li>
+<li>检索命中后上下文噪声太多</li>
+<li>LLM prompt token 成本高</li>
+<li>答案引用很难定位到具体依据</li>
+</ul>
+<p>所以 chunk 是 RAG 里的最小检索单元，也是后续召回、rerank、context packing 的基础。</p>
+<h2 id="142-chunk-是越大越好还是越小越好">14.2 chunk 是越大越好还是越小越好？
+</h2><p>都不是。</p>
+<p>chunk 太大，容易混入多个主题，embedding 不聚焦，召回后噪声多，放进 prompt 的 token 成本也高。</p>
+<p>chunk 太小，又容易把标题和正文、条件和结论、表头和数据、问题和答案拆开，导致证据不完整。</p>
+<p>更好的标准是：</p>
+<blockquote>
+<p>一个 chunk 应该刚好能表达一个相对完整、可被检索、可支撑回答的知识点。</p></blockquote>
+<p>工程上通常会按文档类型调：</p>
+<ul>
+<li>普通文档按标题和段落切</li>
+<li>FAQ 保持一问一答</li>
+<li>表格保留表头和行语义</li>
+<li>代码按函数、类、文件结构切</li>
+<li>制度合同按条款或条款组切</li>
+</ul>
+<h2 id="143-固定长度切分有什么问题">14.3 固定长度切分有什么问题？
+</h2><p>固定长度切分实现简单，但它不理解文档结构。</p>
+<p>常见问题包括：</p>
+<ul>
+<li>切断标题和正文</li>
+<li>切断列表和条款</li>
+<li>切断表格和代码</li>
+<li>把多个主题混在一起</li>
+<li>把一个完整规则拆成两半</li>
+</ul>
+<p>所以固定长度更适合 demo 或兜底。</p>
+<p>生产系统里更推荐：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">先按结构切分
+</span></span><span class="line"><span class="cl">再对过长片段按段落、句子或语义二次切分
+</span></span><span class="line"><span class="cl">最后用长度作为兜底约束
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>也就是先保证语义，再控制长度。</p>
+<h2 id="144-overlap-的作用是什么是不是越大越好">14.4 overlap 的作用是什么？是不是越大越好？
+</h2><p>overlap 的作用是缓解边界问题。</p>
+<p>例如某个关键信息刚好被切在两个 chunk 的交界处，overlap 可以让相邻 chunk 都包含一部分上下文。</p>
+<p>但 overlap 不是越大越好。</p>
+<p>过大的 overlap 会导致：</p>
+<ul>
+<li>索引膨胀</li>
+<li>embedding 成本增加</li>
+<li>top-k 里出现大量重复 chunk</li>
+<li>rerank 候选区分度下降</li>
+<li>上下文里重复内容变多</li>
+</ul>
+<p>一般可以从 10% 到 20% 起步，再根据评估集调。</p>
+<h2 id="145-为什么标题路径要进入-chunk">14.5 为什么标题路径要进入 chunk？
+</h2><p>很多正文离开标题后语义不完整。</p>
+<p>例如正文只有：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">每月包含 100 万次调用。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果不带标题，系统不知道这是哪个产品、哪个套餐、哪个接口。</p>
+<p>更好的 embedding 文本是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">计费规则 &gt; Pro 套餐 &gt; API 调用限制
+</span></span><span class="line"><span class="cl">每月包含 100 万次调用。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>标题路径可以增强检索信号，让 query 更容易命中正确 chunk。</p>
+<p>工程上可以区分：</p>
+<ul>
+<li><code>content</code>：用于展示和引用</li>
+<li><code>content_for_embedding</code>：用于向量化，可以拼接标题路径</li>
+<li><code>metadata.section_path</code>：用于过滤、展示和追溯</li>
+</ul>
+<h2 id="146-表格为什么不能简单转成纯文本再切">14.6 表格为什么不能简单转成纯文本再切？
+</h2><p>因为表格的语义依赖表头、行列关系、单位和备注。</p>
+<p>如果一行只保留成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 299 100 万
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>模型不知道 <code>299</code> 是月费，<code>100 万</code> 是 API 调用次数。</p>
+<p>更好的表示是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">套餐价格表：
+</span></span><span class="line"><span class="cl">套餐=Pro，月费=299，API 调用次数=100 万。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>表格 chunk 至少应该保留：</p>
+<ul>
+<li>表名</li>
+<li>表头</li>
+<li>行数据</li>
+<li>单位说明</li>
+<li>备注</li>
+<li>原始页码或单元格范围</li>
+</ul>
+<h2 id="147-如果表格某一行特别长应该怎么切">14.7 如果表格某一行特别长，应该怎么切？
+</h2><p>可以先按行切分，再对超长行做二次切分。</p>
+<p>但这个检查必须发生在 embedding 之前。</p>
+<p>因为超长行首先会影响入库阶段：</p>
+<ul>
+<li>embedding 输入超过模型限制</li>
+<li>自部署 embedding 模型可能 OOM</li>
+<li>batch embedding 被超长样本 padding 拖慢</li>
+<li>服务端 embedding 自动截断导致字段丢失</li>
+</ul>
+<p>推荐流程是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">表格按行切分
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">生成 content_for_embedding
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">检查 token 长度
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">超长行按字段、单元格、段落或句子二次切分
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">只对合规子 chunk 做 embedding
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>原始超长行可以作为 parent row chunk 保存结构和摘要，不建议直接对整行长文本做 embedding。</p>
+<h2 id="148-表格超长行二次切分后怎么保证子-chunk-属于同一行">14.8 表格超长行二次切分后，怎么保证子 chunk 属于同一行？
+</h2><p>要显式设计行级身份字段，而不是靠解析 <code>chunk_id</code> 字符串。</p>
+<p>推荐三层 ID：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">table_id
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">row_id
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">chunk_id
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>同一行拆出来的所有子 chunk 应该共享：</p>
+<ul>
+<li><code>table_id</code></li>
+<li><code>row_id</code></li>
+<li><code>parent_chunk_id</code></li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003_field_permission_part_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;table_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;row_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;parent_chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_policy_2026_table_001_row_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;field_name&#34;</span><span class="p">:</span> <span class="s2">&#34;权限说明&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;part_index&#34;</span><span class="p">:</span> <span class="mi">1</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>只要 <code>row_id</code> 相同，就说明它们来自同一行。</p>
+<p><code>chunk_id</code> 可以包含行信息方便调试，但系统关联应该依赖结构化字段。</p>
+<h2 id="149-row_id-应该怎么生成">14.9 row_id 应该怎么生成？
+</h2><p><code>row_id</code> 要尽量稳定。</p>
+<p>不建议只用行号：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">row_id = row_003
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>因为表格新增或删除一行后，行号会变化。</p>
+<p>更推荐：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">row_id = hash(doc_id + table_id + row_key)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>其中 <code>row_key</code> 是能唯一标识这一行的业务主键或组合主键。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;套餐&#34;</span><span class="p">:</span> <span class="s2">&#34;Enterprise&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;适用对象&#34;</span><span class="p">:</span> <span class="s2">&#34;大型客户&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果没有天然主键，可以使用多列组合。</p>
+<p>实在没有稳定列时，可以退化为：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">row_id = hash(doc_id + table_id + normalized_row_text)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>但这种方式对内容变更敏感。</p>
+<h2 id="1410-parent-child-chunk-解决什么问题">14.10 parent-child chunk 解决什么问题？
+</h2><p>parent-child chunk 解决的是“检索粒度”和“上下文完整性”的矛盾。</p>
+<p>小 chunk 检索更准，但上下文可能不完整。</p>
+<p>大 chunk 上下文完整，但检索噪声更多。</p>
+<p>parent-child 的做法是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">child chunk：较小，用于检索
+</span></span><span class="line"><span class="cl">parent chunk：较大，用于补充上下文
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>查询时先召回 child，再通过 <code>parent_chunk_id</code> 找到 parent。</p>
+<p>例如表格超长行里：</p>
+<ul>
+<li>child：某个字段的二次切分片段</li>
+<li>parent：整行摘要、row_key、child_chunk_ids</li>
+</ul>
+<p>这样既能控制 embedding 输入长度，又能在回答时补足行级上下文。</p>
+<h2 id="1411-chunk-metadata-一般要保存哪些字段">14.11 chunk metadata 一般要保存哪些字段？
+</h2><p>常见 metadata 包括：</p>
+<ul>
+<li><code>doc_id</code></li>
+<li><code>chunk_id</code></li>
+<li><code>source_path</code> 或 <code>source_url</code></li>
+<li><code>title</code></li>
+<li><code>section_path</code></li>
+<li><code>page_start</code> 和 <code>page_end</code></li>
+<li><code>source_blocks</code></li>
+<li><code>chunk_index</code></li>
+<li><code>token_count</code></li>
+<li><code>parser_version</code></li>
+<li><code>chunker_version</code></li>
+<li><code>permission_group</code></li>
+<li><code>doc_status</code></li>
+<li><code>created_at</code> 或 <code>updated_at</code></li>
+</ul>
+<p>表格类 chunk 还应该保存：</p>
+<ul>
+<li><code>table_id</code></li>
+<li><code>table_name</code></li>
+<li><code>row_id</code></li>
+<li><code>row_key</code></li>
+<li><code>field_name</code></li>
+<li><code>source_cells</code></li>
+<li><code>parent_chunk_id</code></li>
+<li><code>part_index</code></li>
+<li><code>part_count</code></li>
+</ul>
+<p>metadata 的作用不只是展示，还包括权限过滤、版本管理、召回过滤、上下文补全和问题排查。</p>
+<h2 id="1412-如何评估文本切分质量">14.12 如何评估文本切分质量？
+</h2><p>不要只看平均 chunk 长度和 chunk 数量。</p>
+<p>更重要的是看它是否能支撑检索和回答。</p>
+<p>常见评估方式包括：</p>
+<ul>
+<li>人工抽样检查 chunk 是否语义完整</li>
+<li>检查标题、表头、条款、代码是否被切断</li>
+<li>构造问题集并标注正确证据</li>
+<li>观察 Recall@k、MRR、NDCG</li>
+<li>检查正确证据是否进入最终上下文</li>
+<li>检查答案是否引用正确来源</li>
+</ul>
+<p>排查失败样本时，可以按下面顺序看：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">原始文档是否有答案
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">解析后答案是否还在
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">切分后答案是否形成完整 chunk
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">正确 chunk 是否被召回
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">正确 chunk 是否进入最终上下文
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">模型是否基于它回答
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果切分后答案已经不完整，后面的 prompt 和模型很难补救。</p>
+<h1 id="小结">小结
+</h1><p>文本切分是 RAG 里非常关键、但经常被低估的一环。</p>
+<p>它决定了知识进入系统时的基本颗粒度。</p>
+<p>一个好的 chunk 应该：</p>
+<ul>
+<li>主题足够聚焦</li>
+<li>语义足够完整</li>
+<li>带有必要标题和结构上下文</li>
+<li>保留来源和权限 metadata</li>
+<li>适合 embedding、BM25、rerank 和 context packing</li>
+<li>能支撑最终答案引用</li>
+</ul>
+<p>工程上不要只按固定长度切。</p>
+<p>更稳的思路是：</p>
+<blockquote>
+<p>先利用文档结构，再处理长度约束；先保证语义完整，再考虑索引和 token 成本。</p></blockquote>
+<p>如果 RAG 效果不好，不要一上来就改 prompt。</p>
+<p>应该先回到链路前面看：</p>
+<ul>
+<li>文档是否解析正确</li>
+<li>chunk 是否切完整</li>
+<li>标题、表格、条款、代码是否保留</li>
+<li>正确证据是否能作为一个合理 chunk 被召回</li>
+</ul>
+<p>很多所谓“模型答错”的问题，本质上都是：</p>
+<blockquote>
+<p>模型从一开始就没有拿到一个切得合理、信息完整、可用作依据的 chunk。</p></blockquote>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/ai/">AI</a>
+        
+            <a href="/tags/rag/">Rag</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/rag-%E6%96%87%E6%A1%A3%E8%A7%A3%E6%9E%90%E8%AF%A6%E8%A7%A3%E4%BB%8E%E5%8E%9F%E5%A7%8B%E6%96%87%E4%BB%B6%E5%88%B0%E5%8F%AF%E6%A3%80%E7%B4%A2%E7%9F%A5%E8%AF%86%E7%9A%84%E5%B7%A5%E7%A8%8B%E9%93%BE%E8%B7%AF/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">RAG 文档解析详解：从原始文件到可检索知识的工程链路</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/rag-%E5%8F%AC%E5%9B%9E%E8%AF%A6%E8%A7%A3%E6%A3%80%E7%B4%A2%E7%AD%96%E7%95%A5%E6%A0%B8%E5%BF%83%E7%AE%97%E6%B3%95%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E9%80%82%E7%94%A8%E5%9C%BA%E6%99%AF/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">RAG 召回详解：检索策略、核心算法、工程实现与适用场景</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-rag%E5%AE%8C%E6%95%B4%E6%B5%81%E7%A8%8B%E5%B8%B8%E8%A7%81%E5%AE%9E%E7%8E%B0%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%B8%B8%E8%A7%81%E5%9D%91%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">什么是 RAG：完整流程、常见实现、底层原理、常见坑与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/appbuilder-%E7%BB%84%E4%BB%B6mcp-%E4%B8%8E-skills-%E7%9A%84%E5%AF%B9%E6%AF%94%E5%AD%A6%E4%B9%A0/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AppBuilder 组件、MCP 与 Skills 的对比学习</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-mcp%E6%A6%82%E5%BF%B5%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F%E5%BC%80%E5%8F%91%E6%96%B9%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">什么是 MCP：概念、使用方式、开发方法、底层原理与常见面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>
