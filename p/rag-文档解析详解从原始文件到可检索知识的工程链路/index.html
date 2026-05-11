@@ -234,7 +234,8 @@
   <ol>
     <li><a href="#21-不推荐只产出纯文本">2.1 不推荐只产出纯文本</a></li>
     <li><a href="#22-推荐的中间结构">2.2 推荐的中间结构</a></li>
-    <li><a href="#23-block-类型怎么设计">2.3 block 类型怎么设计</a></li>
+    <li><a href="#23-contentembedding-和-metadata-的分工">2.3 content、embedding 和 metadata 的分工</a></li>
+    <li><a href="#24-block-类型怎么设计">2.4 block 类型怎么设计</a></li>
   </ol>
 
   <ol>
@@ -627,7 +628,73 @@
 <li>metadata 可以进入权限过滤</li>
 <li>不同类型内容可以采用不同切分策略</li>
 </ul>
-<h2 id="23-block-类型怎么设计">2.3 block 类型怎么设计
+<h2 id="23-contentembedding-和-metadata-的分工">2.3 content、embedding 和 metadata 的分工
+</h2><p>解析结果进入索引时，通常会进一步变成面向检索的 chunk 结构。</p>
+<p>一个典型结构是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;id&#34;</span><span class="p">:</span> <span class="s2">&#34;refund_policy_2026_chunk_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;content&#34;</span><span class="p">:</span> <span class="s2">&#34;虚拟商品一经发货不支持退款。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;embedding&#34;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.012</span><span class="p">,</span> <span class="mf">-0.034</span><span class="p">,</span> <span class="mf">0.087</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;metadata&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;doc_id&#34;</span><span class="p">:</span> <span class="s2">&#34;refund_policy_2026&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;file_name&#34;</span><span class="p">:</span> <span class="s2">&#34;refund_policy_2026.pdf&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;page&#34;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;section_path&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;售后规则&#34;</span><span class="p">,</span> <span class="s2">&#34;退款规则&#34;</span><span class="p">,</span> <span class="s2">&#34;虚拟商品&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;chunk_index&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;version&#34;</span><span class="p">:</span> <span class="s2">&#34;2026-04&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;permission_group&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;support&#34;</span><span class="p">,</span> <span class="s2">&#34;finance&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里三部分的职责不同：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>字段</th>
+          <th>作用</th>
+          <th>是否是文档实际内容</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>content</code></td>
+          <td>保存实际文本，后续用于 embedding、召回和送入大模型</td>
+          <td>是</td>
+      </tr>
+      <tr>
+          <td><code>embedding</code></td>
+          <td>保存 <code>content</code> 对应的向量表示，用于向量相似度检索</td>
+          <td>不是</td>
+      </tr>
+      <tr>
+          <td><code>metadata</code></td>
+          <td>保存来源、页码、标题路径、权限、版本等描述信息</td>
+          <td>不是</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>所以 metadata 里通常不会放文档正文。</p>
+<p>它描述的是“这段内容来自哪里、属于谁、能不能被谁看到、应该如何过滤和追溯”，而不是“这段内容具体写了什么”。</p>
+<h2 id="24-block-类型怎么设计">2.4 block 类型怎么设计
 </h2><p>常见 block 类型包括：</p>
 <ul>
 <li><code>heading</code>：标题</li>
@@ -1704,6 +1771,13 @@
 <p>这些更适合做 metadata。</p>
 <p>正文用于语义理解。</p>
 <p>metadata 用于过滤、排序、权限和追溯。</p>
+<p>换句话说，正文应该放在 <code>content</code> 或 <code>text</code> 这类字段中；metadata 只保存描述正文的辅助信息。</p>
+<p>如果把正文也塞进 metadata，后续会出现几个问题：</p>
+<ul>
+<li>字段职责混乱，系统很难区分哪些字段用于语义检索，哪些字段用于过滤</li>
+<li>权限、来源、页码等结构化过滤条件容易和正文混在一起</li>
+<li>向量数据库或检索框架通常也默认把 <code>content</code> 和 <code>metadata</code> 分开处理</li>
+</ul>
 <h1 id="十解析结果如何进入-chunk">十、解析结果如何进入 chunk
 </h1><h2 id="101-不同-block-不同切法">10.1 不同 block 不同切法
 </h2><p>文档解析之后，不应该立刻把全文按固定长度切开。</p>
