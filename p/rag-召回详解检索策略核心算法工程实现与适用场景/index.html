@@ -364,6 +364,27 @@
     <li><a href="#144-权限过滤要前置">14.4 权限过滤要前置</a></li>
     <li><a href="#145-线上失败样本要回流">14.5 线上失败样本要回流</a></li>
   </ol>
+
+  <ol>
+    <li><a href="#151-rag-里的召回是什么它和生成有什么关系">15.1 RAG 里的召回是什么？它和生成有什么关系？</a></li>
+    <li><a href="#152-召回和排序有什么区别">15.2 召回和排序有什么区别？</a></li>
+    <li><a href="#153-为什么-rag-不能只用向量召回">15.3 为什么 RAG 不能只用向量召回？</a></li>
+    <li><a href="#154-bm25-和向量召回的区别是什么">15.4 BM25 和向量召回的区别是什么？</a></li>
+    <li><a href="#155-bm25-和倒排索引是什么关系">15.5 BM25 和倒排索引是什么关系？</a></li>
+    <li><a href="#156-什么是混合召回">15.6 什么是混合召回？</a></li>
+    <li><a href="#157-混合召回和多路召回有什么区别">15.7 混合召回和多路召回有什么区别？</a></li>
+    <li><a href="#158-rrf-是什么为什么混合召回常用它">15.8 RRF 是什么？为什么混合召回常用它？</a></li>
+    <li><a href="#159-metadata-filter-为什么重要">15.9 metadata filter 为什么重要？</a></li>
+    <li><a href="#1510-metadata-filter-放在召回前还是召回后">15.10 metadata filter 放在召回前还是召回后？</a></li>
+    <li><a href="#1511-parent-child-retrieval-解决什么问题">15.11 Parent-Child Retrieval 解决什么问题？</a></li>
+    <li><a href="#1512-summary-index-适合什么场景">15.12 Summary Index 适合什么场景？</a></li>
+    <li><a href="#1513-graph-retrieval-适合什么场景">15.13 Graph Retrieval 适合什么场景？</a></li>
+    <li><a href="#1514-hyde-召回是什么">15.14 HyDE 召回是什么？</a></li>
+    <li><a href="#1515-rerank-是召回吗">15.15 Rerank 是召回吗？</a></li>
+    <li><a href="#1516-怎么评估召回效果">15.16 怎么评估召回效果？</a></li>
+    <li><a href="#1517-召回失败应该怎么排查">15.17 召回失败应该怎么排查？</a></li>
+    <li><a href="#1518-生产级召回和-demo-最大区别是什么">15.18 生产级召回和 demo 最大区别是什么？</a></li>
+  </ol>
 </nav>
         </div>
     </section>
@@ -3210,6 +3231,552 @@
 <li>用户重新换词搜索</li>
 </ul>
 <p>这些样本应该进入评估集。</p>
+<h1 id="十五高频面试题">十五、高频面试题
+</h1><h2 id="151-rag-里的召回是什么它和生成有什么关系">15.1 RAG 里的召回是什么？它和生成有什么关系？
+</h2><p>召回是从知识库里找候选证据。</p>
+<p>生成是大模型基于这些证据组织答案。</p>
+<p>在 RAG 链路里，召回通常发生在生成之前：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户问题
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">召回候选 chunk
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">rerank 排序
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">上下文组装
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">LLM 生成答案
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>召回质量决定答案上限。</p>
+<p>如果正确证据没有被召回，后面的 rerank、prompt、LLM 通常很难补救。</p>
+<h2 id="152-召回和排序有什么区别">15.2 召回和排序有什么区别？
+</h2><p>召回关注的是：</p>
+<blockquote>
+<p>正确证据有没有进入候选集。</p></blockquote>
+<p>排序关注的是：</p>
+<blockquote>
+<p>正确证据能不能排在更靠前的位置。</p></blockquote>
+<p>所以召回更看重 <code>Recall</code>，排序更看重 <code>Precision</code> 和前排质量。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回 top-50 里有正确 chunk，但排在第 40 位
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这说明召回没有完全失败，但排序或 rerank 需要优化。</p>
+<p>如果：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回 top-100 里都没有正确 chunk
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>那就是更严重的召回问题。</p>
+<h2 id="153-为什么-rag-不能只用向量召回">15.3 为什么 RAG 不能只用向量召回？
+</h2><p>向量召回擅长语义相似。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">退款流程是什么？
+</span></span><span class="line"><span class="cl">订单能不能退？
+</span></span><span class="line"><span class="cl">如何申请售后退款？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这些表达不同，但语义接近，适合向量检索。</p>
+<p>但向量召回不擅长所有问题。</p>
+<p>例如：</p>
+<ul>
+<li>错误码</li>
+<li>API 名称</li>
+<li>函数名</li>
+<li>版本号</li>
+<li>法条编号</li>
+<li>合同编号</li>
+<li>配置项</li>
+</ul>
+<p>这些内容差一个字符，业务含义可能完全不同。</p>
+<p>所以生产 RAG 通常会组合：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">向量召回 + BM25 关键词召回 + metadata filter + rerank
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="154-bm25-和向量召回的区别是什么">15.4 BM25 和向量召回的区别是什么？
+</h2><p>BM25 是关键词召回。</p>
+<p>它主要看查询词是否出现在文档里，以及这些词有多重要。</p>
+<p>适合：</p>
+<ul>
+<li>精确词</li>
+<li>编号</li>
+<li>错误码</li>
+<li>API 名称</li>
+<li>专有名词</li>
+</ul>
+<p>向量召回是语义召回。</p>
+<p>它主要看 query 和 chunk 的 embedding 是否接近。</p>
+<p>适合：</p>
+<ul>
+<li>同义表达</li>
+<li>自然语言问题</li>
+<li>概念相近内容</li>
+<li>用户说法和文档说法不同的场景</li>
+</ul>
+<p>一句话：</p>
+<blockquote>
+<p>BM25 擅长“字面匹配”，向量召回擅长“语义匹配”。</p></blockquote>
+<h2 id="155-bm25-和倒排索引是什么关系">15.5 BM25 和倒排索引是什么关系？
+</h2><p>倒排索引是数据结构。</p>
+<p>BM25 是基于倒排索引做相关性打分的排序算法。</p>
+<p>倒排索引负责找到候选：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">词项 -&gt; 出现在哪些 chunk 里
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>BM25 负责给候选打分：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">这个 chunk 和 query 有多相关？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>完整流程可以理解为：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">query 分词
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">查倒排索引找到候选 chunk
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">用 BM25 计算相关性分数
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">返回 top-k
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>所以：</p>
+<blockquote>
+<p>倒排索引解决“去哪找”，BM25 解决“谁排前面”。</p></blockquote>
+<h2 id="156-什么是混合召回">15.6 什么是混合召回？
+</h2><p>混合召回通常指同时使用多种检索方式。</p>
+<p>最常见的是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">BM25 召回 + 向量召回
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">query
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">BM25 top-k
+</span></span><span class="line"><span class="cl">向量 top-k
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">去重
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">融合排序
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">rerank
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>它的价值在于互补。</p>
+<p>BM25 可以抓住精确词。</p>
+<p>向量检索可以抓住语义相似。</p>
+<p>两者结合，比单一路召回更稳。</p>
+<h2 id="157-混合召回和多路召回有什么区别">15.7 混合召回和多路召回有什么区别？
+</h2><p>混合召回通常强调不同检索算法的组合。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">BM25 + 向量检索
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>多路召回范围更广。</p>
+<p>它可以包括：</p>
+<ul>
+<li>原始 query 召回</li>
+<li>query rewrite 召回</li>
+<li>query expansion 召回</li>
+<li>HyDE 召回</li>
+<li>字段级召回</li>
+<li>parent-child retrieval</li>
+<li>summary index 召回</li>
+<li>graph retrieval</li>
+</ul>
+<p>所以可以理解为：</p>
+<blockquote>
+<p>混合召回是多路召回的一种常见形式，但多路召回不只包含 BM25 和向量检索。</p></blockquote>
+<h2 id="158-rrf-是什么为什么混合召回常用它">15.8 RRF 是什么？为什么混合召回常用它？
+</h2><p>RRF 是 Reciprocal Rank Fusion，倒数排序融合。</p>
+<p>它不直接比较不同召回通道的原始分数，而是根据排名融合。</p>
+<p>常见公式是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">score(d) = sum( 1 / (k + rank_i(d)) )
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>其中：</p>
+<ul>
+<li><code>d</code> 是候选文档或 chunk</li>
+<li><code>rank_i(d)</code> 是它在第 <code>i</code> 个召回通道中的排名</li>
+<li><code>k</code> 是平滑参数，常见取值如 60</li>
+</ul>
+<p>RRF 适合混合召回，因为不同通道的分数不可直接比较。</p>
+<p>例如 BM25 分数和向量 cosine 分数不在同一个尺度上。</p>
+<p>RRF 用排名融合，可以减少分数归一化带来的麻烦。</p>
+<h2 id="159-metadata-filter-为什么重要">15.9 metadata filter 为什么重要？
+</h2><p>metadata filter 用于限定检索范围。</p>
+<p>例如：</p>
+<ul>
+<li>只查当前租户</li>
+<li>只查当前用户有权限的文档</li>
+<li>只查某个产品线</li>
+<li>只查当前版本</li>
+<li>排除废弃文档</li>
+</ul>
+<p>它解决的不只是效果问题，还有安全问题。</p>
+<p>错误做法是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">先召回全库
+</span></span><span class="line"><span class="cl">再让模型不要使用无权限内容
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>正确做法是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回阶段就只搜索用户有权限的数据
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>权限、租户、文档状态这类强约束，应该尽量前置过滤。</p>
+<h2 id="1510-metadata-filter-放在召回前还是召回后">15.10 metadata filter 放在召回前还是召回后？
+</h2><p>优先放在召回前或召回时。</p>
+<p>也就是 pre-filter。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">tenant_id = tenant_a
+</span></span><span class="line"><span class="cl">AND doc_status = active
+</span></span><span class="line"><span class="cl">AND permission_group IN user_groups
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>然后只在符合条件的 chunk 中召回。</p>
+<p>如果先全库召回再过滤，会有几个问题：</p>
+<ul>
+<li>浪费 top-k 名额</li>
+<li>正确结果可能被挤掉</li>
+<li>无权限内容可能进入 rerank</li>
+<li>日志和缓存可能记录敏感内容</li>
+</ul>
+<p>但如果 filter 条件不确定，例如产品线识别不准，可以考虑弱过滤或 boost，而不是强行过滤。</p>
+<h2 id="1511-parent-child-retrieval-解决什么问题">15.11 Parent-Child Retrieval 解决什么问题？
+</h2><p>它解决的是：</p>
+<blockquote>
+<p>小 chunk 适合检索，大 chunk 适合阅读。</p></blockquote>
+<p>如果 chunk 太小，检索更精准，但上下文可能不完整。</p>
+<p>如果 chunk 太大，上下文完整，但检索容易被噪声干扰。</p>
+<p>Parent-child retrieval 的做法是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用 child chunk 做检索
+</span></span><span class="line"><span class="cl">命中后取 parent chunk 做上下文
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">child chunk：Pro 套餐每月包含 100 万次 API 调用。
+</span></span><span class="line"><span class="cl">parent chunk：整个 Pro 套餐规则小节。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样可以同时兼顾检索精度和上下文完整性。</p>
+<h2 id="1512-summary-index-适合什么场景">15.12 Summary Index 适合什么场景？
+</h2><p>Summary Index 适合长文档粗定位。</p>
+<p>例如：</p>
+<ul>
+<li>长报告</li>
+<li>白皮书</li>
+<li>合同</li>
+<li>研究论文</li>
+<li>大型产品手册</li>
+</ul>
+<p>它的基本思路是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">先对文档或章节生成摘要
+</span></span><span class="line"><span class="cl">对摘要建索引
+</span></span><span class="line"><span class="cl">查询时先命中摘要
+</span></span><span class="line"><span class="cl">再进入对应章节找原始 chunk
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>它不是用摘要替代原文。</p>
+<p>更稳妥的做法是：</p>
+<blockquote>
+<p>summary 用来定位范围，原始 chunk 用来提供证据。</p></blockquote>
+<h2 id="1513-graph-retrieval-适合什么场景">15.13 Graph Retrieval 适合什么场景？
+</h2><p>Graph Retrieval 适合问题依赖实体关系或多跳关系的场景。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">客户 A 当前合同对应的 SLA 是什么？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这个问题可能需要沿着关系查：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">客户 A
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">合同 B
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">套餐 C
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">SLA 条款 D
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>向量检索可能只找到语义相似文本，但不一定能正确沿关系跳转。</p>
+<p>图召回适合：</p>
+<ul>
+<li>组织架构</li>
+<li>业务对象关系</li>
+<li>法规条款引用</li>
+<li>代码调用链</li>
+<li>知识图谱问答</li>
+</ul>
+<p>但图召回的前提是实体和关系质量足够好。</p>
+<h2 id="1514-hyde-召回是什么">15.14 HyDE 召回是什么？
+</h2><p>HyDE 是 Hypothetical Document Embeddings。</p>
+<p>它的做法是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">先让 LLM 根据 query 生成一个假想答案或假想文档
+</span></span><span class="line"><span class="cl">再对这个假想文档做 embedding
+</span></span><span class="line"><span class="cl">用这个 embedding 去检索真实文档
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>它适合 query 太短、太口语化、缺少检索词的场景。</p>
+<p>例如用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">这个怎么收费？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>直接检索可能很难。</p>
+<p>HyDE 可以先生成一个更像文档的表达，再去检索。</p>
+<p>但它也有风险：</p>
+<ul>
+<li>LLM 生成内容可能带偏检索</li>
+<li>成本更高</li>
+<li>延迟更高</li>
+<li>不适合强事实约束场景直接依赖</li>
+</ul>
+<h2 id="1515-rerank-是召回吗">15.15 Rerank 是召回吗？
+</h2><p>严格说，rerank 不是召回。</p>
+<p>召回负责从大规模知识库里找一批候选。</p>
+<p>rerank 负责对候选重新排序。</p>
+<p>流程通常是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回 top-50
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">rerank 重排
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">取 top-5 进入上下文
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>rerank 不能凭空找回召回阶段漏掉的正确 chunk。</p>
+<p>所以如果正确证据没有进入候选集，rerank 通常救不回来。</p>
+<h2 id="1516-怎么评估召回效果">15.16 怎么评估召回效果？
+</h2><p>常见指标包括：</p>
+<ul>
+<li><code>Recall@k</code></li>
+<li><code>MRR</code></li>
+<li><code>NDCG</code></li>
+<li><code>Hit Rate</code></li>
+</ul>
+<p>其中最基础的是 <code>Recall@k</code>。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Recall@10 = 正确 chunk 出现在 top-10 的问题比例
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果 <code>Recall@10</code> 很低，说明正确证据经常没有进入候选。</p>
+<p>如果 <code>Recall@50</code> 很高，但最终答案仍然不好，可能是 rerank、上下文组装或生成阶段的问题。</p>
+<h2 id="1517-召回失败应该怎么排查">15.17 召回失败应该怎么排查？
+</h2><p>可以按链路从前往后排查：</p>
+<ol>
+<li>原文里有没有答案</li>
+<li>文档解析有没有丢内容</li>
+<li>chunk 是否切完整</li>
+<li>chunk 是否入库</li>
+<li>embedding 是否生成成功</li>
+<li>BM25 是否索引了正确字段</li>
+<li>query 是否需要改写</li>
+<li>metadata filter 是否误过滤</li>
+<li>top-k 是否太小</li>
+<li>融合策略是否把正确 chunk 压低</li>
+</ol>
+<p>排查时不要一上来就改 prompt。</p>
+<p>先看：</p>
+<blockquote>
+<p>召回 top-k 里有没有 golden chunk。</p></blockquote>
+<p>如果没有，优先修召回链路。</p>
+<h2 id="1518-生产级召回和-demo-最大区别是什么">15.18 生产级召回和 demo 最大区别是什么？
+</h2><p>demo 往往是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">chunk
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">embedding
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">向量库 top-k
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">LLM
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>生产级召回通常还需要：</p>
+<ul>
+<li>文档解析质量</li>
+<li>chunk 策略</li>
+<li>BM25</li>
+<li>向量检索</li>
+<li>混合召回</li>
+<li>多路召回</li>
+<li>metadata filter</li>
+<li>权限控制</li>
+<li>rerank</li>
+<li>评估集</li>
+<li>失败样本回流</li>
+<li>索引版本管理</li>
+</ul>
+<p>最大的区别是：</p>
+<blockquote>
+<p>demo 追求能跑通，生产系统追求稳定、可控、可评估、可解释、可治理。</p></blockquote>
 <h1 id="小结">小结
 </h1><p>RAG 召回不是“向量库 top-k”这么简单。</p>
 <p>一个成熟的召回系统，通常会组合：</p>

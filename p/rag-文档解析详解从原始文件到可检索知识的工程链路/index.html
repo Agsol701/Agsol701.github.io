@@ -330,6 +330,26 @@
     <li><a href="#144-权限信息没有进入-metadata">14.4 权限信息没有进入 metadata</a></li>
     <li><a href="#145-解析结果不可追溯">14.5 解析结果不可追溯</a></li>
   </ol>
+
+  <ol>
+    <li><a href="#151-rag-为什么不能直接从-embedding-开始">15.1 RAG 为什么不能直接从 embedding 开始？</a></li>
+    <li><a href="#152-文档解析的目标是什么">15.2 文档解析的目标是什么？</a></li>
+    <li><a href="#153-为什么不建议只产出纯文本">15.3 为什么不建议只产出纯文本？</a></li>
+    <li><a href="#154-什么是结构化-block">15.4 什么是结构化 block？</a></li>
+    <li><a href="#155-pdf-解析为什么最难">15.5 PDF 解析为什么最难？</a></li>
+    <li><a href="#156-文本型-pdf-和扫描型-pdf-有什么区别">15.6 文本型 PDF 和扫描型 PDF 有什么区别？</a></li>
+    <li><a href="#157-表格为什么不能简单平铺成文本">15.7 表格为什么不能简单平铺成文本？</a></li>
+    <li><a href="#158-ocr-结果怎么进入-rag">15.8 OCR 结果怎么进入 RAG？</a></li>
+    <li><a href="#159-section_path-有什么作用">15.9 section_path 有什么作用？</a></li>
+    <li><a href="#1510-metadata-和正文有什么区别">15.10 metadata 和正文有什么区别？</a></li>
+    <li><a href="#1511-source_blocks-是什么">15.11 source_blocks 是什么？</a></li>
+    <li><a href="#1512-文档解析质量怎么评估">15.12 文档解析质量怎么评估？</a></li>
+    <li><a href="#1513-解析失败应该怎么处理">15.13 解析失败应该怎么处理？</a></li>
+    <li><a href="#1514-parser_version-为什么重要">15.14 parser_version 为什么重要？</a></li>
+    <li><a href="#1515-原始文件为什么不能丢">15.15 原始文件为什么不能丢？</a></li>
+    <li><a href="#1516-文档解析和-chunk-切分是什么关系">15.16 文档解析和 chunk 切分是什么关系？</a></li>
+    <li><a href="#1517-生产级文档解析和-demo-最大区别是什么">15.17 生产级文档解析和 demo 最大区别是什么？</a></li>
+  </ol>
 </nav>
         </div>
     </section>
@@ -2196,6 +2216,503 @@
 <li>parser_version</li>
 </ul>
 <p>那么当用户质疑答案来源时，很难定位。</p>
+<h1 id="十五高频面试题">十五、高频面试题
+</h1><h2 id="151-rag-为什么不能直接从-embedding-开始">15.1 RAG 为什么不能直接从 embedding 开始？
+</h2><p>因为 embedding 只能处理已经被整理好的文本。</p>
+<p>真实知识源通常是：</p>
+<ul>
+<li>PDF</li>
+<li>Word</li>
+<li>HTML</li>
+<li>Excel</li>
+<li>PPT</li>
+<li>扫描件</li>
+<li>图片</li>
+<li>代码仓库</li>
+</ul>
+<p>这些文件里可能有标题、表格、页眉页脚、图片、脚注、双栏排版、目录、权限信息。</p>
+<p>如果不先解析，直接抽一大段纯文本去 embedding，很容易出现：</p>
+<ul>
+<li>阅读顺序错乱</li>
+<li>表格结构丢失</li>
+<li>标题和正文分离</li>
+<li>页眉页脚混入正文</li>
+<li>OCR 错误</li>
+<li>metadata 丢失</li>
+<li>答案无法追溯来源</li>
+</ul>
+<p>所以文档解析是 RAG 入库链路的前置步骤。</p>
+<h2 id="152-文档解析的目标是什么">15.2 文档解析的目标是什么？
+</h2><p>文档解析的目标不是简单“把文件转成文本”。</p>
+<p>更准确地说，它要把原始资料转换成：</p>
+<blockquote>
+<p>结构清晰、语义完整、可切分、可检索、可追溯的知识表示。</p></blockquote>
+<p>一个好的解析结果应该保留：</p>
+<ul>
+<li>正文内容</li>
+<li>标题层级</li>
+<li>段落顺序</li>
+<li>表格结构</li>
+<li>图片和 OCR 结果</li>
+<li>页码或位置</li>
+<li>来源信息</li>
+<li>权限和版本 metadata</li>
+</ul>
+<p>这些信息会影响后面的 chunk、embedding、召回、引用和排查。</p>
+<h2 id="153-为什么不建议只产出纯文本">15.3 为什么不建议只产出纯文本？
+</h2><p>只产出纯文本会丢掉大量结构信息。</p>
+<p>例如原文是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">标题：售后规则 &gt; 退款规则 &gt; 虚拟商品
+</span></span><span class="line"><span class="cl">正文：虚拟商品一经发货不支持退款。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果解析后只剩：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">虚拟商品一经发货不支持退款。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这段文本本身还能看懂，但检索信号变弱了。</p>
+<p>如果更极端，只剩：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">不支持退款。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>那就几乎不知道它在说什么。</p>
+<p>所以解析结果最好是结构化 block，而不是一大坨字符串。</p>
+<h2 id="154-什么是结构化-block">15.4 什么是结构化 block？
+</h2><p>结构化 block 是文档解析后的中间表示。</p>
+<p>它把文档拆成一块块带类型和上下文的信息。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;type&#34;</span><span class="p">:</span> <span class="s2">&#34;paragraph&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;text&#34;</span><span class="p">:</span> <span class="s2">&#34;虚拟商品一经发货不支持退款。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;page&#34;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;section_path&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;售后规则&#34;</span><span class="p">,</span> <span class="s2">&#34;退款规则&#34;</span><span class="p">,</span> <span class="s2">&#34;虚拟商品&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>常见 block 类型包括：</p>
+<ul>
+<li>heading</li>
+<li>paragraph</li>
+<li>list</li>
+<li>table</li>
+<li>image</li>
+<li>code</li>
+<li>quote</li>
+<li>footer</li>
+<li>toc</li>
+</ul>
+<p>有了 block，后面的切分策略才能更精细。</p>
+<p>例如表格按表格切，代码按函数切，FAQ 按问答切。</p>
+<h2 id="155-pdf-解析为什么最难">15.5 PDF 解析为什么最难？
+</h2><p>PDF 的本质更接近“固定版式页面”，不一定是天然结构化文档。</p>
+<p>它经常有这些问题：</p>
+<ul>
+<li>阅读顺序不等于文本抽取顺序</li>
+<li>双栏排版容易串行</li>
+<li>页眉页脚混入正文</li>
+<li>表格边框和单元格关系难恢复</li>
+<li>扫描件需要 OCR</li>
+<li>水印、印章、批注会干扰识别</li>
+<li>标题层级不一定明确</li>
+</ul>
+<p>所以 PDF 解析不能只看“抽出了文字没有”。</p>
+<p>还要检查：</p>
+<ul>
+<li>顺序是否对</li>
+<li>表格是否对</li>
+<li>页码是否保留</li>
+<li>标题是否恢复</li>
+<li>图片和扫描页是否处理</li>
+</ul>
+<h2 id="156-文本型-pdf-和扫描型-pdf-有什么区别">15.6 文本型 PDF 和扫描型 PDF 有什么区别？
+</h2><p>文本型 PDF 本身包含可复制的文字。</p>
+<p>可以通过 PDF 文本抽取工具拿到字符、坐标、字体等信息。</p>
+<p>扫描型 PDF 本质上是一张张图片。</p>
+<p>它没有可直接抽取的正文，需要 OCR。</p>
+<p>区别可以简单理解为：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">文本型 PDF：从页面里抽文字
+</span></span><span class="line"><span class="cl">扫描型 PDF：先识别图片里的文字
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>扫描型 PDF 通常更难，因为 OCR 可能出现：</p>
+<ul>
+<li>错字</li>
+<li>漏字</li>
+<li>行顺序错误</li>
+<li>表格识别错误</li>
+<li>标点和数字识别错误</li>
+</ul>
+<h2 id="157-表格为什么不能简单平铺成文本">15.7 表格为什么不能简单平铺成文本？
+</h2><p>表格的含义依赖行列关系。</p>
+<p>例如：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>套餐</th>
+          <th>月费</th>
+          <th>API 调用次数</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Pro</td>
+          <td>299</td>
+          <td>100 万</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>如果平铺成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 299 100 万
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>模型未必知道 <code>299</code> 是月费，<code>100 万</code> 是 API 调用次数。</p>
+<p>更好的表示是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">套餐=Pro，月费=299，API 调用次数=100 万。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>或者保留为 Markdown 表格、JSON 行记录。</p>
+<p>核心原则是：</p>
+<blockquote>
+<p>表格解析要保留表头、行列关系和合并单元格语义。</p></blockquote>
+<h2 id="158-ocr-结果怎么进入-rag">15.8 OCR 结果怎么进入 RAG？
+</h2><p>OCR 结果不要只当作普通文本塞进去。</p>
+<p>最好同时保留：</p>
+<ul>
+<li>OCR 文本</li>
+<li>图片来源</li>
+<li>页码</li>
+<li>图片位置</li>
+<li>置信度</li>
+<li>对应原图或截图</li>
+<li>是否人工校验</li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;type&#34;</span><span class="p">:</span> <span class="s2">&#34;ocr_text&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;text&#34;</span><span class="p">:</span> <span class="s2">&#34;发票抬头必须与合同主体一致。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;page&#34;</span><span class="p">:</span> <span class="mi">12</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;bbox&#34;</span><span class="p">:</span> <span class="p">[</span><span class="mi">120</span><span class="p">,</span> <span class="mi">330</span><span class="p">,</span> <span class="mi">760</span><span class="p">,</span> <span class="mi">380</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;confidence&#34;</span><span class="p">:</span> <span class="mf">0.93</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;source_image_id&#34;</span><span class="p">:</span> <span class="s2">&#34;page_12_img_02&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样后续如果答案有争议，可以回到原图检查。</p>
+<p>对于低置信度 OCR，最好标记出来，避免它和高质量正文同等使用。</p>
+<h2 id="159-section_path-有什么作用">15.9 section_path 有什么作用？
+</h2><p><code>section_path</code> 是当前内容所在的标题路径。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">售后规则 &gt; 退款规则 &gt; 虚拟商品
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>它有几个作用：</p>
+<ul>
+<li>帮助 chunk 补足上下文</li>
+<li>增强 embedding 输入</li>
+<li>增强 BM25 字段检索</li>
+<li>方便答案引用</li>
+<li>方便用户理解来源</li>
+</ul>
+<p>例如正文只有：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">不支持退款。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果带上标题路径：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">售后规则 &gt; 退款规则 &gt; 虚拟商品：不支持退款。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>语义就完整很多。</p>
+<h2 id="1510-metadata-和正文有什么区别">15.10 metadata 和正文有什么区别？
+</h2><p>正文是给检索和模型理解内容用的。</p>
+<p>metadata 是给过滤、排序、治理和追踪用的。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;content&#34;</span><span class="p">:</span> <span class="s2">&#34;虚拟商品一经发货不支持退款。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;metadata&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;doc_id&#34;</span><span class="p">:</span> <span class="s2">&#34;refund_policy_2026&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;product&#34;</span><span class="p">:</span> <span class="s2">&#34;mall&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;region&#34;</span><span class="p">:</span> <span class="s2">&#34;cn&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;version&#34;</span><span class="p">:</span> <span class="s2">&#34;2026-05&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;permission_group&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;support&#34;</span><span class="p">,</span> <span class="s2">&#34;legal&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;doc_status&#34;</span><span class="p">:</span> <span class="s2">&#34;active&#34;</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>content</code> 说明“这段讲什么”。</p>
+<p><code>metadata</code> 说明“这段属于哪里、谁能看、哪个版本、是否有效”。</p>
+<p>不要把权限、版本、租户这类信息只写在正文里。</p>
+<p>它们应该进入 metadata，方便召回阶段过滤。</p>
+<h2 id="1511-source_blocks-是什么">15.11 source_blocks 是什么？
+</h2><p><code>source_blocks</code> 是 chunk 回溯到原始解析 block 的映射。</p>
+<p>例如一个 chunk 由三个段落组成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;refund_doc_chunk_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;source_blocks&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;block_021&#34;</span><span class="p">,</span> <span class="s2">&#34;block_022&#34;</span><span class="p">,</span> <span class="s2">&#34;block_023&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样当用户质疑答案来源时，系统可以定位到：</p>
+<ul>
+<li>哪个原始文档</li>
+<li>哪一页</li>
+<li>哪几个 block</li>
+<li>原始排版位置</li>
+</ul>
+<p>没有 <code>source_blocks</code>，chunk 就很难追溯。</p>
+<p>生产 RAG 里，来源可追溯非常重要。</p>
+<h2 id="1512-文档解析质量怎么评估">15.12 文档解析质量怎么评估？
+</h2><p>解析质量可以从几类指标看。</p>
+<p>第一，内容完整性：</p>
+<ul>
+<li>是否漏页</li>
+<li>是否漏段</li>
+<li>是否漏表格</li>
+<li>OCR 是否漏识别</li>
+</ul>
+<p>第二，结构正确性：</p>
+<ul>
+<li>标题层级是否正确</li>
+<li>阅读顺序是否正确</li>
+<li>表格行列是否正确</li>
+<li>列表和代码块是否保留</li>
+</ul>
+<p>第三，噪声控制：</p>
+<ul>
+<li>页眉页脚是否去掉</li>
+<li>目录是否单独标记</li>
+<li>水印是否干扰正文</li>
+<li>重复内容是否处理</li>
+</ul>
+<p>第四，可追溯性：</p>
+<ul>
+<li>是否有 doc_id</li>
+<li>是否有 page</li>
+<li>是否有 source_blocks</li>
+<li>是否有 parser_version</li>
+</ul>
+<p>评估时不能只看抽样文本，还要和原文对照。</p>
+<h2 id="1513-解析失败应该怎么处理">15.13 解析失败应该怎么处理？
+</h2><p>解析失败不能静默丢弃。</p>
+<p>应该记录失败状态和原因。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;doc_id&#34;</span><span class="p">:</span> <span class="s2">&#34;contract_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;parse_status&#34;</span><span class="p">:</span> <span class="s2">&#34;failed&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;parse_error&#34;</span><span class="p">:</span> <span class="s2">&#34;encrypted_pdf&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;parser_version&#34;</span><span class="p">:</span> <span class="s2">&#34;pdf_parser_v3&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>常见处理包括：</p>
+<ul>
+<li>自动重试</li>
+<li>标记失败原因</li>
+<li>进入人工处理队列</li>
+<li>保留原始文件</li>
+<li>不让失败文档进入线上索引</li>
+</ul>
+<p>如果失败文档被误认为已成功入库，后面用户问相关问题时就会出现“知识库明明有文件，但怎么也搜不到”的情况。</p>
+<h2 id="1514-parser_version-为什么重要">15.14 parser_version 为什么重要？
+</h2><p>解析逻辑变化会影响后续所有链路。</p>
+<p>例如：</p>
+<ul>
+<li>OCR 模型变了</li>
+<li>表格解析规则变了</li>
+<li>标题识别规则变了</li>
+<li>页眉页脚过滤规则变了</li>
+</ul>
+<p>这些变化会影响：</p>
+<ul>
+<li>block 结构</li>
+<li>chunk 切分</li>
+<li>embedding</li>
+<li>索引内容</li>
+<li>召回结果</li>
+</ul>
+<p>如果没有 <code>parser_version</code>，线上效果变化时很难判断是模型问题、召回问题，还是解析规则变化导致的。</p>
+<p>所以生产系统应该记录：</p>
+<ul>
+<li>parser_name</li>
+<li>parser_version</li>
+<li>parse_time</li>
+<li>clean_rules_version</li>
+<li>source_file_hash</li>
+</ul>
+<h2 id="1515-原始文件为什么不能丢">15.15 原始文件为什么不能丢？
+</h2><p>原始文件是知识入库的源头。</p>
+<p>不能只保存解析后的文本。</p>
+<p>原因包括：</p>
+<ul>
+<li>解析规则升级后需要重跑</li>
+<li>用户需要查看原始出处</li>
+<li>答案引用需要跳回原文</li>
+<li>解析错误需要对照排查</li>
+<li>合规审计可能要求保留原件</li>
+</ul>
+<p>解析结果只是某一版处理产物。</p>
+<p>原始文件才是可重建、可审计、可验证的基础。</p>
+<h2 id="1516-文档解析和-chunk-切分是什么关系">15.16 文档解析和 chunk 切分是什么关系？
+</h2><p>文档解析发生在 chunk 切分之前。</p>
+<p>解析负责把原始文件变成结构化内容。</p>
+<p>切分负责把结构化内容变成可检索的 chunk。</p>
+<p>流程是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">原始文件
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">文档解析
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">结构化 block
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">文本切分
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">chunk
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>解析质量决定切分上限。</p>
+<p>如果解析阶段已经把标题、表格、段落顺序弄丢了，切分阶段很难补回来。</p>
+<h2 id="1517-生产级文档解析和-demo-最大区别是什么">15.17 生产级文档解析和 demo 最大区别是什么？
+</h2><p>demo 通常只关心：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">能不能从文件里抽出文字
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>生产级文档解析还要关心：</p>
+<ul>
+<li>多格式支持</li>
+<li>结构恢复</li>
+<li>表格解析</li>
+<li>OCR 质量</li>
+<li>metadata</li>
+<li>权限信息</li>
+<li>来源追溯</li>
+<li>解析失败处理</li>
+<li>版本管理</li>
+<li>原始文件保留</li>
+<li>可重跑</li>
+<li>质量评估</li>
+</ul>
+<p>最大的区别是：</p>
+<blockquote>
+<p>demo 追求能跑通，生产链路追求稳定、可追溯、可评估、可重建。</p></blockquote>
 <h1 id="小结">小结
 </h1><p>RAG 的文档解析不是简单的文件转文本。</p>
 <p>它的核心任务是：</p>
