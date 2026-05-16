@@ -1,0 +1,3604 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 在 RAG 系统里，很多人会把问题简化成：\n1 2 3 向量库召回 top-k 把结果塞进 prompt 让大模型回答 这个流程能跑通 demo，但到了真实业务里，经常会遇到一个很典型的问题：\n正确资料其实被召回了，但排得太靠后，最后没有进入上下文。\n这时问题不一定出在召回。\n召回阶段的目标是把“可能相关”的候选找出来。\n但召回结果不一定已经是最适合放进 prompt 的顺序。\n所以 RAG 里通常还需要一个环节：\n1 2 3 4 5 6 7 召回 ↓ 重排 rerank ↓ 上下文组装 ↓ 生成答案 重排的作用是：\n在候选集合里，把真正最相关、最有用、最适合作为证据的内容排到前面。\n这篇文章专门讲 RAG 里的重排：\nrerank 在 RAG 链路里的位置 召回、排序、重排、上下文组装的区别 为什么召回结果需要再排一次 Cross-Encoder Rerank 的原理 Bi-Encoder 和 Cross-Encoder 的区别 LLM Rerank 怎么做 规则重排和业务特征重排 多路召回结果怎么进入 rerank rerank 的输入输出怎么设计 rerank top-k、阈值、截断怎么调 如何评估 rerank 效果 常见工程坑和高频面试题 一、先理解重排的目标 1.1 rerank 不是召回 很多人会把召回和重排混在一起。\n">
+<title>RAG 重排详解：Rerank 原理、模型选择、工程实现与调优方法</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/rag-%E9%87%8D%E6%8E%92%E8%AF%A6%E8%A7%A3rerank-%E5%8E%9F%E7%90%86%E6%A8%A1%E5%9E%8B%E9%80%89%E6%8B%A9%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E8%B0%83%E4%BC%98%E6%96%B9%E6%B3%95/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="RAG 重排详解：Rerank 原理、模型选择、工程实现与调优方法">
+<meta property='og:description' content="写在前面 在 RAG 系统里，很多人会把问题简化成：\n1 2 3 向量库召回 top-k 把结果塞进 prompt 让大模型回答 这个流程能跑通 demo，但到了真实业务里，经常会遇到一个很典型的问题：\n正确资料其实被召回了，但排得太靠后，最后没有进入上下文。\n这时问题不一定出在召回。\n召回阶段的目标是把“可能相关”的候选找出来。\n但召回结果不一定已经是最适合放进 prompt 的顺序。\n所以 RAG 里通常还需要一个环节：\n1 2 3 4 5 6 7 召回 ↓ 重排 rerank ↓ 上下文组装 ↓ 生成答案 重排的作用是：\n在候选集合里，把真正最相关、最有用、最适合作为证据的内容排到前面。\n这篇文章专门讲 RAG 里的重排：\nrerank 在 RAG 链路里的位置 召回、排序、重排、上下文组装的区别 为什么召回结果需要再排一次 Cross-Encoder Rerank 的原理 Bi-Encoder 和 Cross-Encoder 的区别 LLM Rerank 怎么做 规则重排和业务特征重排 多路召回结果怎么进入 rerank rerank 的输入输出怎么设计 rerank top-k、阈值、截断怎么调 如何评估 rerank 效果 常见工程坑和高频面试题 一、先理解重排的目标 1.1 rerank 不是召回 很多人会把召回和重排混在一起。\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/rag-%E9%87%8D%E6%8E%92%E8%AF%A6%E8%A7%A3rerank-%E5%8E%9F%E7%90%86%E6%A8%A1%E5%9E%8B%E9%80%89%E6%8B%A9%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E8%B0%83%E4%BC%98%E6%96%B9%E6%B3%95/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='rag' /><meta property='article:published_time' content='2026-05-10T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-10T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="RAG 重排详解：Rerank 原理、模型选择、工程实现与调优方法">
+<meta name="twitter:description" content="写在前面 在 RAG 系统里，很多人会把问题简化成：\n1 2 3 向量库召回 top-k 把结果塞进 prompt 让大模型回答 这个流程能跑通 demo，但到了真实业务里，经常会遇到一个很典型的问题：\n正确资料其实被召回了，但排得太靠后，最后没有进入上下文。\n这时问题不一定出在召回。\n召回阶段的目标是把“可能相关”的候选找出来。\n但召回结果不一定已经是最适合放进 prompt 的顺序。\n所以 RAG 里通常还需要一个环节：\n1 2 3 4 5 6 7 召回 ↓ 重排 rerank ↓ 上下文组装 ↓ 生成答案 重排的作用是：\n在候选集合里，把真正最相关、最有用、最适合作为证据的内容排到前面。\n这篇文章专门讲 RAG 里的重排：\nrerank 在 RAG 链路里的位置 召回、排序、重排、上下文组装的区别 为什么召回结果需要再排一次 Cross-Encoder Rerank 的原理 Bi-Encoder 和 Cross-Encoder 的区别 LLM Rerank 怎么做 规则重排和业务特征重排 多路召回结果怎么进入 rerank rerank 的输入输出怎么设计 rerank top-k、阈值、截断怎么调 如何评估 rerank 效果 常见工程坑和高频面试题 一、先理解重排的目标 1.1 rerank 不是召回 很多人会把召回和重排混在一起。\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ol>
+    <li><a href="#11-rerank-不是召回">1.1 rerank 不是召回</a></li>
+    <li><a href="#12-rerank-解决什么问题">1.2 rerank 解决什么问题</a></li>
+    <li><a href="#13-rerank-更关注-precision">1.3 rerank 更关注 Precision</a></li>
+    <li><a href="#14-rerank-不能救回没召回的内容">1.4 rerank 不能救回没召回的内容</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#21-一个典型链路">2.1 一个典型链路</a></li>
+    <li><a href="#22-召回重排上下文组装的边界">2.2 召回、重排、上下文组装的边界</a></li>
+    <li><a href="#23-rerank-的输入通常是什么">2.3 rerank 的输入通常是什么</a></li>
+    <li><a href="#24-rerank-是否一定需要单独模型">2.4 rerank 是否一定需要单独模型</a></li>
+    <li><a href="#25-rerank-的输出通常是什么">2.5 rerank 的输出通常是什么</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#31-向量相似度不是最终相关性">3.1 向量相似度不是最终相关性</a></li>
+    <li><a href="#32-bm25-命中不等于答案相关">3.2 BM25 命中不等于答案相关</a></li>
+    <li><a href="#33-多路召回会带来更多噪声">3.3 多路召回会带来更多噪声</a></li>
+    <li><a href="#34-召回分数不可直接比较">3.4 召回分数不可直接比较</a></li>
+    <li><a href="#35-top-k-有-token-预算约束">3.5 top-k 有 token 预算约束</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#41-cross-encoder-rerank">4.1 Cross-Encoder Rerank</a></li>
+    <li><a href="#42-bi-encoder-和-cross-encoder-的区别">4.2 Bi-Encoder 和 Cross-Encoder 的区别</a></li>
+    <li><a href="#43-cross-encoder-为什么更准">4.3 Cross-Encoder 为什么更准</a></li>
+    <li><a href="#44-llm-rerank">4.4 LLM Rerank</a></li>
+    <li><a href="#45-规则重排">4.5 规则重排</a></li>
+    <li><a href="#46-业务特征重排">4.6 业务特征重排</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#51-输入格式">5.1 输入格式</a></li>
+    <li><a href="#52-输出分数">5.2 输出分数</a></li>
+    <li><a href="#53-模型训练目标">5.3 模型训练目标</a></li>
+    <li><a href="#54-cross-encoder-的优点">5.4 Cross-Encoder 的优点</a></li>
+    <li><a href="#55-cross-encoder-的缺点">5.5 Cross-Encoder 的缺点</a></li>
+    <li><a href="#56-候选数量怎么选">5.6 候选数量怎么选</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#61-llm-rerank-的适用场景">6.1 LLM Rerank 的适用场景</a></li>
+    <li><a href="#62-llm-rerank-的输入设计">6.2 LLM Rerank 的输入设计</a></li>
+    <li><a href="#63-llm-rerank-的输出约束">6.3 LLM Rerank 的输出约束</a></li>
+    <li><a href="#64-llm-rerank-的风险">6.4 LLM Rerank 的风险</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#71-规则重排解决什么问题">7.1 规则重排解决什么问题</a></li>
+    <li><a href="#72-强规则和弱规则">7.2 强规则和弱规则</a></li>
+    <li><a href="#73-一个简单打分公式">7.3 一个简单打分公式</a></li>
+    <li><a href="#74-时间和版本重排">7.4 时间和版本重排</a></li>
+    <li><a href="#75-来源可信度重排">7.5 来源可信度重排</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#81-多路召回为什么更需要-rerank">8.1 多路召回为什么更需要 rerank</a></li>
+    <li><a href="#82-先融合还是先-rerank">8.2 先融合还是先 rerank</a></li>
+    <li><a href="#83-rrf-融合排序是什么">8.3 RRF 融合排序是什么</a></li>
+    <li><a href="#84-去重很重要">8.4 去重很重要</a></li>
+    <li><a href="#85-保留召回来源特征">8.5 保留召回来源特征</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#91-rerank-top-k-不等于最终上下文">9.1 rerank top-k 不等于最终上下文</a></li>
+    <li><a href="#92-相邻-chunk-合并">9.2 相邻 chunk 合并</a></li>
+    <li><a href="#93-parent-chunk-补上下文">9.3 parent chunk 补上下文</a></li>
+    <li><a href="#94-多样性控制">9.4 多样性控制</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#101-一个典型实现流程">10.1 一个典型实现流程</a></li>
+    <li><a href="#102-rerank-输入文本模板">10.2 rerank 输入文本模板</a></li>
+    <li><a href="#103-候选截断">10.3 候选截断</a></li>
+    <li><a href="#104-批量推理">10.4 批量推理</a></li>
+    <li><a href="#105-缓存">10.5 缓存</a></li>
+    <li><a href="#106-降级策略">10.6 降级策略</a></li>
+    <li><a href="#107-观测日志">10.7 观测日志</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#111-召回-top-k">11.1 召回 top-k</a></li>
+    <li><a href="#112-rerank-候选数量">11.2 rerank 候选数量</a></li>
+    <li><a href="#113-最终保留-top-n">11.3 最终保留 top-n</a></li>
+    <li><a href="#114-分数阈值">11.4 分数阈值</a></li>
+    <li><a href="#115-多样性和相关性的平衡">11.5 多样性和相关性的平衡</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#121-rerank-评估看什么">12.1 rerank 评估看什么</a></li>
+    <li><a href="#122-评估前先准备什么">12.2 评估前先准备什么</a></li>
+    <li><a href="#123-什么是-k">12.3 什么是 @k</a></li>
+    <li><a href="#124-mrr">12.4 MRR</a></li>
+    <li><a href="#125-ndcg">12.5 NDCG</a></li>
+    <li><a href="#126-precisionk">12.6 Precision@k</a></li>
+    <li><a href="#127-recallk-和-rerank-的关系">12.7 Recall@k 和 rerank 的关系</a></li>
+    <li><a href="#128-和无-rerank-baseline-对比">12.8 和无 rerank baseline 对比</a></li>
+    <li><a href="#129-分-query-类型评估">12.9 分 query 类型评估</a></li>
+    <li><a href="#1210-一个实用评估顺序">12.10 一个实用评估顺序</a></li>
+    <li><a href="#1211-这些指标怎么一起理解">12.11 这些指标怎么一起理解</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#131-正确-chunk-被-rerank-压低">13.1 正确 chunk 被 rerank 压低</a></li>
+    <li><a href="#132-不相关-chunk-被排到前面">13.2 不相关 chunk 被排到前面</a></li>
+    <li><a href="#133-rerank-很慢">13.3 rerank 很慢</a></li>
+    <li><a href="#134-rerank-后答案反而变差">13.4 rerank 后答案反而变差</a></li>
+    <li><a href="#135-无答案问题怎么-rerank">13.5 无答案问题怎么 rerank</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#141-先保证召回覆盖">14.1 先保证召回覆盖</a></li>
+    <li><a href="#142-rerank-输入要带上下文">14.2 rerank 输入要带上下文</a></li>
+    <li><a href="#143-不要让规则盖过相关性">14.3 不要让规则盖过相关性</a></li>
+    <li><a href="#144-保留-rerank-日志">14.4 保留 rerank 日志</a></li>
+    <li><a href="#145-一次只改一个变量">14.5 一次只改一个变量</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#151-rag-为什么需要-rerank">15.1 RAG 为什么需要 rerank？</a></li>
+    <li><a href="#152-rerank-和召回的区别是什么">15.2 rerank 和召回的区别是什么？</a></li>
+    <li><a href="#153-cross-encoder-和-bi-encoder-有什么区别">15.3 Cross-Encoder 和 Bi-Encoder 有什么区别？</a></li>
+    <li><a href="#154-cross-encoder-为什么比向量相似度更适合重排">15.4 Cross-Encoder 为什么比向量相似度更适合重排？</a></li>
+    <li><a href="#155-llm-rerank-适合什么场景">15.5 LLM Rerank 适合什么场景？</a></li>
+    <li><a href="#156-rerank-top-k-怎么设置">15.6 rerank top-k 怎么设置？</a></li>
+    <li><a href="#157-rerank-分数能不能直接当最终答案置信度">15.7 rerank 分数能不能直接当最终答案置信度？</a></li>
+    <li><a href="#158-metadata-规则应该放在-rerank-前还是后">15.8 metadata 规则应该放在 rerank 前还是后？</a></li>
+    <li><a href="#159-rerank-怎么评估">15.9 rerank 怎么评估？</a></li>
+    <li><a href="#1510-rerank-失败怎么排查">15.10 rerank 失败怎么排查？</a></li>
+    <li><a href="#1511-rerank-会不会增加延迟">15.11 rerank 会不会增加延迟？</a></li>
+    <li><a href="#1512-生产级-rerank-和-demo-最大区别是什么">15.12 生产级 rerank 和 demo 最大区别是什么？</a></li>
+  </ol>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/ai/" >
+                Ai
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/rag-%E9%87%8D%E6%8E%92%E8%AF%A6%E8%A7%A3rerank-%E5%8E%9F%E7%90%86%E6%A8%A1%E5%9E%8B%E9%80%89%E6%8B%A9%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E8%B0%83%E4%BC%98%E6%96%B9%E6%B3%95/">RAG 重排详解：Rerank 原理、模型选择、工程实现与调优方法</a>
+        </h2>
+    
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">May 10, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h1 id="写在前面">写在前面
+</h1><p>在 RAG 系统里，很多人会把问题简化成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">向量库召回 top-k
+</span></span><span class="line"><span class="cl">把结果塞进 prompt
+</span></span><span class="line"><span class="cl">让大模型回答
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这个流程能跑通 demo，但到了真实业务里，经常会遇到一个很典型的问题：</p>
+<blockquote>
+<p>正确资料其实被召回了，但排得太靠后，最后没有进入上下文。</p></blockquote>
+<p>这时问题不一定出在召回。</p>
+<p>召回阶段的目标是把“可能相关”的候选找出来。</p>
+<p>但召回结果不一定已经是最适合放进 prompt 的顺序。</p>
+<p>所以 RAG 里通常还需要一个环节：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">重排 rerank
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">上下文组装
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">生成答案
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>重排的作用是：</p>
+<blockquote>
+<p>在候选集合里，把真正最相关、最有用、最适合作为证据的内容排到前面。</p></blockquote>
+<p>这篇文章专门讲 RAG 里的重排：</p>
+<ol>
+<li>rerank 在 RAG 链路里的位置</li>
+<li>召回、排序、重排、上下文组装的区别</li>
+<li>为什么召回结果需要再排一次</li>
+<li>Cross-Encoder Rerank 的原理</li>
+<li>Bi-Encoder 和 Cross-Encoder 的区别</li>
+<li>LLM Rerank 怎么做</li>
+<li>规则重排和业务特征重排</li>
+<li>多路召回结果怎么进入 rerank</li>
+<li>rerank 的输入输出怎么设计</li>
+<li>rerank top-k、阈值、截断怎么调</li>
+<li>如何评估 rerank 效果</li>
+<li>常见工程坑和高频面试题</li>
+</ol>
+<h1 id="一先理解重排的目标">一、先理解重排的目标
+</h1><h2 id="11-rerank-不是召回">1.1 rerank 不是召回
+</h2><p>很多人会把召回和重排混在一起。</p>
+<p>但它们的职责不同。</p>
+<p>召回负责：</p>
+<blockquote>
+<p>从大量知识库里找出一批可能相关的候选。</p></blockquote>
+<p>重排负责：</p>
+<blockquote>
+<p>在召回候选里，把更相关、更可靠、更适合作为证据的内容排到前面。</p></blockquote>
+<p>例如知识库里有 1000 万个 chunk。</p>
+<p>召回阶段可能先拿出 50 个候选：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">top-50 candidate chunks
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>重排阶段再从这 50 个里选出最适合进入上下文的前 5 个：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">rerank top-5
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>所以 rerank 通常不负责全库搜索。</p>
+<p>它处理的是召回后的候选集合。</p>
+<h2 id="12-rerank-解决什么问题">1.2 rerank 解决什么问题
+</h2><p>RAG 里常见失败有几种：</p>
+<ol>
+<li>正确 chunk 没有被召回</li>
+<li>正确 chunk 被召回了，但排名靠后</li>
+<li>正确 chunk 进了上下文，但模型没有用好</li>
+</ol>
+<p>rerank 主要解决第二类问题。</p>
+<p>例如召回结果是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1. 计费系统概述
+</span></span><span class="line"><span class="cl">2. 套餐价格表
+</span></span><span class="line"><span class="cl">3. 登录方式说明
+</span></span><span class="line"><span class="cl">4. Pro 套餐 API 调用限制
+</span></span><span class="line"><span class="cl">5. 错误码列表
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 套餐每月 API 调用额度是多少？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>真正应该排前面的可能是第 4 条。</p>
+<p>如果没有 rerank，系统可能只取前 3 条进入上下文，就会漏掉正确证据。</p>
+<p>rerank 的作用就是把第 4 条提上来。</p>
+<h2 id="13-rerank-更关注-precision">1.3 rerank 更关注 Precision
+</h2><p>召回阶段更关注 Recall。</p>
+<p>也就是：</p>
+<blockquote>
+<p>正确证据有没有进入候选集。</p></blockquote>
+<p>重排阶段更关注 Precision。</p>
+<p>也就是：</p>
+<blockquote>
+<p>排在前面的候选是不是更相关、更干净、更适合给模型。</p></blockquote>
+<p>一个常见目标是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回 top-50 保证覆盖
+</span></span><span class="line"><span class="cl">rerank top-5 保证质量
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>召回可以相对宽一点。</p>
+<p>重排要更严格。</p>
+<h2 id="14-rerank-不能救回没召回的内容">1.4 rerank 不能救回没召回的内容
+</h2><p>这是非常重要的一点。</p>
+<p>如果正确 chunk 没有进入召回候选集，rerank 通常没有机会看到它。</p>
+<p>所以 rerank 不能凭空解决召回失败。</p>
+<p>排查 RAG 时可以这样判断：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">正确 chunk 不在召回 top-k：召回问题
+</span></span><span class="line"><span class="cl">正确 chunk 在召回 top-k，但 rerank 后靠后：重排问题
+</span></span><span class="line"><span class="cl">正确 chunk 进入上下文，但答案仍错：生成或上下文使用问题
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>不要把所有答案错误都归因到 rerank。</p>
+<h1 id="二重排在-rag-链路里的位置">二、重排在 RAG 链路里的位置
+</h1><h2 id="21-一个典型链路">2.1 一个典型链路
+</h2><p>一个常见 RAG 流程是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户问题
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">查询理解
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">多路召回
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">候选去重
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">rerank
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">上下文组装
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">LLM 生成答案
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里 rerank 位于召回之后、上下文组装之前。</p>
+<p>它的输入是候选 chunk。</p>
+<p>它的输出是重新排序后的 chunk 列表。</p>
+<h2 id="22-召回重排上下文组装的边界">2.2 召回、重排、上下文组装的边界
+</h2><p>三者边界可以这样理解：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回：找候选
+</span></span><span class="line"><span class="cl">重排：给候选重新排序
+</span></span><span class="line"><span class="cl">上下文组装：决定最终放哪些、怎么放
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回 top-50
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">rerank 重新排序
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">选 top-8
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">去重、合并相邻 chunk、按文档顺序排列
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">放进 prompt
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>rerank 不一定直接决定最终上下文。</p>
+<p>因为上下文组装还可能考虑：</p>
+<ul>
+<li>token 预算</li>
+<li>chunk 去重</li>
+<li>parent-child 合并</li>
+<li>相邻片段合并</li>
+<li>引用顺序</li>
+<li>文档多样性</li>
+<li>同一文档不要占满全部上下文</li>
+</ul>
+<p>这里要注意：</p>
+<blockquote>
+<p>召回阶段不是不能排序，而是只能做快速粗排；重排阶段负责在小候选集上做更精细、更准确的排序。</p></blockquote>
+<p>例如向量召回会按相似度排序，BM25 会按关键词相关性排序，RRF 会按融合排名排序。</p>
+<p>但这些排序通常是为了快速从大规模知识库里缩小范围。</p>
+<p>真正判断“哪几段最适合放进 prompt”，通常要交给 rerank 和上下文组装继续处理。</p>
+<h2 id="23-rerank-的输入通常是什么">2.3 rerank 的输入通常是什么
+</h2><p>严格来说，不同 rerank 方式的输入不完全一样。</p>
+<p>如果使用专门的 Cross-Encoder rerank 模型，输入通常是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">query + candidate chunk
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;query&#34;</span><span class="p">:</span> <span class="s2">&#34;Pro 套餐每月 API 调用额度是多少？&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;candidate&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;billing_chunk_012&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;title&#34;</span><span class="p">:</span> <span class="s2">&#34;计费系统说明&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;section_path&#34;</span><span class="p">:</span> <span class="s2">&#34;套餐规则 &gt; Pro 套餐 &gt; API 调用限制&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;content&#34;</span><span class="p">:</span> <span class="s2">&#34;Pro 套餐每月包含 100 万次 API 调用，超出部分按量计费。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;metadata&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;product&#34;</span><span class="p">:</span> <span class="s2">&#34;billing&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;version&#34;</span><span class="p">:</span> <span class="s2">&#34;2026-04&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;doc_status&#34;</span><span class="p">:</span> <span class="s2">&#34;active&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>rerank 模型会判断：</p>
+<blockquote>
+<p>这个 candidate 对当前 query 有多相关？</p></blockquote>
+<p>如果使用 LLM Rerank，输入通常不是单个 pair，而是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">query + 多个 candidate chunks + 排序指令 + 输出格式约束
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户问题：
+</span></span><span class="line"><span class="cl">Pro 套餐每月 API 调用额度是多少？
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">候选资料：
+</span></span><span class="line"><span class="cl">[1] Basic 套餐每月包含 10 万次 API 调用。
+</span></span><span class="line"><span class="cl">[2] Pro 套餐每月包含 100 万次 API 调用。
+</span></span><span class="line"><span class="cl">[3] Pro 套餐月费为 299 元。
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">请判断每个候选是否能回答用户问题，并按相关性输出 JSON。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>LLM Rerank 更像是让大模型对一组候选做比较和打分。</p>
+<p>如果使用规则重排或融合分数重排，输入通常不是完整的 <code>query + candidate</code> 文本对，而是候选的结构化特征。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;billing_chunk_012&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;vector_score&#34;</span><span class="p">:</span> <span class="mf">0.82</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;bm25_score&#34;</span><span class="p">:</span> <span class="mf">18.7</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;rrf_score&#34;</span><span class="p">:</span> <span class="mf">0.034</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;metadata&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;doc_status&#34;</span><span class="p">:</span> <span class="s2">&#34;active&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;source_type&#34;</span><span class="p">:</span> <span class="s2">&#34;official_doc&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;version&#34;</span><span class="p">:</span> <span class="s2">&#34;2026-04&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;updated_at&#34;</span><span class="p">:</span> <span class="s2">&#34;2026-05-01&#34;</span>
+</span></span><span class="line"><span class="cl">  <span class="p">},</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;recall_sources&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;vector&#34;</span><span class="p">,</span> <span class="s2">&#34;bm25&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这类重排通常根据召回分数、metadata、来源可信度、时间、版本等信息重新计算最终分数。</p>
+<p>所以更严谨地说：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Cross-Encoder Rerank：输入 query + 单个 candidate
+</span></span><span class="line"><span class="cl">LLM Rerank：输入 query + 多个 candidates + 排序指令
+</span></span><span class="line"><span class="cl">规则/融合重排：输入候选分数、metadata、召回来源等结构化特征
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="24-rerank-是否一定需要单独模型">2.4 rerank 是否一定需要单独模型
+</h2><p>rerank 不一定必须有单独模型。</p>
+<p>但很多生产级 RAG 系统里，rerank 确实会由一个独立组件或独立模型来处理。</p>
+<p>常见方式有三类。</p>
+<p>第一类是专门的 rerank 模型。</p>
+<p>也就是前面提到的 Cross-Encoder。</p>
+<p>它的输入是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">query + candidate chunk
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>输出是相关性分数：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;billing_chunk_012&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;score&#34;</span><span class="p">:</span> <span class="mf">0.93</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>它的职责不是生成答案，而是判断：</p>
+<blockquote>
+<p>这个候选资料是否适合回答当前问题？</p></blockquote>
+<p>第二类是用大模型做 rerank。</p>
+<p>也就是把 query 和多个候选交给 LLM，让它排序或打分。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">请判断下面候选资料和用户问题的相关性，并按相关性排序。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这种方式灵活，但成本和延迟更高。</p>
+<p>第三类是不使用独立模型，只用规则或融合分数重排。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">final_score = vector_score + bm25_score + metadata_boost
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>或者用 RRF 融合排序。</p>
+<p>这种方式成本低、速度快，但精细判断能力弱。</p>
+<p>所以可以这样理解：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">embedding 模型：负责把 query 和 chunk 转成向量，用于召回
+</span></span><span class="line"><span class="cl">rerank 模型：负责判断 query 和候选 chunk 的相关性，用于精排
+</span></span><span class="line"><span class="cl">生成模型：负责基于最终上下文生成答案
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这三个模型的职责不同。</p>
+<p>有些系统会复用同一个大模型做 rerank 和生成，但从工程职责上，它们仍然是两个不同阶段。</p>
+<h2 id="25-rerank-的输出通常是什么">2.5 rerank 的输出通常是什么
+</h2><p>输出通常是每个候选的相关性分数。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">[</span>
+</span></span><span class="line"><span class="cl">  <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;billing_chunk_012&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;score&#34;</span><span class="p">:</span> <span class="mf">0.93</span>
+</span></span><span class="line"><span class="cl">  <span class="p">},</span>
+</span></span><span class="line"><span class="cl">  <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;billing_chunk_004&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;score&#34;</span><span class="p">:</span> <span class="mf">0.61</span>
+</span></span><span class="line"><span class="cl">  <span class="p">},</span>
+</span></span><span class="line"><span class="cl">  <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;login_chunk_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;score&#34;</span><span class="p">:</span> <span class="mf">0.12</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">]</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>然后系统按 score 排序。</p>
+<p>最终可以取：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">rerank top-n
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>进入上下文组装。</p>
+<h1 id="三为什么召回结果需要重排">三、为什么召回结果需要重排
+</h1><h2 id="31-向量相似度不是最终相关性">3.1 向量相似度不是最终相关性
+</h2><p>向量召回看的是 embedding 相似度。</p>
+<p>但 embedding 相似不等于最终答案相关。</p>
+<p>例如用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 套餐每月 API 调用额度是多少？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>向量召回可能返回：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 套餐价格说明
+</span></span><span class="line"><span class="cl">Basic 套餐 API 调用额度
+</span></span><span class="line"><span class="cl">API 调用限制总览
+</span></span><span class="line"><span class="cl">Pro 套餐 API 调用额度
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这些内容语义上都相关。</p>
+<p>但最能回答问题的是最后一条。</p>
+<p>向量召回可能因为“Pro 套餐”“API 调用”“限制”等语义接近，把很多候选都召回来。</p>
+<p>rerank 要进一步判断：</p>
+<blockquote>
+<p>哪个候选最能直接回答 query？</p></blockquote>
+<h2 id="32-bm25-命中不等于答案相关">3.2 BM25 命中不等于答案相关
+</h2><p>BM25 擅长关键词匹配。</p>
+<p>但关键词命中也不等于最终相关。</p>
+<p>例如用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">退款多久到账？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>BM25 可能召回：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">退款申请入口
+</span></span><span class="line"><span class="cl">退款到账时间
+</span></span><span class="line"><span class="cl">退款失败错误码
+</span></span><span class="line"><span class="cl">退款政策历史版本
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这些都包含“退款”。</p>
+<p>但真正相关的是“退款到账时间”。</p>
+<p>rerank 可以结合 query 和候选全文，判断更细粒度的相关性。</p>
+<h2 id="33-多路召回会带来更多噪声">3.3 多路召回会带来更多噪声
+</h2><p>多路召回为了提高覆盖率，通常会引入更多候选。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">原始 query 召回 20 条
+</span></span><span class="line"><span class="cl">改写 query 召回 20 条
+</span></span><span class="line"><span class="cl">BM25 召回 20 条
+</span></span><span class="line"><span class="cl">HyDE 召回 20 条
+</span></span><span class="line"><span class="cl">summary index 召回 10 条
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>合并去重后可能还有几十条。</p>
+<p>这些候选来源不同、分数不同、噪声也不同。</p>
+<p>这时 rerank 很重要。</p>
+<p>它负责在多路候选里统一判断相关性。</p>
+<h2 id="34-召回分数不可直接比较">3.4 召回分数不可直接比较
+</h2><p>不同召回通道的分数通常不可直接比较。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">BM25 score = 18.7
+</span></span><span class="line"><span class="cl">cosine score = 0.82
+</span></span><span class="line"><span class="cl">graph score = 2 hops
+</span></span><span class="line"><span class="cl">summary score = 0.76
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这些分数不是一个尺度。</p>
+<p>融合算法可以做初步合并。</p>
+<p>但最终候选是否真的回答 query，仍然适合通过 rerank 再判断一次。</p>
+<h2 id="35-top-k-有-token-预算约束">3.5 top-k 有 token 预算约束
+</h2><p>LLM 上下文不是无限的。</p>
+<p>即使召回了 50 个候选，也不可能全部放进 prompt。</p>
+<p>通常只能放：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">top 5 到 top 10 个 chunk
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这意味着前几名质量非常重要。</p>
+<p>rerank 的价值就在于：</p>
+<blockquote>
+<p>把有限上下文窗口留给最有价值的证据。</p></blockquote>
+<h1 id="四rerank-的常见方式">四、Rerank 的常见方式
+</h1><h2 id="41-cross-encoder-rerank">4.1 Cross-Encoder Rerank
+</h2><p>Cross-Encoder 是 RAG 里最常见的 rerank 方式之一。</p>
+<p>它把 query 和 candidate 放在一起输入模型：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">[query] + [candidate]
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>模型直接输出相关性分数。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">query: Pro 套餐每月 API 调用额度是多少？
+</span></span><span class="line"><span class="cl">candidate: Pro 套餐每月包含 100 万次 API 调用，超出部分按量计费。
+</span></span><span class="line"><span class="cl">score: 0.93
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>Cross-Encoder 的核心特点是：</p>
+<blockquote>
+<p>它能让 query 和 candidate 在模型内部充分交互。</p></blockquote>
+<p>所以它通常比单纯向量相似度更适合做精细相关性判断。</p>
+<h2 id="42-bi-encoder-和-cross-encoder-的区别">4.2 Bi-Encoder 和 Cross-Encoder 的区别
+</h2><p>向量召回通常使用 Bi-Encoder。</p>
+<p>也就是 query 和 document 分别编码：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">query -&gt; query vector
+</span></span><span class="line"><span class="cl">document -&gt; document vector
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>然后计算向量相似度。</p>
+<p>优点是：</p>
+<ul>
+<li>文档向量可以提前离线算好</li>
+<li>查询时速度快</li>
+<li>适合大规模召回</li>
+</ul>
+<p>缺点是：</p>
+<ul>
+<li>query 和 document 交互有限</li>
+<li>对细粒度匹配判断不如 Cross-Encoder</li>
+</ul>
+<p>Cross-Encoder 是把 query 和 candidate 一起编码：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">[query, candidate] -&gt; relevance score
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>优点是：</p>
+<ul>
+<li>相关性判断更精细</li>
+<li>更能识别条件、否定、数字、上下文</li>
+</ul>
+<p>缺点是：</p>
+<ul>
+<li>每个 query-candidate pair 都要跑模型</li>
+<li>成本高</li>
+<li>延迟高</li>
+<li>不适合全库搜索</li>
+</ul>
+<p>所以常见组合是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Bi-Encoder 召回 top-50
+</span></span><span class="line"><span class="cl">Cross-Encoder rerank top-50
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="43-cross-encoder-为什么更准">4.3 Cross-Encoder 为什么更准
+</h2><p>因为它不是简单比较两个独立向量。</p>
+<p>它会在模型内部同时看 query 和 candidate。</p>
+<p>例如 query 是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 套餐每月 API 调用额度是多少？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>候选 A：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 套餐每月包含 100 万次 API 调用。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>候选 B：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Basic 套餐每月包含 10 万次 API 调用。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这两个候选都很像。</p>
+<p>向量检索可能都给较高分。</p>
+<p>但 Cross-Encoder 更容易注意到：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">query 里是 Pro
+</span></span><span class="line"><span class="cl">候选 B 是 Basic
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>所以候选 A 应该排在候选 B 前面。</p>
+<h2 id="44-llm-rerank">4.4 LLM Rerank
+</h2><p>LLM Rerank 是用大模型判断候选相关性。</p>
+<p>常见做法是把 query 和候选列表交给 LLM，让它输出排序或分数。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户问题：
+</span></span><span class="line"><span class="cl">Pro 套餐每月 API 调用额度是多少？
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">候选：
+</span></span><span class="line"><span class="cl">1. Basic 套餐每月包含 10 万次 API 调用。
+</span></span><span class="line"><span class="cl">2. Pro 套餐每月包含 100 万次 API 调用。
+</span></span><span class="line"><span class="cl">3. Pro 套餐月费为 299 元。
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">请按能否回答用户问题排序，并说明是否直接包含答案。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>LLM 可以输出：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">[</span>
+</span></span><span class="line"><span class="cl">  <span class="p">{</span> <span class="nt">&#34;id&#34;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span> <span class="nt">&#34;score&#34;</span><span class="p">:</span> <span class="mf">0.95</span><span class="p">,</span> <span class="nt">&#34;reason&#34;</span><span class="p">:</span> <span class="s2">&#34;直接回答 API 调用额度&#34;</span> <span class="p">},</span>
+</span></span><span class="line"><span class="cl">  <span class="p">{</span> <span class="nt">&#34;id&#34;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span> <span class="nt">&#34;score&#34;</span><span class="p">:</span> <span class="mf">0.35</span><span class="p">,</span> <span class="nt">&#34;reason&#34;</span><span class="p">:</span> <span class="s2">&#34;同属 Pro 套餐，但回答的是月费&#34;</span> <span class="p">},</span>
+</span></span><span class="line"><span class="cl">  <span class="p">{</span> <span class="nt">&#34;id&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="nt">&#34;score&#34;</span><span class="p">:</span> <span class="mf">0.10</span><span class="p">,</span> <span class="nt">&#34;reason&#34;</span><span class="p">:</span> <span class="s2">&#34;套餐不匹配&#34;</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">]</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>LLM Rerank 的优点是灵活。</p>
+<p>它可以结合复杂规则、问题意图、候选解释做判断。</p>
+<p>缺点是：</p>
+<ul>
+<li>成本高</li>
+<li>延迟高</li>
+<li>输出不稳定</li>
+<li>需要严格 JSON 约束</li>
+<li>候选太多时上下文压力大</li>
+</ul>
+<h2 id="45-规则重排">4.5 规则重排
+</h2><p>除了模型重排，还可以做规则重排。</p>
+<p>例如：</p>
+<ul>
+<li>最新版本优先</li>
+<li>active 文档优先</li>
+<li>官方文档优先</li>
+<li>当前产品线优先</li>
+<li>当前地区优先</li>
+<li>用户有权限的内容优先</li>
+<li>废弃文档降权</li>
+</ul>
+<p>规则重排可以写成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">final_score =
+</span></span><span class="line"><span class="cl">  rerank_score
+</span></span><span class="line"><span class="cl">  + version_boost
+</span></span><span class="line"><span class="cl">  + authority_boost
+</span></span><span class="line"><span class="cl">  + freshness_boost
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>但要注意：</p>
+<blockquote>
+<p>规则加权不能压过真实相关性。</p></blockquote>
+<p>如果一个 chunk 根本不回答问题，不能只因为它更新更近就排到最前面。</p>
+<h2 id="46-业务特征重排">4.6 业务特征重排
+</h2><p>有些系统会引入业务特征。</p>
+<p>例如：</p>
+<ul>
+<li>文档点击率</li>
+<li>用户反馈</li>
+<li>历史命中率</li>
+<li>文档权威等级</li>
+<li>文档维护部门</li>
+<li>最近更新时间</li>
+<li>用户所在部门</li>
+</ul>
+<p>这些特征可以辅助排序。</p>
+<p>例如客服知识库里，一个被大量客服采纳的 FAQ，可能应该略微加权。</p>
+<p>但业务特征最好做辅助。</p>
+<p>RAG 的最终目标仍然是回答当前 query。</p>
+<h1 id="五cross-encoder-rerank-详解">五、Cross-Encoder Rerank 详解
+</h1><h2 id="51-输入格式">5.1 输入格式
+</h2><p>Cross-Encoder 的输入通常是一对文本：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">query
+</span></span><span class="line"><span class="cl">candidate
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>在 RAG 里，candidate 不应该只是裸 content。</p>
+<p>更好的输入是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">标题：计费系统说明
+</span></span><span class="line"><span class="cl">章节：套餐规则 &gt; Pro 套餐 &gt; API 调用限制
+</span></span><span class="line"><span class="cl">正文：Pro 套餐每月包含 100 万次 API 调用，超出部分按量计费。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>原因是很多 chunk 依赖标题和章节路径。</p>
+<p>如果只输入正文：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">每月包含 100 万次调用。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>模型很难判断它是不是回答了 query。</p>
+<h2 id="52-输出分数">5.2 输出分数
+</h2><p>Cross-Encoder 通常输出一个相关性分数。</p>
+<p>常见形式包括：</p>
+<ul>
+<li>0 到 1 的概率分数</li>
+<li>未归一化 logit</li>
+<li>相关 / 不相关分类</li>
+<li>多等级相关性分数</li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;billing_chunk_012&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;rerank_score&#34;</span><span class="p">:</span> <span class="mf">0.93</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>不同模型的分数不可随便比较。</p>
+<p>同一个模型内的分数可以用于排序。</p>
+<p>但换模型后，阈值和分数分布通常需要重新评估。</p>
+<h2 id="53-模型训练目标">5.3 模型训练目标
+</h2><p>Cross-Encoder 常见训练数据是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">query, positive passage, negative passage
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>训练目标是让正样本分数高，负样本分数低。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">query: Pro 套餐 API 调用额度是多少？
+</span></span><span class="line"><span class="cl">positive: Pro 套餐每月包含 100 万次 API 调用。
+</span></span><span class="line"><span class="cl">negative: Basic 套餐每月包含 10 万次 API 调用。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这种 hard negative 很重要。</p>
+<p>因为它能让模型学会区分看起来相似但答案条件不同的候选。</p>
+<h2 id="54-cross-encoder-的优点">5.4 Cross-Encoder 的优点
+</h2><p>优点包括：</p>
+<ul>
+<li>相关性判断更精细</li>
+<li>能处理 query 和候选之间的细节匹配</li>
+<li>对条件、否定、数字更敏感</li>
+<li>可以显著提升 top-k 质量</li>
+<li>适合召回后候选排序</li>
+</ul>
+<p>例如用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">哪些虚拟商品支持退款？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>候选里如果有：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">虚拟商品一经发货不支持退款。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>Cross-Encoder 更可能判断它不是“支持退款”的直接答案，而是一个否定规则。</p>
+<h2 id="55-cross-encoder-的缺点">5.5 Cross-Encoder 的缺点
+</h2><p>缺点也很明显：</p>
+<ul>
+<li>慢</li>
+<li>贵</li>
+<li>不能提前离线计算候选分数</li>
+<li>每次 query 都要对候选逐个打分</li>
+<li>候选越多，成本越高</li>
+<li>输入长度有限</li>
+</ul>
+<p>所以 Cross-Encoder 通常不会直接用于全库检索。</p>
+<p>它更适合处理召回后的几十个候选。</p>
+<h2 id="56-候选数量怎么选">5.6 候选数量怎么选
+</h2><p>一个常见起点是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回 top-50
+</span></span><span class="line"><span class="cl">rerank top-50
+</span></span><span class="line"><span class="cl">最终取 top-5 到 top-10
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>但这不是固定标准。</p>
+<p>如果候选太少：</p>
+<ul>
+<li>正确 chunk 可能没机会被重排</li>
+<li>rerank 再准也没用</li>
+</ul>
+<p>如果候选太多：</p>
+<ul>
+<li>延迟增加</li>
+<li>成本增加</li>
+<li>可能超过 rerank 服务吞吐</li>
+</ul>
+<p>要通过评估集调参。</p>
+<p>常见对比包括：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">rerank top-20
+</span></span><span class="line"><span class="cl">rerank top-50
+</span></span><span class="line"><span class="cl">rerank top-100
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>看 Recall、MRR、NDCG、延迟和成本的变化。</p>
+<h1 id="六llm-rerank-详解">六、LLM Rerank 详解
+</h1><h2 id="61-llm-rerank-的适用场景">6.1 LLM Rerank 的适用场景
+</h2><p>LLM Rerank 适合这些场景：</p>
+<ul>
+<li>候选数量较少</li>
+<li>相关性判断很复杂</li>
+<li>需要结合业务规则解释</li>
+<li>query 依赖多轮上下文</li>
+<li>候选之间需要比较</li>
+<li>需要判断是否直接包含答案</li>
+</ul>
+<p>例如用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">这个合同在华东区是否仍然适用？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>候选可能涉及：</p>
+<ul>
+<li>合同正文</li>
+<li>地区条款</li>
+<li>生效时间</li>
+<li>过期时间</li>
+<li>补充协议</li>
+</ul>
+<p>这类判断可能比普通语义匹配复杂。</p>
+<h2 id="62-llm-rerank-的输入设计">6.2 LLM Rerank 的输入设计
+</h2><p>LLM Rerank 要控制输入。</p>
+<p>不要一次塞入过多长候选。</p>
+<p>一个常见格式是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户问题：
+</span></span><span class="line"><span class="cl">{query}
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">候选资料：
+</span></span><span class="line"><span class="cl">[1]
+</span></span><span class="line"><span class="cl">标题：...
+</span></span><span class="line"><span class="cl">章节：...
+</span></span><span class="line"><span class="cl">内容：...
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">[2]
+</span></span><span class="line"><span class="cl">标题：...
+</span></span><span class="line"><span class="cl">章节：...
+</span></span><span class="line"><span class="cl">内容：...
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">请判断每个候选是否能回答用户问题，输出 JSON：
+</span></span><span class="line"><span class="cl">[
+</span></span><span class="line"><span class="cl">  {&#34;id&#34;: 1, &#34;score&#34;: 0-100, &#34;reason&#34;: &#34;...&#34;},
+</span></span><span class="line"><span class="cl">  ...
+</span></span><span class="line"><span class="cl">]
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>要明确要求：</p>
+<ul>
+<li>只根据候选内容判断</li>
+<li>不要补充外部知识</li>
+<li>不要改写候选事实</li>
+<li>输出固定 JSON</li>
+<li>score 含义清晰</li>
+</ul>
+<h2 id="63-llm-rerank-的输出约束">6.3 LLM Rerank 的输出约束
+</h2><p>LLM 输出如果不稳定，会给工程系统带来麻烦。</p>
+<p>所以最好使用固定 schema。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;results&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;id&#34;</span><span class="p">:</span> <span class="s2">&#34;chunk_012&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;score&#34;</span><span class="p">:</span> <span class="mi">92</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;label&#34;</span><span class="p">:</span> <span class="s2">&#34;direct_answer&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;reason&#34;</span><span class="p">:</span> <span class="s2">&#34;直接包含 Pro 套餐 API 调用额度&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">  <span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>label</code> 可以设计成：</p>
+<ul>
+<li><code>direct_answer</code></li>
+<li><code>partial_answer</code></li>
+<li><code>related_background</code></li>
+<li><code>not_relevant</code></li>
+</ul>
+<p>这样比只输出一个排序更容易调试。</p>
+<h2 id="64-llm-rerank-的风险">6.4 LLM Rerank 的风险
+</h2><p>风险包括：</p>
+<ul>
+<li>成本高</li>
+<li>延迟高</li>
+<li>输出格式不稳定</li>
+<li>可能被候选中的无关内容带偏</li>
+<li>可能使用模型自带知识判断</li>
+<li>候选多时上下文超限</li>
+</ul>
+<p>所以 LLM Rerank 更适合作为增强策略，而不是所有请求默认使用。</p>
+<p>常见做法是：</p>
+<ul>
+<li>普通问题用 Cross-Encoder</li>
+<li>复杂问题或低置信度问题用 LLM Rerank</li>
+<li>高价值场景使用 LLM Rerank 做二次校验</li>
+</ul>
+<h1 id="七规则重排与业务重排">七、规则重排与业务重排
+</h1><h2 id="71-规则重排解决什么问题">7.1 规则重排解决什么问题
+</h2><p>模型 rerank 主要判断文本相关性。</p>
+<p>但生产系统还需要考虑业务约束。</p>
+<p>例如：</p>
+<ul>
+<li>文档是否 active</li>
+<li>是否当前版本</li>
+<li>是否当前地区适用</li>
+<li>来源是否权威</li>
+<li>是否过期</li>
+<li>用户是否有权限</li>
+</ul>
+<p>这些因素不完全是语义相关性。</p>
+<p>但会影响最终候选是否应该进入上下文。</p>
+<h2 id="72-强规则和弱规则">7.2 强规则和弱规则
+</h2><p>规则可以分成强规则和弱规则。</p>
+<p>强规则用于过滤。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">无权限文档不能进入候选
+</span></span><span class="line"><span class="cl">废弃文档不能进入上下文
+</span></span><span class="line"><span class="cl">其他租户文档不能参与召回
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>弱规则用于加权。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">官方文档加一点分
+</span></span><span class="line"><span class="cl">最近更新文档加一点分
+</span></span><span class="line"><span class="cl">当前产品版本加一点分
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>不要把强规则做成轻微加权。</p>
+<p>权限、租户、状态这类约束应该直接过滤。</p>
+<h2 id="73-一个简单打分公式">7.3 一个简单打分公式
+</h2><p>可以设计一个最终分数：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">final_score =
+</span></span><span class="line"><span class="cl">  rerank_score
+</span></span><span class="line"><span class="cl">  + 0.05 * authority_boost
+</span></span><span class="line"><span class="cl">  + 0.03 * freshness_boost
+</span></span><span class="line"><span class="cl">  + 0.08 * version_boost
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>但这只是示意。</p>
+<p>实际权重必须通过评估集验证。</p>
+<p>如果业务 boost 太大，会导致不相关但“权威”的文档排到前面。</p>
+<h2 id="74-时间和版本重排">7.4 时间和版本重排
+</h2><p>时间和版本在 RAG 里非常重要。</p>
+<p>例如用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">现在的报销标准是多少？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>系统应该优先当前生效版本，而不是历史版本。</p>
+<p>更好的做法是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">先用 metadata filter 排除过期文档
+</span></span><span class="line"><span class="cl">再在候选中对当前版本加权
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>不要只靠模型判断版本。</p>
+<p>版本、生效时间、过期时间应该是结构化 metadata。</p>
+<h2 id="75-来源可信度重排">7.5 来源可信度重排
+</h2><p>不同来源的文档可信度可能不同。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">官方制度 &gt; 部门 Wiki &gt; 聊天记录 &gt; 用户评论
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>可以给来源设置权重。</p>
+<p>但要注意：</p>
+<blockquote>
+<p>来源可信度不能替代相关性。</p></blockquote>
+<p>官方文档如果不回答当前问题，也不应该排到最前面。</p>
+<h1 id="八多路召回后的重排">八、多路召回后的重排
+</h1><h2 id="81-多路召回为什么更需要-rerank">8.1 多路召回为什么更需要 rerank
+</h2><p>多路召回会带来更多候选。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">vector search top-30
+</span></span><span class="line"><span class="cl">BM25 top-30
+</span></span><span class="line"><span class="cl">query rewrite top-20
+</span></span><span class="line"><span class="cl">summary index top-10
+</span></span><span class="line"><span class="cl">graph retrieval top-10
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这些候选有不同来源。</p>
+<p>它们的分数不可直接比较。</p>
+<p>rerank 可以提供一个统一的相关性判断。</p>
+<h2 id="82-先融合还是先-rerank">8.2 先融合还是先 rerank
+</h2><p>常见做法是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">多路召回
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">去重
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">初步融合
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">截断到 N 个候选
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">rerank
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>为什么要先截断？</p>
+<p>因为 rerank 成本较高，不适合对几百上千个候选都打分。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回合并后 300 个候选
+</span></span><span class="line"><span class="cl">RRF 先取前 80
+</span></span><span class="line"><span class="cl">Cross-Encoder rerank 这 80 个
+</span></span><span class="line"><span class="cl">最终取 top-8
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="83-rrf-融合排序是什么">8.3 RRF 融合排序是什么
+</h2><p>RRF 是 <code>Reciprocal Rank Fusion</code>，可以理解成“倒数排名融合”。</p>
+<p>它常用于多路召回后的初步融合。</p>
+<p>例如系统同时用了：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">BM25 召回
+</span></span><span class="line"><span class="cl">向量召回
+</span></span><span class="line"><span class="cl">query rewrite 召回
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>每一路都会返回自己的排序。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">BM25:
+</span></span><span class="line"><span class="cl">1. chunk_A
+</span></span><span class="line"><span class="cl">2. chunk_B
+</span></span><span class="line"><span class="cl">3. chunk_C
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">向量召回:
+</span></span><span class="line"><span class="cl">1. chunk_D
+</span></span><span class="line"><span class="cl">2. chunk_A
+</span></span><span class="line"><span class="cl">3. chunk_E
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里有一个问题：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">BM25 score = 18.7
+</span></span><span class="line"><span class="cl">cosine score = 0.82
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这两个分数不是同一个尺度，不能简单相加。</p>
+<p>RRF 的做法是不直接比较原始分数，而是比较排名。</p>
+<p>常见公式是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">RRF_score(d) = sum(1 / (k + rank_i(d)))
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>其中：</p>
+<ul>
+<li><code>d</code> 是某个 chunk</li>
+<li><code>rank_i(d)</code> 是它在第 <code>i</code> 个召回通道里的排名</li>
+<li><code>k</code> 是平滑参数，常见取值是 60</li>
+</ul>
+<p>例如 <code>k = 60</code>。</p>
+<p><code>chunk_A</code> 在 BM25 里排第 1，在向量召回里排第 2：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">RRF_score(A)
+</span></span><span class="line"><span class="cl">= 1 / (60 + 1) + 1 / (60 + 2)
+</span></span><span class="line"><span class="cl">= 0.01639 + 0.01613
+</span></span><span class="line"><span class="cl">= 0.03252
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>chunk_D</code> 只在向量召回里排第 1：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">RRF_score(D)
+</span></span><span class="line"><span class="cl">= 1 / (60 + 1)
+</span></span><span class="line"><span class="cl">= 0.01639
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>所以 <code>chunk_A</code> 因为被多路召回同时命中，综合排名会更高。</p>
+<p>RRF 的优点是：</p>
+<ul>
+<li>不需要直接比较不同召回通道的原始分数</li>
+<li>对 BM25 + 向量检索这种混合召回很友好</li>
+<li>实现简单</li>
+<li>多路都排前的候选会自然加权</li>
+<li>单路特别靠前的候选也能保留机会</li>
+</ul>
+<p>在 RAG 里，RRF 通常不是最终精排。</p>
+<p>它更像 rerank 前的初步融合和截断方式：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">多路召回
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">RRF 融合排序
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">取前 N 个候选
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Cross-Encoder / LLM rerank
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="84-去重很重要">8.4 去重很重要
+</h2><p>多路召回里，同一个 chunk 可能被多次召回。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">chunk_012 同时来自 vector、BM25、query rewrite
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>rerank 前应该按 <code>chunk_id</code> 去重。</p>
+<p>否则同一个内容可能多次进入候选，浪费 rerank 成本，也可能挤掉其他有用证据。</p>
+<h2 id="85-保留召回来源特征">8.5 保留召回来源特征
+</h2><p>虽然 rerank 主要看 query 和候选内容，但召回来源仍然有价值。</p>
+<p>可以保留：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;chunk_012&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;recall_sources&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;vector&#34;</span><span class="p">,</span> <span class="s2">&#34;bm25&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;vector_rank&#34;</span><span class="p">:</span> <span class="mi">4</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;bm25_rank&#34;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;rrf_score&#34;</span><span class="p">:</span> <span class="mf">0.034</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这些特征可以用于：</p>
+<ul>
+<li>调试</li>
+<li>规则加权</li>
+<li>失败归因</li>
+<li>训练 Learning-to-Rank 模型</li>
+</ul>
+<h1 id="九上下文组装和重排的关系">九、上下文组装和重排的关系
+</h1><h2 id="91-rerank-top-k-不等于最终上下文">9.1 rerank top-k 不等于最终上下文
+</h2><p>rerank 排名前几的 chunk，不一定全部直接放进 prompt。</p>
+<p>上下文组装还要考虑：</p>
+<ul>
+<li>token 预算</li>
+<li>chunk 长度</li>
+<li>文档多样性</li>
+<li>是否重复</li>
+<li>是否相邻</li>
+<li>引用顺序</li>
+<li>是否需要 parent chunk</li>
+</ul>
+<p>例如 top-5 全部来自同一文档相邻位置，可能应该合并成一个更完整上下文。</p>
+<h2 id="92-相邻-chunk-合并">9.2 相邻 chunk 合并
+</h2><p>如果 rerank 命中了：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">doc_001_chunk_010
+</span></span><span class="line"><span class="cl">doc_001_chunk_011
+</span></span><span class="line"><span class="cl">doc_001_chunk_012
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>它们可能是同一小节的连续片段。</p>
+<p>上下文组装时可以合并。</p>
+<p>这样能减少重复标题和碎片化内容。</p>
+<h2 id="93-parent-chunk-补上下文">9.3 parent chunk 补上下文
+</h2><p>如果使用 parent-child retrieval，rerank 可能发生在 child chunk 上。</p>
+<p>命中 child 后，最终放入 prompt 的可能是 parent chunk。</p>
+<p>流程是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">child chunk 召回
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">child chunk rerank
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">取对应 parent chunk
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">上下文组装
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样既能保持检索精度，又能给 LLM 更完整的上下文。</p>
+<h2 id="94-多样性控制">9.4 多样性控制
+</h2><p>有时 top-k 都来自同一文档。</p>
+<p>如果问题需要多个角度，可能要控制多样性。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">每个文档最多保留 2 个 chunk
+</span></span><span class="line"><span class="cl">每个章节最多保留 1 个 chunk
+</span></span><span class="line"><span class="cl">优先覆盖不同证据来源
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这不是 rerank 模型本身的问题，而是上下文组装策略。</p>
+<h1 id="十rerank-的工程实现">十、Rerank 的工程实现
+</h1><h2 id="101-一个典型实现流程">10.1 一个典型实现流程
+</h2><p>工程上可以这样做：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">query
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">多路召回 top-k
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">候选去重
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">构造 rerank 输入文本
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">批量调用 rerank 模型
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">得到 rerank_score
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">结合规则和 metadata
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">排序
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">交给 context packing
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="102-rerank-输入文本模板">10.2 rerank 输入文本模板
+</h2><p>候选输入不建议只用裸 content。</p>
+<p>可以使用：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">标题：{title}
+</span></span><span class="line"><span class="cl">章节路径：{section_path}
+</span></span><span class="line"><span class="cl">正文：
+</span></span><span class="line"><span class="cl">{content}
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>对于表格：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">表格：{table_title}
+</span></span><span class="line"><span class="cl">列名和值：
+</span></span><span class="line"><span class="cl">- 套餐：Pro
+</span></span><span class="line"><span class="cl">- 月费：299 元
+</span></span><span class="line"><span class="cl">- API 调用次数：100 万次/月
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>对于代码：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">文件：{file_path}
+</span></span><span class="line"><span class="cl">符号：{symbol_name}
+</span></span><span class="line"><span class="cl">说明：{docstring}
+</span></span><span class="line"><span class="cl">代码：
+</span></span><span class="line"><span class="cl">{code}
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>输入模板会影响 rerank 效果。</p>
+<h2 id="103-候选截断">10.3 候选截断
+</h2><p>rerank 模型也有最大输入长度。</p>
+<p>如果 chunk 太长，需要截断。</p>
+<p>但截断不能随便从开头截一段。</p>
+<p>更好的做法是保留：</p>
+<ul>
+<li>title</li>
+<li>section_path</li>
+<li>和 query 命中的关键段落</li>
+<li>表格表头</li>
+<li>代码函数签名</li>
+<li>关键上下文</li>
+</ul>
+<p>如果一个 candidate 太长，可能说明 chunk 设计本身需要优化。</p>
+<h2 id="104-批量推理">10.4 批量推理
+</h2><p>rerank 通常要对多个候选打分。</p>
+<p>例如一个 query 有 50 个候选，就有 50 个 pair。</p>
+<p>应该批量调用：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">batch: [
+</span></span><span class="line"><span class="cl">  (query, candidate_1),
+</span></span><span class="line"><span class="cl">  (query, candidate_2),
+</span></span><span class="line"><span class="cl">  ...
+</span></span><span class="line"><span class="cl">]
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样可以提升吞吐。</p>
+<p>要注意：</p>
+<ul>
+<li>batch size</li>
+<li>单条输入长度</li>
+<li>GPU 显存</li>
+<li>超时</li>
+<li>部分失败重试</li>
+</ul>
+<h2 id="105-缓存">10.5 缓存
+</h2><p>rerank 可以做缓存，但命中率不一定高。</p>
+<p>适合缓存的场景：</p>
+<ul>
+<li>热门问题</li>
+<li>FAQ</li>
+<li>固定候选集</li>
+<li>企业内部高频问答</li>
+</ul>
+<p>缓存 key 可以包含：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">query_normalized
+</span></span><span class="line"><span class="cl">candidate_ids
+</span></span><span class="line"><span class="cl">rerank_model_version
+</span></span><span class="line"><span class="cl">rerank_template_version
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果文档更新或模型升级，要让缓存失效。</p>
+<h2 id="106-降级策略">10.6 降级策略
+</h2><p>rerank 服务可能超时或不可用。</p>
+<p>需要降级策略。</p>
+<p>例如：</p>
+<ul>
+<li>使用召回融合分数排序</li>
+<li>只用 BM25 + vector 的 RRF 排序</li>
+<li>减少 rerank 候选数量</li>
+<li>对低价值请求跳过 rerank</li>
+<li>使用更小 rerank 模型</li>
+</ul>
+<p>降级时要记录日志，方便评估影响。</p>
+<h2 id="107-观测日志">10.7 观测日志
+</h2><p>rerank 日志应该记录：</p>
+<ul>
+<li>query</li>
+<li>candidate chunk ids</li>
+<li>召回来源</li>
+<li>召回原始排名</li>
+<li>rerank_score</li>
+<li>最终排名</li>
+<li>是否进入上下文</li>
+<li>rerank_model_version</li>
+<li>rerank_latency</li>
+</ul>
+<p>没有这些日志，很难判断 rerank 是否真的有效。</p>
+<h1 id="十一rerank-参数怎么调">十一、Rerank 参数怎么调
+</h1><h2 id="111-召回-top-k">11.1 召回 top-k
+</h2><p>rerank 的候选来自召回。</p>
+<p>如果召回 top-k 太小，正确 chunk 可能进不来。</p>
+<p>常见起点：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回 top-50
+</span></span><span class="line"><span class="cl">rerank top-50
+</span></span><span class="line"><span class="cl">最终取 top-5 到 top-10
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>但具体要看业务和评估集。</p>
+<h2 id="112-rerank-候选数量">11.2 rerank 候选数量
+</h2><p>rerank 候选数量越多，理论上越有机会把正确 chunk 排上来。</p>
+<p>但代价是：</p>
+<ul>
+<li>延迟更高</li>
+<li>成本更高</li>
+<li>吞吐更低</li>
+</ul>
+<p>可以做实验：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">rerank 20
+</span></span><span class="line"><span class="cl">rerank 50
+</span></span><span class="line"><span class="cl">rerank 100
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>比较：</p>
+<ul>
+<li>NDCG@5</li>
+<li>MRR</li>
+<li>answer accuracy</li>
+<li>latency</li>
+<li>cost</li>
+</ul>
+<h2 id="113-最终保留-top-n">11.3 最终保留 top-n
+</h2><p>rerank 后最终保留多少 chunk，要结合上下文窗口。</p>
+<p>如果保留太少：</p>
+<ul>
+<li>证据不完整</li>
+<li>多跳问题缺少中间证据</li>
+</ul>
+<p>如果保留太多：</p>
+<ul>
+<li>噪声增加</li>
+<li>token 成本增加</li>
+<li>模型注意力被分散</li>
+</ul>
+<p>常见起点是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">top 5 到 top 10
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>但法律、合同、技术文档可能需要更多上下文。</p>
+<h2 id="114-分数阈值">11.4 分数阈值
+</h2><p>可以设置 rerank score threshold。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">只保留 rerank_score &gt;= 0.45 的候选
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>但阈值必须基于评估集。</p>
+<p>不同模型的分数分布不同。</p>
+<p>不要直接复用另一个模型的阈值。</p>
+<h2 id="115-多样性和相关性的平衡">11.5 多样性和相关性的平衡
+</h2><p>如果只按 rerank score 排序，可能 top-k 都来自同一章节。</p>
+<p>可以加入多样性约束：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">同一 doc 最多 3 个 chunk
+</span></span><span class="line"><span class="cl">同一 section 最多 2 个 chunk
+</span></span><span class="line"><span class="cl">保留不同召回通道命中的候选
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>但多样性不能过强。</p>
+<p>如果最相关证据确实都在同一章节，就不要硬拆散。</p>
+<h1 id="十二rerank-评估">十二、Rerank 评估
+</h1><h2 id="121-rerank-评估看什么">12.1 rerank 评估看什么
+</h2><p>rerank 评估的核心问题是：</p>
+<blockquote>
+<p>重排之后，真正有用的证据有没有被排到更靠前的位置？</p></blockquote>
+<p>它不是只看模型有没有输出分数。</p>
+<p>更重要的是看这些分数是否真的改善了最终排序。</p>
+<p>评估时通常关注：</p>
+<ul>
+<li>正确 chunk 是否被排到更前</li>
+<li>top 几条候选是否更干净</li>
+<li>噪声是否被压下去</li>
+<li>最终答案是否提升</li>
+<li>延迟和成本是否可接受</li>
+</ul>
+<p>这里有两个层次。</p>
+<p>第一层是检索排序指标。</p>
+<p>也就是只看候选排序本身：</p>
+<ul>
+<li>MRR</li>
+<li>NDCG</li>
+<li>Precision@k</li>
+</ul>
+<p>第二层是端到端指标。</p>
+<p>也就是看最终问答效果：</p>
+<ul>
+<li>答案是否正确</li>
+<li>是否引用了正确证据</li>
+<li>是否少幻觉</li>
+<li>用户是否满意</li>
+</ul>
+<p>rerank 首先应该改善排序指标。</p>
+<p>但最终还是要看它是否能改善答案质量。</p>
+<h2 id="122-评估前先准备什么">12.2 评估前先准备什么
+</h2><p>评估 rerank 之前，需要有一批评估样本。</p>
+<p>每条样本至少包含：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;query&#34;</span><span class="p">:</span> <span class="s2">&#34;Pro 套餐每月 API 调用额度是多少？&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;candidate_chunks&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;chunk_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;chunk_002&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;chunk_003&#34;</span>
+</span></span><span class="line"><span class="cl">  <span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;golden_chunk_ids&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;chunk_003&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里有几个名词。</p>
+<p><code>query</code> 是用户问题。</p>
+<p><code>candidate_chunks</code> 是召回阶段给 rerank 的候选。</p>
+<p><code>golden_chunk_ids</code> 是人工标注的正确证据 chunk。</p>
+<p>如果一个问题需要多个证据，也可以给每个 chunk 标相关性等级。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_api_limit&#34;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_overage_billing&#34;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_price&#34;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_basic_plan&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_login&#34;</span><span class="p">:</span> <span class="mi">0</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>其中：</p>
+<ul>
+<li>3：直接回答问题</li>
+<li>2：重要背景</li>
+<li>1：弱相关</li>
+<li>0：不相关</li>
+</ul>
+<p>没有这些标注，就很难客观判断 rerank 到底有没有变好。</p>
+<h2 id="123-什么是-k">12.3 什么是 @k
+</h2><p>很多指标后面会带 <code>@k</code>。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Precision@5
+</span></span><span class="line"><span class="cl">NDCG@10
+</span></span><span class="line"><span class="cl">Recall@50
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里的 <code>k</code> 表示：</p>
+<blockquote>
+<p>只看排序结果里的前 k 个。</p></blockquote>
+<p>例如 <code>Precision@5</code> 就是只看前 5 个结果。</p>
+<p>为什么要看前 k 个？</p>
+<p>因为 RAG 最终不会把所有候选都放进 prompt。</p>
+<p>如果系统最终只放前 5 个 chunk，那么前 5 个的质量就非常重要。</p>
+<p>所以 rerank 评估经常看：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">MRR
+</span></span><span class="line"><span class="cl">NDCG@5
+</span></span><span class="line"><span class="cl">NDCG@10
+</span></span><span class="line"><span class="cl">Precision@5
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="124-mrr">12.4 MRR
+</h2><p>MRR 是 <code>Mean Reciprocal Rank</code>，中文可以叫“平均倒数排名”。</p>
+<p>它看的是：</p>
+<blockquote>
+<p>第一个正确结果排在第几位。</p></blockquote>
+<p>先理解单个问题的 <code>RR</code>。</p>
+<p><code>RR</code> 是 <code>Reciprocal Rank</code>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">RR = 1 / 第一个正确结果的排名
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">问题 A：第一个正确 chunk 排第 1
+</span></span><span class="line"><span class="cl">RR = 1 / 1 = 1
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">问题 B：第一个正确 chunk 排第 2
+</span></span><span class="line"><span class="cl">RR = 1 / 2 = 0.5
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">问题 C：第一个正确 chunk 排第 5
+</span></span><span class="line"><span class="cl">RR = 1 / 5 = 0.2
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>MRR 就是多个问题的 RR 平均值：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">MRR = 所有问题 RR 的平均值
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果 MRR 高，说明正确证据通常排得很靠前。</p>
+<p>如果：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Recall@50 很高
+</span></span><span class="line"><span class="cl">MRR 很低
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>说明正确 chunk 经常已经被召回了，但排得比较靠后。</p>
+<p>这通常就是 rerank 要解决的问题。</p>
+<p>MRR 适合评估：</p>
+<blockquote>
+<p>只要第一个正确证据尽快出现就很重要的场景。</p></blockquote>
+<p>但它也有局限。</p>
+<p>如果一个问题需要多个证据，MRR 只看第一个正确结果，不关心后面其他重要证据排得好不好。</p>
+<p>这时就更适合看 NDCG。</p>
+<h2 id="125-ndcg">12.5 NDCG
+</h2><p>NDCG 是 <code>Normalized Discounted Cumulative Gain</code>。</p>
+<p>中文通常叫“归一化折损累计增益”。</p>
+<p>这个名字很长，可以拆开理解。</p>
+<p><code>Gain</code> 是收益。</p>
+<p>也就是每个结果有多相关。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">直接答案 = 3 分
+</span></span><span class="line"><span class="cl">重要背景 = 2 分
+</span></span><span class="line"><span class="cl">弱相关 = 1 分
+</span></span><span class="line"><span class="cl">不相关 = 0 分
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>Discounted</code> 是折损。</p>
+<p>也就是排名越靠后，价值越低。</p>
+<p>同样是 3 分证据：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">排第 1 位
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>比：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">排第 10 位
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>更有价值。</p>
+<p><code>Cumulative</code> 是累计。</p>
+<p>也就是把前 k 个结果的收益加起来。</p>
+<p><code>Normalized</code> 是归一化。</p>
+<p>也就是把当前排序和理想排序做比较，把分数压到 0 到 1 之间。</p>
+<p>可以简化理解为：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">DCG：当前排序的折损累计收益
+</span></span><span class="line"><span class="cl">IDCG：理想排序下的最大 DCG
+</span></span><span class="line"><span class="cl">NDCG = DCG / IDCG
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>先单独看 <code>DCG</code>。</p>
+<p><code>DCG</code> 是 <code>Discounted Cumulative Gain</code>，也就是“折损累计增益”。</p>
+<p>它衡量的是：</p>
+<blockquote>
+<p>前 k 个排序结果的相关性收益总和，但越靠后的结果贡献越小。</p></blockquote>
+<p>常见公式之一是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">DCG@k = sum( rel_i / log2(i + 1) )
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>其中：</p>
+<ul>
+<li><code>i</code> 是排名位置，从 1 开始</li>
+<li><code>rel_i</code> 是第 <code>i</code> 个结果的相关性分数</li>
+<li><code>log2(i + 1)</code> 是位置折损因子</li>
+</ul>
+<p>例如一个排序结果是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">第 1 名：3 分
+</span></span><span class="line"><span class="cl">第 2 名：2 分
+</span></span><span class="line"><span class="cl">第 3 名：0 分
+</span></span><span class="line"><span class="cl">第 4 名：1 分
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果只是简单相加：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">3 + 2 + 0 + 1 = 6
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>但 DCG 会认为第 4 名的 1 分不如第 1 名的 1 分重要，所以要按位置折损：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">第 1 名：3 / log2(2) = 3
+</span></span><span class="line"><span class="cl">第 2 名：2 / log2(3) ≈ 1.26
+</span></span><span class="line"><span class="cl">第 3 名：0 / log2(4) = 0
+</span></span><span class="line"><span class="cl">第 4 名：1 / log2(5) ≈ 0.43
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>所以：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">DCG@4 ≈ 3 + 1.26 + 0 + 0.43 = 4.69
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这就是 DCG 的直观含义：</p>
+<blockquote>
+<p>相关性越高越好，排得越靠前越好；排得越靠后，贡献越打折。</p></blockquote>
+<p>其中 <code>IDCG</code> 是最理想排序。</p>
+<p>也就是把最相关的结果放第 1，次相关的放第 2，再次相关的放第 3。</p>
+<p>所以：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">NDCG = 1
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>表示当前排序和理想排序一样好。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">NDCG 越低
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>表示高相关结果越没有排到前面。</p>
+<p>举个 RAG 例子。</p>
+<p>用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 套餐有哪些计费限制？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>候选相关性可以标成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">chunk A：直接说明 API 调用额度，3 分
+</span></span><span class="line"><span class="cl">chunk B：说明超额计费规则，3 分
+</span></span><span class="line"><span class="cl">chunk C：说明 Pro 套餐价格，2 分
+</span></span><span class="line"><span class="cl">chunk D：说明 Basic 套餐限制，1 分
+</span></span><span class="line"><span class="cl">chunk E：登录流程，0 分
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果 rerank 后排序是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">A, B, C, D, E
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这就很好。</p>
+<p>如果排序是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">D, E, C, A, B
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>就比较差。</p>
+<p>因为最有价值的 A、B 被排到了后面。</p>
+<p>NDCG 适合评估：</p>
+<ul>
+<li>一个问题有多个相关 chunk</li>
+<li>不同 chunk 相关程度不同</li>
+<li>你关心 top-k 整体排序质量</li>
+<li>你希望直接答案排在背景信息前面</li>
+</ul>
+<p>常见写法是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">NDCG@5
+</span></span><span class="line"><span class="cl">NDCG@10
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>意思是只评估前 5 或前 10 个结果的排序质量。</p>
+<h2 id="126-precisionk">12.6 Precision@k
+</h2><p>Precision 是“精确率”。</p>
+<p><code>Precision@k</code> 看的是：</p>
+<blockquote>
+<p>前 k 个结果里，有多少是真的相关。</p></blockquote>
+<p>公式可以简化为：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Precision@k = 前 k 个结果里的相关 chunk 数 / k
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>例如 <code>Precision@5</code>。</p>
+<p>如果 rerank 后前 5 个结果里有 4 个相关：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Precision@5 = 4 / 5 = 0.8
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>Precision@k 适合看最终上下文是否干净。</p>
+<p>因为很多 RAG 系统最终只会把前 5 到 10 个 chunk 放进 prompt。</p>
+<p>如果 <code>Precision@5</code> 很低，说明前几条里混入了很多噪声。</p>
+<p>这会影响 LLM 生成答案。</p>
+<p>Precision@k 的局限是：</p>
+<blockquote>
+<p>它不太区分“直接答案”和“弱相关背景”。</p></blockquote>
+<p>只要都被标成相关，它们对 Precision 的贡献可能一样。</p>
+<p>所以如果你关心相关程度高低，NDCG 更合适。</p>
+<h2 id="127-recallk-和-rerank-的关系">12.7 Recall@k 和 rerank 的关系
+</h2><p>Recall 是“召回率”。</p>
+<p>它看的是：</p>
+<blockquote>
+<p>正确证据有没有出现在前 k 个结果里。</p></blockquote>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Recall@50 = 正确 chunk 出现在召回 top-50 的问题比例
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>严格来说，Recall 更常用于召回阶段。</p>
+<p>但评估 rerank 时也会看它。</p>
+<p>原因是：</p>
+<blockquote>
+<p>rerank 的前提是正确 chunk 已经进入候选集。</p></blockquote>
+<p>如果召回阶段的 <code>Recall@50</code> 很低，说明正确证据根本没进入 rerank 候选。</p>
+<p>这时 rerank 模型再强也没有用。</p>
+<p>所以一个常见判断是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Recall@50 低：先修召回
+</span></span><span class="line"><span class="cl">Recall@50 高，MRR/NDCG 低：重点修 rerank
+</span></span><span class="line"><span class="cl">MRR/NDCG 高，答案仍错：看上下文组装和生成
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="128-和无-rerank-baseline-对比">12.8 和无 rerank baseline 对比
+</h2><p>评估 rerank 一定要有 baseline。</p>
+<p><code>baseline</code> 是基准方案。</p>
+<p>也就是：</p>
+<blockquote>
+<p>如果不加 rerank，系统原本效果是多少？</p></blockquote>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">baseline：
+</span></span><span class="line"><span class="cl">RRF 融合后直接取 top-5
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">实验组：
+</span></span><span class="line"><span class="cl">RRF top-50 后 Cross-Encoder rerank，再取 top-5
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>然后比较：</p>
+<ul>
+<li>MRR 是否提升</li>
+<li>NDCG@5 是否提升</li>
+<li>Precision@5 是否提升</li>
+<li>答案正确率是否提升</li>
+<li>延迟增加多少</li>
+<li>成本增加多少</li>
+</ul>
+<p>如果指标只提升一点点，但延迟和成本增加很多，就要重新考虑是否默认启用 rerank。</p>
+<h2 id="129-分-query-类型评估">12.9 分 query 类型评估
+</h2><p>不要只看整体平均分。</p>
+<p>要按问题类型分开看。</p>
+<p>常见类型包括：</p>
+<ul>
+<li>精确事实</li>
+<li>多跳问题</li>
+<li>版本时间问题</li>
+<li>表格问题</li>
+<li>代码问题</li>
+<li>长文档问题</li>
+<li>无答案问题</li>
+</ul>
+<p>为什么要分开？</p>
+<p>因为一个 rerank 模型可能整体平均分变高，但对某类问题变差。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">整体 NDCG@5 提升
+</span></span><span class="line"><span class="cl">但代码问题 NDCG@5 下降
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果你的业务里代码问答很重要，这个 rerank 方案就未必能直接上线。</p>
+<p>这种按类型拆开看的方法，也常叫分桶评估。</p>
+<h2 id="1210-一个实用评估顺序">12.10 一个实用评估顺序
+</h2><p>可以按下面顺序看指标：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1. 先看召回 Recall@k
+</span></span><span class="line"><span class="cl">2. 再看 rerank MRR
+</span></span><span class="line"><span class="cl">3. 再看 NDCG@5 / NDCG@10
+</span></span><span class="line"><span class="cl">4. 再看 Precision@5
+</span></span><span class="line"><span class="cl">5. 最后看答案正确率、延迟和成本
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这个顺序的原因是：</p>
+<p>如果正确 chunk 没被召回，就先别怪 rerank。</p>
+<p>如果正确 chunk 被召回了但排得靠后，再优化 rerank。</p>
+<p>如果 rerank 排序很好但答案仍然错，就要看上下文组装和生成。</p>
+<p>一个简单判断表是：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>现象</th>
+          <th>更可能的问题</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Recall@50 低</td>
+          <td>召回问题</td>
+      </tr>
+      <tr>
+          <td>Recall@50 高，MRR 低</td>
+          <td>rerank 没把正确证据排前</td>
+      </tr>
+      <tr>
+          <td>MRR 高，NDCG 低</td>
+          <td>第一个证据靠前，但整体证据排序不好</td>
+      </tr>
+      <tr>
+          <td>NDCG 高，Precision@5 低</td>
+          <td>前几条仍混入较多噪声</td>
+      </tr>
+      <tr>
+          <td>排序指标好，答案仍错</td>
+          <td>上下文组装或生成问题</td>
+      </tr>
+  </tbody>
+</table></div>
+<h2 id="1211-这些指标怎么一起理解">12.11 这些指标怎么一起理解
+</h2><p>可以这样简单记：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Recall：有没有找出来
+</span></span><span class="line"><span class="cl">MRR：第一个正确结果排多前
+</span></span><span class="line"><span class="cl">NDCG：多个高质量结果整体排得好不好
+</span></span><span class="line"><span class="cl">Precision@k：前 k 个结果干不干净
+</span></span><span class="line"><span class="cl">baseline：不加新方案时原本表现
+</span></span><span class="line"><span class="cl">分桶评估：不同类型问题是否都变好
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>对 rerank 来说，最常看的组合是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Recall@50：确认候选里有正确证据
+</span></span><span class="line"><span class="cl">MRR：看正确证据是否更靠前
+</span></span><span class="line"><span class="cl">NDCG@5：看前 5 个证据整体排序是否更好
+</span></span><span class="line"><span class="cl">Precision@5：看最终上下文是否更干净
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h1 id="十三常见问题排查">十三、常见问题排查
+</h1><h2 id="131-正确-chunk-被-rerank-压低">13.1 正确 chunk 被 rerank 压低
+</h2><p>可能原因：</p>
+<ul>
+<li>rerank 输入缺少标题和章节路径</li>
+<li>chunk 太短，缺少上下文</li>
+<li>query 表达不清</li>
+<li>rerank 模型不适合当前领域</li>
+<li>候选被截断时截掉了关键句</li>
+<li>数字、版本、否定条件没被模型识别</li>
+</ul>
+<p>排查时要看：</p>
+<ul>
+<li>rerank 输入原文</li>
+<li>模型打分</li>
+<li>原始召回排名</li>
+<li>同类候选对比</li>
+</ul>
+<h2 id="132-不相关-chunk-被排到前面">13.2 不相关 chunk 被排到前面
+</h2><p>可能原因：</p>
+<ul>
+<li>候选里关键词重合多</li>
+<li>rerank 模型偏语义泛化</li>
+<li>规则 boost 过强</li>
+<li>title 权重过高</li>
+<li>文档来源权重压过了相关性</li>
+</ul>
+<p>解决思路：</p>
+<ul>
+<li>调整输入模板</li>
+<li>降低业务 boost</li>
+<li>加 hard negative 训练或微调</li>
+<li>引入更强 rerank 模型</li>
+<li>增加 metadata 过滤</li>
+</ul>
+<h2 id="133-rerank-很慢">13.3 rerank 很慢
+</h2><p>常见原因：</p>
+<ul>
+<li>候选数量太多</li>
+<li>candidate 文本太长</li>
+<li>batch size 不合理</li>
+<li>模型太大</li>
+<li>没有 GPU 或推理服务瓶颈</li>
+<li>LLM rerank 候选过多</li>
+</ul>
+<p>优化方式：</p>
+<ul>
+<li>先用 RRF 截断候选</li>
+<li>减少 rerank top-n</li>
+<li>缩短输入模板</li>
+<li>批量推理</li>
+<li>使用更小模型</li>
+<li>做缓存</li>
+<li>对低风险请求跳过 rerank</li>
+</ul>
+<h2 id="134-rerank-后答案反而变差">13.4 rerank 后答案反而变差
+</h2><p>可能原因：</p>
+<ul>
+<li>评估集太小，只看个别样例</li>
+<li>rerank 模型和领域不匹配</li>
+<li>召回候选质量太差</li>
+<li>top-n 取得太少</li>
+<li>多样性约束过强</li>
+<li>context packing 把高分证据丢掉</li>
+</ul>
+<p>要分别检查：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回候选
+</span></span><span class="line"><span class="cl">rerank 排序
+</span></span><span class="line"><span class="cl">最终上下文
+</span></span><span class="line"><span class="cl">LLM 答案
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>不要只看 rerank 分数。</p>
+<h2 id="135-无答案问题怎么-rerank">13.5 无答案问题怎么 rerank
+</h2><p>无答案问题是指知识库里没有答案。</p>
+<p>这类问题很容易出现：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回一些看起来相关但实际上答不了的问题
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>rerank 应该能把这些候选打低。</p>
+<p>可以加入标签：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">direct_answer
+</span></span><span class="line"><span class="cl">partial_answer
+</span></span><span class="line"><span class="cl">related_background
+</span></span><span class="line"><span class="cl">not_relevant
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果所有候选都只是 weak related，系统应该允许回答：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">根据当前资料无法确定。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h1 id="十四常见调优建议">十四、常见调优建议
+</h1><h2 id="141-先保证召回覆盖">14.1 先保证召回覆盖
+</h2><p>rerank 前先确认正确 chunk 在候选里。</p>
+<p>如果正确 chunk 不在召回 top-k，rerank 没法解决。</p>
+<p>所以优化顺序通常是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">先优化召回覆盖
+</span></span><span class="line"><span class="cl">再优化 rerank 排序
+</span></span><span class="line"><span class="cl">最后优化上下文和生成
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="142-rerank-输入要带上下文">14.2 rerank 输入要带上下文
+</h2><p>不要只输入裸正文。</p>
+<p>最好带上：</p>
+<ul>
+<li>title</li>
+<li>section_path</li>
+<li>content</li>
+<li>表格表头</li>
+<li>代码符号</li>
+<li>必要 metadata 的可读文本</li>
+</ul>
+<p>这能明显提升判断质量。</p>
+<h2 id="143-不要让规则盖过相关性">14.3 不要让规则盖过相关性
+</h2><p>业务规则有用，但不能过强。</p>
+<p>例如官方文档加权是合理的。</p>
+<p>但如果官方文档不回答问题，也不应该排第一。</p>
+<p>强约束用 filter。</p>
+<p>弱偏好用 boost。</p>
+<p>相关性仍然是核心。</p>
+<h2 id="144-保留-rerank-日志">14.4 保留 rerank 日志
+</h2><p>没有日志就很难调。</p>
+<p>至少记录：</p>
+<ul>
+<li>query</li>
+<li>candidate ids</li>
+<li>recall source</li>
+<li>recall rank</li>
+<li>rerank score</li>
+<li>final rank</li>
+<li>selected context</li>
+<li>model version</li>
+</ul>
+<p>线上失败样本要能回放。</p>
+<h2 id="145-一次只改一个变量">14.5 一次只改一个变量
+</h2><p>不要同时改：</p>
+<ul>
+<li>embedding 模型</li>
+<li>chunk 策略</li>
+<li>召回 top-k</li>
+<li>rerank 模型</li>
+<li>prompt</li>
+<li>context packing</li>
+</ul>
+<p>否则效果变化很难归因。</p>
+<p>RAG 调优要能回答：</p>
+<blockquote>
+<p>这次提升到底来自哪个环节？</p></blockquote>
+<h1 id="十五高频面试题">十五、高频面试题
+</h1><h2 id="151-rag-为什么需要-rerank">15.1 RAG 为什么需要 rerank？
+</h2><p>因为召回结果不一定按最终相关性排序。</p>
+<p>召回阶段更关注覆盖，可能会召回很多“看起来相关”的候选。</p>
+<p>rerank 负责在这些候选里进一步判断：</p>
+<blockquote>
+<p>哪些内容最能回答当前问题？</p></blockquote>
+<p>它可以提升最终进入上下文的证据质量。</p>
+<h2 id="152-rerank-和召回的区别是什么">15.2 rerank 和召回的区别是什么？
+</h2><p>召回是从大规模知识库里找候选。</p>
+<p>rerank 是对候选重新排序。</p>
+<p>召回更重视 Recall。</p>
+<p>rerank 更重视 Precision。</p>
+<p>如果正确 chunk 没进入召回候选，rerank 通常救不回来。</p>
+<h2 id="153-cross-encoder-和-bi-encoder-有什么区别">15.3 Cross-Encoder 和 Bi-Encoder 有什么区别？
+</h2><p>Bi-Encoder 分别编码 query 和 document，然后计算向量相似度。</p>
+<p>它适合大规模召回。</p>
+<p>Cross-Encoder 把 query 和 candidate 放在一起编码，直接输出相关性分数。</p>
+<p>它更准，但更慢。</p>
+<p>常见组合是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Bi-Encoder 召回
+</span></span><span class="line"><span class="cl">Cross-Encoder 重排
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="154-cross-encoder-为什么比向量相似度更适合重排">15.4 Cross-Encoder 为什么比向量相似度更适合重排？
+</h2><p>因为 Cross-Encoder 可以让 query 和 candidate 在模型内部充分交互。</p>
+<p>它更容易识别：</p>
+<ul>
+<li>条件是否匹配</li>
+<li>数字是否匹配</li>
+<li>否定关系</li>
+<li>版本差异</li>
+<li>问题是否被直接回答</li>
+</ul>
+<p>向量相似度更多是粗粒度语义接近。</p>
+<h2 id="155-llm-rerank-适合什么场景">15.5 LLM Rerank 适合什么场景？
+</h2><p>适合复杂判断场景。</p>
+<p>例如：</p>
+<ul>
+<li>多条件问题</li>
+<li>多轮上下文问题</li>
+<li>合同、法规、政策判断</li>
+<li>候选之间需要解释比较</li>
+<li>需要判断是否直接包含答案</li>
+</ul>
+<p>但 LLM Rerank 成本和延迟更高，输出也更需要约束。</p>
+<h2 id="156-rerank-top-k-怎么设置">15.6 rerank top-k 怎么设置？
+</h2><p>常见起点是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回 top-50
+</span></span><span class="line"><span class="cl">rerank top-50
+</span></span><span class="line"><span class="cl">最终取 top-5 到 top-10
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>但要基于评估集调。</p>
+<p>候选太少，正确 chunk 可能进不来。</p>
+<p>候选太多，成本和延迟会上升。</p>
+<h2 id="157-rerank-分数能不能直接当最终答案置信度">15.7 rerank 分数能不能直接当最终答案置信度？
+</h2><p>不能简单等同。</p>
+<p>rerank 分数表示候选和 query 的相关性。</p>
+<p>它不等于：</p>
+<ul>
+<li>答案一定正确</li>
+<li>证据一定完整</li>
+<li>LLM 一定会正确使用证据</li>
+<li>知识库一定有答案</li>
+</ul>
+<p>它可以作为参考信号，但不能直接当最终答案置信度。</p>
+<h2 id="158-metadata-规则应该放在-rerank-前还是后">15.8 metadata 规则应该放在 rerank 前还是后？
+</h2><p>强约束应该放在 rerank 前。</p>
+<p>例如：</p>
+<ul>
+<li>权限</li>
+<li>租户</li>
+<li>文档状态</li>
+<li>安全等级</li>
+</ul>
+<p>这些内容不应该进入无权限候选。</p>
+<p>弱偏好可以放在 rerank 后做加权。</p>
+<p>例如：</p>
+<ul>
+<li>官方来源</li>
+<li>最近更新</li>
+<li>当前版本</li>
+</ul>
+<h2 id="159-rerank-怎么评估">15.9 rerank 怎么评估？
+</h2><p>常见指标包括：</p>
+<ul>
+<li>MRR</li>
+<li>NDCG@k</li>
+<li>Precision@k</li>
+<li>最终答案正确率</li>
+<li>延迟</li>
+<li>成本</li>
+</ul>
+<p>要和无 rerank baseline 对比。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">RRF top-5
+</span></span><span class="line"><span class="cl">vs
+</span></span><span class="line"><span class="cl">RRF top-50 + rerank top-5
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="1510-rerank-失败怎么排查">15.10 rerank 失败怎么排查？
+</h2><p>先看正确 chunk 是否进入召回候选。</p>
+<p>如果没有，这是召回问题。</p>
+<p>如果进入了但 rerank 后靠后，检查：</p>
+<ul>
+<li>rerank 输入模板</li>
+<li>标题和章节路径是否保留</li>
+<li>candidate 是否被截断</li>
+<li>模型是否适配领域</li>
+<li>规则 boost 是否过强</li>
+<li>rerank 模型版本是否变化</li>
+</ul>
+<p>如果正确 chunk 进入最终上下文但答案仍错，再看上下文组装和生成。</p>
+<h2 id="1511-rerank-会不会增加延迟">15.11 rerank 会不会增加延迟？
+</h2><p>会。</p>
+<p>因为 rerank 要对 query-candidate pair 逐个或批量打分。</p>
+<p>候选越多、模型越大、文本越长，延迟越高。</p>
+<p>常见优化方式：</p>
+<ul>
+<li>减少 rerank 候选数量</li>
+<li>批量推理</li>
+<li>缩短 candidate 输入</li>
+<li>使用更小模型</li>
+<li>缓存热门 query</li>
+<li>低风险请求跳过 rerank</li>
+</ul>
+<h2 id="1512-生产级-rerank-和-demo-最大区别是什么">15.12 生产级 rerank 和 demo 最大区别是什么？
+</h2><p>demo 可能只是在召回后调用一次 rerank 模型。</p>
+<p>生产级 rerank 还要考虑：</p>
+<ul>
+<li>候选去重</li>
+<li>输入模板</li>
+<li>批量推理</li>
+<li>超时降级</li>
+<li>版本管理</li>
+<li>规则加权</li>
+<li>权限过滤</li>
+<li>评估集</li>
+<li>日志回放</li>
+<li>成本和延迟</li>
+</ul>
+<p>一句话：</p>
+<blockquote>
+<p>demo 关注能不能排，生产系统关注排得准、跑得稳、可解释、可回放、可评估。</p></blockquote>
+<h1 id="小结">小结
+</h1><p>RAG 里的 rerank 是召回之后、上下文组装之前的关键环节。</p>
+<p>它的核心目标不是从全库找资料，而是在候选集合里把最相关、最有用、最适合作为证据的内容排到前面。</p>
+<p>一个实用的生产级链路通常是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">多路召回
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">候选去重
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">初步融合
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Cross-Encoder 或 LLM rerank
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">规则和 metadata 加权
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">上下文组装
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">LLM 生成
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>重排能显著提升 top 几条证据的质量，但它不是万能的。</p>
+<p>如果正确 chunk 没有被召回，rerank 通常救不回来。</p>
+<p>如果正确 chunk 已经进入上下文但答案仍错，问题可能在上下文组装或生成。</p>
+<p>如果只记住一句话：</p>
+<blockquote>
+<p>召回负责“别漏”，重排负责“排准”，上下文组装负责“放好”，生成负责“答对”。</p></blockquote>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/ai/">AI</a>
+        
+            <a href="/tags/rag/">Rag</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/rag-%E5%90%91%E9%87%8F%E5%8C%96%E4%B8%8E%E7%B4%A2%E5%BC%95%E6%9E%84%E5%BB%BA%E8%AF%A6%E8%A7%A3embedding%E5%90%91%E9%87%8F%E7%B4%A2%E5%BC%95%E6%B7%B7%E5%90%88%E7%B4%A2%E5%BC%95%E4%B8%8E%E5%B7%A5%E7%A8%8B%E8%90%BD%E5%9C%B0/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">RAG 向量化与索引构建详解：Embedding、向量索引、混合索引与工程落地</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/rag-%E6%96%87%E6%9C%AC%E5%88%87%E5%88%86%E8%AF%A6%E8%A7%A3chunk-%E8%AE%BE%E8%AE%A1%E5%88%87%E5%88%86%E7%AD%96%E7%95%A5%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E5%B8%B8%E8%A7%81%E5%9D%91/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">RAG 文本切分详解：Chunk 设计、切分策略、工程实现与常见坑</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/rag-%E6%96%87%E6%A1%A3%E8%A7%A3%E6%9E%90%E8%AF%A6%E8%A7%A3%E4%BB%8E%E5%8E%9F%E5%A7%8B%E6%96%87%E4%BB%B6%E5%88%B0%E5%8F%AF%E6%A3%80%E7%B4%A2%E7%9F%A5%E8%AF%86%E7%9A%84%E5%B7%A5%E7%A8%8B%E9%93%BE%E8%B7%AF/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">RAG 文档解析详解：从原始文件到可检索知识的工程链路</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/rag-%E5%8F%AC%E5%9B%9E%E8%AF%A6%E8%A7%A3%E6%A3%80%E7%B4%A2%E7%AD%96%E7%95%A5%E6%A0%B8%E5%BF%83%E7%AE%97%E6%B3%95%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E9%80%82%E7%94%A8%E5%9C%BA%E6%99%AF/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">RAG 召回详解：检索策略、核心算法、工程实现与适用场景</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-rag%E5%AE%8C%E6%95%B4%E6%B5%81%E7%A8%8B%E5%B8%B8%E8%A7%81%E5%AE%9E%E7%8E%B0%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%B8%B8%E8%A7%81%E5%9D%91%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">什么是 RAG：完整流程、常见实现、底层原理、常见坑与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>
