@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 AI Agent 解决的核心问题是：\n模型理解目标后，如何通过工具、状态和流程完成任务。\n所以 Agent 不是一个更大的 prompt，也不是“会联网的聊天机器人”。它更像是一套任务执行系统：模型负责理解、判断和决策，工具负责连接真实世界，状态负责记录进展，工作流负责约束过程。\n一、AI Agent 到底是什么 1.1 最直白的理解 可以把 AI Agent 理解成：\n能围绕一个目标，自主选择步骤、调用工具、观察结果并持续推进任务的智能应用。\n普通聊天机器人通常是：\n1 用户问题 -&gt; 模型回答 Agent 通常是：\n1 用户目标 -&gt; 任务理解 -&gt; 制定计划 -&gt; 调用工具 -&gt; 观察结果 -&gt; 更新状态 -&gt; 继续执行或结束 1.2 知识检索在 Agent 中的位置 有些 Agent 需要查询外部知识，例如制度文档、产品手册、历史工单或代码仓库。此时知识检索可以作为 Agent 的一个工具，也可以作为 Agent 的知识供给层。\n但知识检索不是 Agent 的前置条件，也不等于 Agent 本身。它只是 Agent 在完成任务时可能使用的一类能力。\n场景 关注点 知识检索 从外部资料中找到相关信息 Agent 围绕目标规划步骤、调用工具、更新状态并完成任务 二者结合 Agent 在执行任务时调用知识检索工具获取依据 1.3 Agent 不等于完全自主 生产系统中的 Agent 通常不是完全放开执行，而是“有限自主”：\n">
+<title>什么是 AI Agent：核心概念、运行流程、架构组成、常见模式与高频面试题</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/%E4%BB%80%E4%B9%88%E6%98%AF-ai-agent%E6%A0%B8%E5%BF%83%E6%A6%82%E5%BF%B5%E8%BF%90%E8%A1%8C%E6%B5%81%E7%A8%8B%E6%9E%B6%E6%9E%84%E7%BB%84%E6%88%90%E5%B8%B8%E8%A7%81%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="什么是 AI Agent：核心概念、运行流程、架构组成、常见模式与高频面试题">
+<meta property='og:description' content="写在前面 AI Agent 解决的核心问题是：\n模型理解目标后，如何通过工具、状态和流程完成任务。\n所以 Agent 不是一个更大的 prompt，也不是“会联网的聊天机器人”。它更像是一套任务执行系统：模型负责理解、判断和决策，工具负责连接真实世界，状态负责记录进展，工作流负责约束过程。\n一、AI Agent 到底是什么 1.1 最直白的理解 可以把 AI Agent 理解成：\n能围绕一个目标，自主选择步骤、调用工具、观察结果并持续推进任务的智能应用。\n普通聊天机器人通常是：\n1 用户问题 -&gt; 模型回答 Agent 通常是：\n1 用户目标 -&gt; 任务理解 -&gt; 制定计划 -&gt; 调用工具 -&gt; 观察结果 -&gt; 更新状态 -&gt; 继续执行或结束 1.2 知识检索在 Agent 中的位置 有些 Agent 需要查询外部知识，例如制度文档、产品手册、历史工单或代码仓库。此时知识检索可以作为 Agent 的一个工具，也可以作为 Agent 的知识供给层。\n但知识检索不是 Agent 的前置条件，也不等于 Agent 本身。它只是 Agent 在完成任务时可能使用的一类能力。\n场景 关注点 知识检索 从外部资料中找到相关信息 Agent 围绕目标规划步骤、调用工具、更新状态并完成任务 二者结合 Agent 在执行任务时调用知识检索工具获取依据 1.3 Agent 不等于完全自主 生产系统中的 Agent 通常不是完全放开执行，而是“有限自主”：\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/%E4%BB%80%E4%B9%88%E6%98%AF-ai-agent%E6%A0%B8%E5%BF%83%E6%A6%82%E5%BF%B5%E8%BF%90%E8%A1%8C%E6%B5%81%E7%A8%8B%E6%9E%B6%E6%9E%84%E7%BB%84%E6%88%90%E5%B8%B8%E8%A7%81%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:published_time' content='2026-05-18T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-18T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="什么是 AI Agent：核心概念、运行流程、架构组成、常见模式与高频面试题">
+<meta name="twitter:description" content="写在前面 AI Agent 解决的核心问题是：\n模型理解目标后，如何通过工具、状态和流程完成任务。\n所以 Agent 不是一个更大的 prompt，也不是“会联网的聊天机器人”。它更像是一套任务执行系统：模型负责理解、判断和决策，工具负责连接真实世界，状态负责记录进展，工作流负责约束过程。\n一、AI Agent 到底是什么 1.1 最直白的理解 可以把 AI Agent 理解成：\n能围绕一个目标，自主选择步骤、调用工具、观察结果并持续推进任务的智能应用。\n普通聊天机器人通常是：\n1 用户问题 -&gt; 模型回答 Agent 通常是：\n1 用户目标 -&gt; 任务理解 -&gt; 制定计划 -&gt; 调用工具 -&gt; 观察结果 -&gt; 更新状态 -&gt; 继续执行或结束 1.2 知识检索在 Agent 中的位置 有些 Agent 需要查询外部知识，例如制度文档、产品手册、历史工单或代码仓库。此时知识检索可以作为 Agent 的一个工具，也可以作为 Agent 的知识供给层。\n但知识检索不是 Agent 的前置条件，也不等于 Agent 本身。它只是 Agent 在完成任务时可能使用的一类能力。\n场景 关注点 知识检索 从外部资料中找到相关信息 Agent 围绕目标规划步骤、调用工具、更新状态并完成任务 二者结合 Agent 在执行任务时调用知识检索工具获取依据 1.3 Agent 不等于完全自主 生产系统中的 Agent 通常不是完全放开执行，而是“有限自主”：\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ol>
+    <li><a href="#11-最直白的理解">1.1 最直白的理解</a></li>
+    <li><a href="#12-知识检索在-agent-中的位置">1.2 知识检索在 Agent 中的位置</a></li>
+    <li><a href="#13-agent-不等于完全自主">1.3 Agent 不等于完全自主</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#21-llm">2.1 LLM</a></li>
+    <li><a href="#22-tools">2.2 Tools</a></li>
+    <li><a href="#23-state">2.3 State</a></li>
+    <li><a href="#24-memory">2.4 Memory</a></li>
+    <li><a href="#25-workflow">2.5 Workflow</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#31-一个典型循环">3.1 一个典型循环</a></li>
+    <li><a href="#32-什么时候继续什么时候停止">3.2 什么时候继续，什么时候停止</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#41-tool-using-agent">4.1 Tool-Using Agent</a></li>
+    <li><a href="#42-router-agent">4.2 Router Agent</a></li>
+    <li><a href="#43-planner-executor-agent">4.3 Planner-Executor Agent</a></li>
+    <li><a href="#44-reviewer-agent">4.4 Reviewer Agent</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#51-不确定性">5.1 不确定性</a></li>
+    <li><a href="#52-工具边界">5.2 工具边界</a></li>
+    <li><a href="#53-可观测性">5.3 可观测性</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#61-把-agent-当成超级-prompt">6.1 把 Agent 当成超级 Prompt</a></li>
+    <li><a href="#62-一开始就做-multi-agent">6.2 一开始就做 Multi-Agent</a></li>
+    <li><a href="#63-只看-demo-效果">6.3 只看 Demo 效果</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#81-ai-agent-和普通聊天机器人有什么区别">8.1 AI Agent 和普通聊天机器人有什么区别？</a></li>
+    <li><a href="#82-ai-agent-和-rag-是什么关系">8.2 AI Agent 和 RAG 是什么关系？</a></li>
+    <li><a href="#83-agent-的核心组件有哪些">8.3 Agent 的核心组件有哪些？</a></li>
+    <li><a href="#84-为什么-agent-需要状态管理">8.4 为什么 Agent 需要状态管理？</a></li>
+    <li><a href="#85-为什么生产环境中的-agent-不能完全自由行动">8.5 为什么生产环境中的 Agent 不能完全自由行动？</a></li>
+  </ol>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/ai/" >
+                Ai
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-ai-agent%E6%A0%B8%E5%BF%83%E6%A6%82%E5%BF%B5%E8%BF%90%E8%A1%8C%E6%B5%81%E7%A8%8B%E6%9E%B6%E6%9E%84%E7%BB%84%E6%88%90%E5%B8%B8%E8%A7%81%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">什么是 AI Agent：核心概念、运行流程、架构组成、常见模式与高频面试题</a>
+        </h2>
+    
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">May 18, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h1 id="写在前面">写在前面
+</h1><p><code>AI Agent</code> 解决的核心问题是：</p>
+<blockquote>
+<p>模型理解目标后，如何通过工具、状态和流程完成任务。</p></blockquote>
+<p>所以 <code>Agent</code> 不是一个更大的 prompt，也不是“会联网的聊天机器人”。它更像是一套任务执行系统：模型负责理解、判断和决策，工具负责连接真实世界，状态负责记录进展，工作流负责约束过程。</p>
+<h1 id="一ai-agent-到底是什么">一、AI Agent 到底是什么
+</h1><h2 id="11-最直白的理解">1.1 最直白的理解
+</h2><p>可以把 <code>AI Agent</code> 理解成：</p>
+<blockquote>
+<p>能围绕一个目标，自主选择步骤、调用工具、观察结果并持续推进任务的智能应用。</p></blockquote>
+<p>普通聊天机器人通常是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户问题 -&gt; 模型回答
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>Agent 通常是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户目标 -&gt; 任务理解 -&gt; 制定计划 -&gt; 调用工具 -&gt; 观察结果 -&gt; 更新状态 -&gt; 继续执行或结束
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="12-知识检索在-agent-中的位置">1.2 知识检索在 Agent 中的位置
+</h2><p>有些 Agent 需要查询外部知识，例如制度文档、产品手册、历史工单或代码仓库。此时知识检索可以作为 Agent 的一个工具，也可以作为 Agent 的知识供给层。</p>
+<p>但知识检索不是 Agent 的前置条件，也不等于 Agent 本身。它只是 Agent 在完成任务时可能使用的一类能力。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>场景</th>
+          <th>关注点</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>知识检索</td>
+          <td>从外部资料中找到相关信息</td>
+      </tr>
+      <tr>
+          <td>Agent</td>
+          <td>围绕目标规划步骤、调用工具、更新状态并完成任务</td>
+      </tr>
+      <tr>
+          <td>二者结合</td>
+          <td>Agent 在执行任务时调用知识检索工具获取依据</td>
+      </tr>
+  </tbody>
+</table></div>
+<h2 id="13-agent-不等于完全自主">1.3 Agent 不等于完全自主
+</h2><p>生产系统中的 Agent 通常不是完全放开执行，而是“有限自主”：</p>
+<ul>
+<li>可调用的工具有限</li>
+<li>可访问的数据有限</li>
+<li>高风险操作需要确认</li>
+<li>执行轮次有上限</li>
+<li>关键节点有日志和审计</li>
+</ul>
+<p>越接近真实业务，越需要把 Agent 放进明确边界里。</p>
+<h1 id="二agent-的核心组成">二、Agent 的核心组成
+</h1><h2 id="21-llm">2.1 LLM
+</h2><p><code>LLM</code> 是 Agent 的决策核心，负责理解用户目标、选择下一步动作、解释工具结果、生成最终输出。</p>
+<p>但 LLM 本身不应该直接承担所有职责。它适合做判断和语言推理，不适合替代数据库、权限系统、计算引擎和业务规则。</p>
+<h2 id="22-tools">2.2 Tools
+</h2><p>工具让 Agent 能影响外部世界，例如：</p>
+<ul>
+<li>查询数据库</li>
+<li>检索知识库</li>
+<li>调用 HTTP API</li>
+<li>发送邮件</li>
+<li>创建工单</li>
+<li>运行代码</li>
+<li>读取文件</li>
+</ul>
+<p>工具越强，越要重视权限、校验、日志和审批。</p>
+<h2 id="23-state">2.3 State
+</h2><p>状态记录任务当前进展，包括：</p>
+<ul>
+<li>用户目标</li>
+<li>已完成步骤</li>
+<li>工具调用结果</li>
+<li>中间变量</li>
+<li>错误信息</li>
+<li>等待用户确认的事项</li>
+</ul>
+<p>没有状态管理，Agent 很容易重复执行、遗漏步骤或者无法恢复。</p>
+<h2 id="24-memory">2.4 Memory
+</h2><p>记忆用于跨轮次保存有价值的信息。它可以保存用户偏好、历史任务、业务事实和长期上下文。</p>
+<p>记忆不是越多越好。错误记忆比没有记忆更危险。</p>
+<h2 id="25-workflow">2.5 Workflow
+</h2><p>工作流用于约束 Agent 的行为边界。</p>
+<p>例如报销 Agent 可以被设计成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[接收用户需求] --&gt; B[解析报销信息]
+</span></span><span class="line"><span class="cl">    B --&gt; C[检查票据完整性]
+</span></span><span class="line"><span class="cl">    C --&gt; D{是否缺少材料}
+</span></span><span class="line"><span class="cl">    D -- 是 --&gt; E[请求用户补充]
+</span></span><span class="line"><span class="cl">    D -- 否 --&gt; F[生成报销单]
+</span></span><span class="line"><span class="cl">    F --&gt; G[用户确认]
+</span></span><span class="line"><span class="cl">    G --&gt; H[提交审批系统]
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这种设计比完全自由行动更稳定，也更容易排查问题。</p>
+<h1 id="三agent-的基本运行流程">三、Agent 的基本运行流程
+</h1><h2 id="31-一个典型循环">3.1 一个典型循环
+</h2><p>Agent 常见执行循环如下：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">输入目标
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">理解任务
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">判断是否需要工具
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">调用工具
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">观察工具结果
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">更新状态
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">判断是否完成
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="32-什么时候继续什么时候停止">3.2 什么时候继续，什么时候停止
+</h2><p>Agent 必须有明确停止条件：</p>
+<ul>
+<li>已完成用户目标</li>
+<li>达到最大执行轮次</li>
+<li>工具连续失败</li>
+<li>需要用户补充信息</li>
+<li>命中高风险操作</li>
+<li>当前任务无法完成</li>
+</ul>
+<p>停止条件不清晰，是 Agent 死循环的常见原因。</p>
+<h1 id="四常见-agent-类型">四、常见 Agent 类型
+</h1><h2 id="41-tool-using-agent">4.1 Tool-Using Agent
+</h2><p>这是最常见的 Agent 类型，核心能力是根据任务选择工具。</p>
+<p>适合：</p>
+<ul>
+<li>查订单</li>
+<li>查知识库</li>
+<li>调用业务系统</li>
+<li>生成结构化结果</li>
+</ul>
+<h2 id="42-router-agent">4.2 Router Agent
+</h2><p>Router Agent 负责把用户请求分发到不同链路。</p>
+<p>例如：</p>
+<ul>
+<li>闲聊走普通问答</li>
+<li>公司制度问题走 RAG</li>
+<li>订单问题走数据库工具</li>
+<li>投诉问题创建工单</li>
+</ul>
+<h2 id="43-planner-executor-agent">4.3 Planner-Executor Agent
+</h2><p>这类 Agent 把规划和执行拆开：</p>
+<ul>
+<li>Planner 负责拆任务</li>
+<li>Executor 负责逐步执行</li>
+</ul>
+<p>适合复杂、多步骤、可验证的任务。</p>
+<h2 id="44-reviewer-agent">4.4 Reviewer Agent
+</h2><p>Reviewer Agent 负责检查输出质量或执行结果，例如：</p>
+<ul>
+<li>检查代码变更</li>
+<li>检查合同摘要</li>
+<li>检查答案是否引用证据</li>
+<li>检查工具参数是否合理</li>
+</ul>
+<h1 id="五agent-开发的关键难点">五、Agent 开发的关键难点
+</h1><h2 id="51-不确定性">5.1 不确定性
+</h2><p>模型输出有概率性，同样的问题可能产生不同的中间步骤。</p>
+<p>工程上要用结构化输出、状态机、重试和校验来降低不确定性。</p>
+<h2 id="52-工具边界">5.2 工具边界
+</h2><p>工具设计太少，Agent 能力不足。</p>
+<p>工具设计太宽，Agent 风险变高。</p>
+<p>好的工具应该职责单一、参数明确、返回结构稳定。</p>
+<h2 id="53-可观测性">5.3 可观测性
+</h2><p>Agent 的每一步都应该能追踪：</p>
+<ul>
+<li>为什么调用这个工具</li>
+<li>工具参数是什么</li>
+<li>返回结果是什么</li>
+<li>下一步为什么这么选</li>
+<li>最终结果是否成功</li>
+</ul>
+<p>没有 trace 的 Agent 很难上线维护。</p>
+<h1 id="六常见误区">六、常见误区
+</h1><h2 id="61-把-agent-当成超级-prompt">6.1 把 Agent 当成超级 Prompt
+</h2><p>Prompt 很重要，但 Agent 的稳定性主要来自工具、状态、流程、评估和权限。</p>
+<h2 id="62-一开始就做-multi-agent">6.2 一开始就做 Multi-Agent
+</h2><p>多数业务不需要一上来就多 Agent。单 Agent 加清晰工具和状态，通常更容易做稳定。</p>
+<h2 id="63-只看-demo-效果">6.3 只看 Demo 效果
+</h2><p>Demo 成功不代表生产可用。生产系统还要面对异常输入、权限限制、工具失败、并发、成本和审计。</p>
+<h1 id="七学习路线">七、学习路线
+</h1><p>建议按下面顺序学习：</p>
+<p>其中 <code>RAG</code> 更适合放在 <code>Tool Calling</code> 之后理解。先掌握工具调用，再学习知识检索这个常见工具类型，会更符合 Agent 的整体结构。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">LLM 调用基础
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Prompt 与结构化输出
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Tool Calling
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">知识检索 / RAG
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Agent Loop
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Planning
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Memory
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Workflow
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Observability
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Security
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Production Architecture
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h1 id="八常见面试题">八、常见面试题
+</h1><h2 id="81-ai-agent-和普通聊天机器人有什么区别">8.1 AI Agent 和普通聊天机器人有什么区别？
+</h2><p>普通聊天机器人主要完成“输入到输出”的回答，Agent 还会围绕目标选择步骤、调用工具、观察结果并更新状态。</p>
+<h2 id="82-ai-agent-和-rag-是什么关系">8.2 AI Agent 和 RAG 是什么关系？
+</h2><p>RAG 主要解决知识供给问题，Agent 主要解决任务执行问题。RAG 可以作为 Agent 的一个工具或知识层。</p>
+<h2 id="83-agent-的核心组件有哪些">8.3 Agent 的核心组件有哪些？
+</h2><p>通常包括 <code>LLM</code>、工具、状态、记忆、工作流、权限控制和可观测性系统。</p>
+<h2 id="84-为什么-agent-需要状态管理">8.4 为什么 Agent 需要状态管理？
+</h2><p>因为 Agent 任务通常是多步骤的。状态用于记录已完成动作、工具结果、中间变量和等待事项，避免重复执行或丢失上下文。</p>
+<h2 id="85-为什么生产环境中的-agent-不能完全自由行动">8.5 为什么生产环境中的 Agent 不能完全自由行动？
+</h2><p>因为它可能访问敏感数据、调用高风险工具或产生错误操作。生产环境需要权限、审批、审计、执行上限和降级策略。</p>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/ai/">AI</a>
+        
+            <a href="/tags/agent/">Agent</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/appbuilder-%E7%BB%84%E4%BB%B6mcp-%E4%B8%8E-skills-%E7%9A%84%E5%AF%B9%E6%AF%94%E5%AD%A6%E4%B9%A0/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AppBuilder 组件、MCP 与 Skills 的对比学习</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/rag-%E4%B8%8A%E4%B8%8B%E6%96%87%E7%BB%84%E8%A3%85%E8%AF%A6%E8%A7%A3%E8%AF%81%E6%8D%AE%E9%80%89%E6%8B%A9token-%E9%A2%84%E7%AE%97prompt-%E6%9E%84%E9%80%A0%E4%B8%8E%E5%B7%A5%E7%A8%8B%E8%B0%83%E4%BC%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">RAG 上下文组装详解：证据选择、Token 预算、Prompt 构造与工程调优</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/rag-%E7%9B%91%E6%8E%A7%E6%97%A5%E5%BF%97%E4%B8%8E%E8%AF%84%E4%BC%B0%E4%BD%93%E7%B3%BB%E8%AF%A6%E8%A7%A3%E9%93%BE%E8%B7%AF%E8%BF%BD%E8%B8%AA%E6%8C%87%E6%A0%87%E8%AE%BE%E8%AE%A1%E6%95%88%E6%9E%9C%E8%AF%84%E6%B5%8B%E4%B8%8E%E6%8C%81%E7%BB%AD%E4%BC%98%E5%8C%96/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">RAG 监控、日志与评估体系详解：链路追踪、指标设计、效果评测与持续优化</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/rag-%E9%87%8D%E6%8E%92%E8%AF%A6%E8%A7%A3rerank-%E5%8E%9F%E7%90%86%E6%A8%A1%E5%9E%8B%E9%80%89%E6%8B%A9%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E8%B0%83%E4%BC%98%E6%96%B9%E6%B3%95/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">RAG 重排详解：Rerank 原理、模型选择、工程实现与调优方法</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/rag-%E5%90%91%E9%87%8F%E5%8C%96%E4%B8%8E%E7%B4%A2%E5%BC%95%E6%9E%84%E5%BB%BA%E8%AF%A6%E8%A7%A3embedding%E5%90%91%E9%87%8F%E7%B4%A2%E5%BC%95%E6%B7%B7%E5%90%88%E7%B4%A2%E5%BC%95%E4%B8%8E%E5%B7%A5%E7%A8%8B%E8%90%BD%E5%9C%B0/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">RAG 向量化与索引构建详解：Embedding、向量索引、混合索引与工程落地</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>
