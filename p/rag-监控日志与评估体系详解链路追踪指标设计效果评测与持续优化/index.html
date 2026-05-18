@@ -1,0 +1,4381 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 很多 RAG 系统在 demo 阶段看起来效果不错，但一上线就会遇到一类更难的问题：\n用户说答案不准，但你不知道到底是哪一步出了问题。\n可能是文档没解析好。\n可能是 chunk 切坏了。\n可能是 embedding 没更新。\n可能是召回没找对。\n可能是 rerank 排错了。\n也可能是证据都在上下文里，但模型生成时没有正确使用。\n如果没有完整的日志、监控和评估体系，排查 RAG 问题很容易变成“凭感觉调 prompt”。\n在完整 RAG 链路里，监控、日志和评估不是附属功能，而是系统能不能长期稳定运行的基础设施：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 原始文档 ↓ 文档解析 ↓ 文本切分 ↓ embedding 与索引 ↓ 查询理解 ↓ 召回 ↓ 重排 ↓ 上下文组装 ↓ 大模型生成 ↓ 答案后处理 ↓ 用户反馈与评估 这篇文章专门讲 RAG 的可观测性和评估体系：\n">
+<title>RAG 监控、日志与评估体系详解：链路追踪、指标设计、效果评测与持续优化</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/rag-%E7%9B%91%E6%8E%A7%E6%97%A5%E5%BF%97%E4%B8%8E%E8%AF%84%E4%BC%B0%E4%BD%93%E7%B3%BB%E8%AF%A6%E8%A7%A3%E9%93%BE%E8%B7%AF%E8%BF%BD%E8%B8%AA%E6%8C%87%E6%A0%87%E8%AE%BE%E8%AE%A1%E6%95%88%E6%9E%9C%E8%AF%84%E6%B5%8B%E4%B8%8E%E6%8C%81%E7%BB%AD%E4%BC%98%E5%8C%96/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="RAG 监控、日志与评估体系详解：链路追踪、指标设计、效果评测与持续优化">
+<meta property='og:description' content="写在前面 很多 RAG 系统在 demo 阶段看起来效果不错，但一上线就会遇到一类更难的问题：\n用户说答案不准，但你不知道到底是哪一步出了问题。\n可能是文档没解析好。\n可能是 chunk 切坏了。\n可能是 embedding 没更新。\n可能是召回没找对。\n可能是 rerank 排错了。\n也可能是证据都在上下文里，但模型生成时没有正确使用。\n如果没有完整的日志、监控和评估体系，排查 RAG 问题很容易变成“凭感觉调 prompt”。\n在完整 RAG 链路里，监控、日志和评估不是附属功能，而是系统能不能长期稳定运行的基础设施：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 原始文档 ↓ 文档解析 ↓ 文本切分 ↓ embedding 与索引 ↓ 查询理解 ↓ 召回 ↓ 重排 ↓ 上下文组装 ↓ 大模型生成 ↓ 答案后处理 ↓ 用户反馈与评估 这篇文章专门讲 RAG 的可观测性和评估体系：\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/rag-%E7%9B%91%E6%8E%A7%E6%97%A5%E5%BF%97%E4%B8%8E%E8%AF%84%E4%BC%B0%E4%BD%93%E7%B3%BB%E8%AF%A6%E8%A7%A3%E9%93%BE%E8%B7%AF%E8%BF%BD%E8%B8%AA%E6%8C%87%E6%A0%87%E8%AE%BE%E8%AE%A1%E6%95%88%E6%9E%9C%E8%AF%84%E6%B5%8B%E4%B8%8E%E6%8C%81%E7%BB%AD%E4%BC%98%E5%8C%96/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='rag' /><meta property='article:published_time' content='2026-05-16T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-16T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="RAG 监控、日志与评估体系详解：链路追踪、指标设计、效果评测与持续优化">
+<meta name="twitter:description" content="写在前面 很多 RAG 系统在 demo 阶段看起来效果不错，但一上线就会遇到一类更难的问题：\n用户说答案不准，但你不知道到底是哪一步出了问题。\n可能是文档没解析好。\n可能是 chunk 切坏了。\n可能是 embedding 没更新。\n可能是召回没找对。\n可能是 rerank 排错了。\n也可能是证据都在上下文里，但模型生成时没有正确使用。\n如果没有完整的日志、监控和评估体系，排查 RAG 问题很容易变成“凭感觉调 prompt”。\n在完整 RAG 链路里，监控、日志和评估不是附属功能，而是系统能不能长期稳定运行的基础设施：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 原始文档 ↓ 文档解析 ↓ 文本切分 ↓ embedding 与索引 ↓ 查询理解 ↓ 召回 ↓ 重排 ↓ 上下文组装 ↓ 大模型生成 ↓ 答案后处理 ↓ 用户反馈与评估 这篇文章专门讲 RAG 的可观测性和评估体系：\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ol>
+    <li><a href="#11-不是只看大模型回答对不对">1.1 不是只看大模型回答对不对</a></li>
+    <li><a href="#12-日志监控评估分别解决什么">1.2 日志、监控、评估分别解决什么</a></li>
+    <li><a href="#13-rag-的可观测性必须按链路设计">1.3 RAG 的可观测性必须按链路设计</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#21-先统一请求标识">2.1 先统一请求标识</a></li>
+    <li><a href="#22-日志要分层不要只存一坨文本">2.2 日志要分层，不要只存一坨文本</a></li>
+    <li><a href="#23-日志要能复现一次回答">2.3 日志要能复现一次回答</a></li>
+    <li><a href="#24-原文内容和敏感信息怎么处理">2.4 原文内容和敏感信息怎么处理</a></li>
+    <li><a href="#25-如何平衡日志完整性和存储空间">2.5 如何平衡日志完整性和存储空间</a>
+      <ol>
+        <li><a href="#251-哪些日志应该全量保存">2.5.1 哪些日志应该全量保存</a></li>
+        <li><a href="#252-哪些内容不应该默认全量长期保存">2.5.2 哪些内容不应该默认全量长期保存</a></li>
+        <li><a href="#253-用采样控制完整日志体积">2.5.3 用采样控制完整日志体积</a></li>
+        <li><a href="#254-大字段外置保存日志里只保存引用">2.5.4 大字段外置保存，日志里只保存引用</a></li>
+        <li><a href="#255-对重复内容做去重">2.5.5 对重复内容做去重</a></li>
+        <li><a href="#256-设置不同保留周期">2.5.6 设置不同保留周期</a></li>
+      </ol>
+    </li>
+    <li><a href="#26-日志中间件和技术架构怎么选">2.6 日志中间件和技术架构怎么选</a>
+      <ol>
+        <li><a href="#261-推荐的整体架构">2.6.1 推荐的整体架构</a></li>
+        <li><a href="#262-日志检索用什么">2.6.2 日志检索用什么</a></li>
+        <li><a href="#263-聚合分析用什么">2.6.3 聚合分析用什么</a></li>
+        <li><a href="#264-大文本和快照用什么">2.6.4 大文本和快照用什么</a></li>
+        <li><a href="#265-指标监控和告警用什么">2.6.5 指标监控和告警用什么</a></li>
+        <li><a href="#266-小团队和大团队的选型建议">2.6.6 小团队和大团队的选型建议</a></li>
+        <li><a href="#267-rag-日志事件表怎么设计">2.6.7 RAG 日志事件表怎么设计</a></li>
+        <li><a href="#268-一个推荐的默认方案">2.6.8 一个推荐的默认方案</a></li>
+      </ol>
+    </li>
+  </ol>
+
+  <ol>
+    <li><a href="#31-数据接入日志">3.1 数据接入日志</a></li>
+    <li><a href="#32-文档解析日志">3.2 文档解析日志</a></li>
+    <li><a href="#33-文本切分日志">3.3 文本切分日志</a></li>
+    <li><a href="#34-embedding-与索引日志">3.4 embedding 与索引日志</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#41-查询理解日志">4.1 查询理解日志</a></li>
+    <li><a href="#42-metadata-filter-日志">4.2 metadata filter 日志</a></li>
+    <li><a href="#43-召回日志">4.3 召回日志</a></li>
+    <li><a href="#44-候选合并与去重日志">4.4 候选合并与去重日志</a></li>
+    <li><a href="#45-rerank-日志">4.5 rerank 日志</a></li>
+    <li><a href="#46-上下文组装日志">4.6 上下文组装日志</a></li>
+    <li><a href="#47-生成与后处理日志">4.7 生成与后处理日志</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#51-监控要分四层">5.1 监控要分四层</a></li>
+    <li><a href="#52-延迟监控要拆阶段">5.2 延迟监控要拆阶段</a></li>
+    <li><a href="#53-成本监控要按请求和租户拆">5.3 成本监控要按请求和租户拆</a></li>
+    <li><a href="#54-质量监控要关注异常比例">5.4 质量监控要关注异常比例</a></li>
+    <li><a href="#55-告警不要只按技术指标设置">5.5 告警不要只按技术指标设置</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#61-评估要按链路拆开">6.1 评估要按链路拆开</a></li>
+    <li><a href="#62-评估集要怎么构建">6.2 评估集要怎么构建</a></li>
+    <li><a href="#63-评估集要分层管理">6.3 评估集要分层管理</a></li>
+    <li><a href="#64-评估集要有训练集和回归集">6.4 评估集要有训练集和回归集</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#71-召回评估">7.1 召回评估</a></li>
+    <li><a href="#72-召回评估要分通道看">7.2 召回评估要分通道看</a></li>
+    <li><a href="#73-rerank-评估">7.3 rerank 评估</a></li>
+    <li><a href="#74-上下文组装评估">7.4 上下文组装评估</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#81-最终答案不能只看像不像">8.1 最终答案不能只看“像不像”</a></li>
+    <li><a href="#82-常见生成评估指标">8.2 常见生成评估指标</a></li>
+    <li><a href="#83-llm-as-judge-可以用但不能盲信">8.3 LLM-as-Judge 可以用，但不能盲信</a></li>
+    <li><a href="#84-幻觉评估要看证据支撑">8.4 幻觉评估要看证据支撑</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#91-用户反馈不能只做点赞点踩">9.1 用户反馈不能只做点赞点踩</a></li>
+    <li><a href="#92-点踩样本要进入评估集">9.2 点踩样本要进入评估集</a></li>
+    <li><a href="#93-人工标注要标证据不只是标答案">9.3 人工标注要标证据，不只是标答案</a></li>
+    <li><a href="#94-反馈闭环要有版本管理">9.4 反馈闭环要有版本管理</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#101-每次上线前做离线回归">10.1 每次上线前做离线回归</a></li>
+    <li><a href="#102-离线评估通过不代表线上一定变好">10.2 离线评估通过不代表线上一定变好</a></li>
+    <li><a href="#103-建立失败样本分析机制">10.3 建立失败样本分析机制</a></li>
+    <li><a href="#104-形成指标看板">10.4 形成指标看板</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#111-只记录最终答案不记录中间证据">11.1 只记录最终答案，不记录中间证据</a></li>
+    <li><a href="#112-日志没有版本字段">11.2 日志没有版本字段</a></li>
+    <li><a href="#113-评估集只覆盖简单-faq">11.3 评估集只覆盖简单 FAQ</a></li>
+    <li><a href="#114-只看平均分不看分桶指标">11.4 只看平均分，不看分桶指标</a></li>
+    <li><a href="#115-用线上用户反馈直接当准确率">11.5 用线上用户反馈直接当准确率</a></li>
+    <li><a href="#116-调-prompt-掩盖检索问题">11.6 调 prompt 掩盖检索问题</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#121-第一阶段先把日志打全">12.1 第一阶段：先把日志打全</a></li>
+    <li><a href="#122-第二阶段建立核心监控">12.2 第二阶段：建立核心监控</a></li>
+    <li><a href="#123-第三阶段构建评估集">12.3 第三阶段：构建评估集</a></li>
+    <li><a href="#124-第四阶段接入自动化回归">12.4 第四阶段：接入自动化回归</a></li>
+    <li><a href="#125-第五阶段线上反馈闭环">12.5 第五阶段：线上反馈闭环</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#131-rag-系统线上答案错了你怎么排查">13.1 RAG 系统线上答案错了，你怎么排查</a></li>
+    <li><a href="#132-rag-应该记录哪些日志">13.2 RAG 应该记录哪些日志</a></li>
+    <li><a href="#133-如何评估-rag-的召回效果">13.3 如何评估 RAG 的召回效果</a></li>
+    <li><a href="#134-如何评估-rag-最终答案质量">13.4 如何评估 RAG 最终答案质量</a></li>
+    <li><a href="#135-为什么离线评估很好线上效果仍然不好">13.5 为什么离线评估很好，线上效果仍然不好</a></li>
+    <li><a href="#136-rag-的监控指标怎么设计">13.6 RAG 的监控指标怎么设计</a></li>
+  </ol>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/ai/" >
+                Ai
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/rag-%E7%9B%91%E6%8E%A7%E6%97%A5%E5%BF%97%E4%B8%8E%E8%AF%84%E4%BC%B0%E4%BD%93%E7%B3%BB%E8%AF%A6%E8%A7%A3%E9%93%BE%E8%B7%AF%E8%BF%BD%E8%B8%AA%E6%8C%87%E6%A0%87%E8%AE%BE%E8%AE%A1%E6%95%88%E6%9E%9C%E8%AF%84%E6%B5%8B%E4%B8%8E%E6%8C%81%E7%BB%AD%E4%BC%98%E5%8C%96/">RAG 监控、日志与评估体系详解：链路追踪、指标设计、效果评测与持续优化</a>
+        </h2>
+    
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">May 16, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h1 id="写在前面">写在前面
+</h1><p>很多 RAG 系统在 demo 阶段看起来效果不错，但一上线就会遇到一类更难的问题：</p>
+<blockquote>
+<p>用户说答案不准，但你不知道到底是哪一步出了问题。</p></blockquote>
+<p>可能是文档没解析好。</p>
+<p>可能是 chunk 切坏了。</p>
+<p>可能是 embedding 没更新。</p>
+<p>可能是召回没找对。</p>
+<p>可能是 rerank 排错了。</p>
+<p>也可能是证据都在上下文里，但模型生成时没有正确使用。</p>
+<p>如果没有完整的日志、监控和评估体系，排查 RAG 问题很容易变成“凭感觉调 prompt”。</p>
+<p>在完整 RAG 链路里，监控、日志和评估不是附属功能，而是系统能不能长期稳定运行的基础设施：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">原始文档
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">文档解析
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">文本切分
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">embedding 与索引
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">查询理解
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">召回
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">重排
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">上下文组装
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">大模型生成
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">答案后处理
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">用户反馈与评估
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这篇文章专门讲 RAG 的可观测性和评估体系：</p>
+<ol>
+<li>为什么 RAG 必须做全链路观测</li>
+<li>RAG 链路日志应该记录什么</li>
+<li>trace_id、query_id、chunk_id 如何贯穿全链路</li>
+<li>如何平衡日志完整性和存储空间</li>
+<li>用什么中间件保存日志更合适</li>
+<li>数据接入、解析、切分、索引阶段怎么打日志</li>
+<li>召回、重排、上下文组装、生成阶段怎么打日志</li>
+<li>线上监控指标怎么设计</li>
+<li>离线评估集怎么构建</li>
+<li>检索、重排、上下文、生成分别怎么评估</li>
+<li>用户反馈和人工标注怎么进入闭环</li>
+<li>如何做回归测试、A/B 测试和持续优化</li>
+<li>常见工程坑和高频面试题</li>
+</ol>
+<h1 id="一先理解-rag-可观测性的目标">一、先理解 RAG 可观测性的目标
+</h1><h2 id="11-不是只看大模型回答对不对">1.1 不是只看大模型回答对不对
+</h2><p>很多系统最开始只记录：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户问题
+</span></span><span class="line"><span class="cl">模型答案
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这远远不够。</p>
+<p>因为 RAG 的答案质量来自一条链路，而不是单个模型调用。</p>
+<p>例如用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 套餐每月 API 调用额度是多少？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>模型回答错了，可能有很多原因：</p>
+<ul>
+<li>知识库里没有这份文档</li>
+<li>文档解析时表格丢了</li>
+<li>chunk 只保留了“Pro | 299 | 100 万”，但表头丢了</li>
+<li>embedding 索引还没更新到最新版本</li>
+<li>召回召到了旧版本文档</li>
+<li>rerank 把 Basic 套餐排到了 Pro 套餐前面</li>
+<li>上下文组装没有放入版本信息</li>
+<li>prompt 没要求基于证据回答</li>
+<li>模型看到了证据但理解错了表格含义</li>
+</ul>
+<p>如果只看最终答案，就无法判断到底应该修哪一层。</p>
+<p>所以 RAG 可观测性的核心目标是：</p>
+<blockquote>
+<p>让每一次问答都能被还原、定位、比较和复现。</p></blockquote>
+<h2 id="12-日志监控评估分别解决什么">1.2 日志、监控、评估分别解决什么
+</h2><p>这三个概念经常混在一起，但职责不同。</p>
+<p>日志解决的是：</p>
+<blockquote>
+<p>某一次请求具体发生了什么。</p></blockquote>
+<p>例如：</p>
+<ul>
+<li>用户问了什么</li>
+<li>召回了哪些 chunk</li>
+<li>每个 chunk 的分数是多少</li>
+<li>rerank 后顺序如何变化</li>
+<li>最终放进上下文的是哪些证据</li>
+<li>模型输入和输出是什么</li>
+<li>每一步耗时多少</li>
+</ul>
+<p>监控解决的是：</p>
+<blockquote>
+<p>系统整体是否稳定、是否变差、是否异常。</p></blockquote>
+<p>例如：</p>
+<ul>
+<li>请求量是否突增</li>
+<li>P95 延迟是否升高</li>
+<li>召回为空比例是否异常</li>
+<li>embedding 调用失败率是否升高</li>
+<li>token 成本是否超过预算</li>
+<li>用户负反馈是否上升</li>
+</ul>
+<p>评估解决的是：</p>
+<blockquote>
+<p>当前方案的效果到底好不好，改动以后是否变好了。</p></blockquote>
+<p>例如：</p>
+<ul>
+<li>召回 Recall@20 是否提升</li>
+<li>rerank NDCG@10 是否提升</li>
+<li>上下文证据覆盖率是否提升</li>
+<li>答案忠实度是否提升</li>
+<li>幻觉率是否下降</li>
+<li>新版本是否比旧版本更适合上线</li>
+</ul>
+<p>可以简单理解为：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">日志：用于定位单个问题
+</span></span><span class="line"><span class="cl">监控：用于发现系统异常
+</span></span><span class="line"><span class="cl">评估：用于判断方案优劣
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="13-rag-的可观测性必须按链路设计">1.3 RAG 的可观测性必须按链路设计
+</h2><p>普通后端服务通常关注：</p>
+<ul>
+<li>QPS</li>
+<li>延迟</li>
+<li>错误率</li>
+<li>CPU</li>
+<li>内存</li>
+<li>数据库连接数</li>
+</ul>
+<p>这些对 RAG 也重要，但不够。</p>
+<p>RAG 还需要关注效果链路：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">文档是否进入知识库
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">知识是否被正确解析和切分
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">正确 chunk 是否能被召回
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">正确 chunk 是否排在前面
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">正确证据是否进入上下文
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">模型是否基于证据回答
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">用户是否认可答案
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这条链路里任何一步断掉，最终用户看到的都是“不准”。</p>
+<p>所以监控和日志不能只围绕接口层做，而要覆盖从离线知识构建到在线问答的完整过程。</p>
+<h1 id="二rag-链路日志的基础设计">二、RAG 链路日志的基础设计
+</h1><h2 id="21-先统一请求标识">2.1 先统一请求标识
+</h2><p>RAG 日志的第一原则是：</p>
+<blockquote>
+<p>每一次用户问答都必须能通过一个 ID 串起来。</p></blockquote>
+<p>常见 ID 包括：</p>
+<ul>
+<li><code>trace_id</code>：一次完整请求链路的全局 ID</li>
+<li><code>session_id</code>：一次多轮会话的 ID</li>
+<li><code>query_id</code>：当前用户问题的 ID</li>
+<li><code>user_id</code>：用户 ID，生产中通常需要脱敏或哈希</li>
+<li><code>tenant_id</code>：租户或组织 ID</li>
+<li><code>doc_id</code>：原始文档 ID</li>
+<li><code>chunk_id</code>：知识片段 ID</li>
+<li><code>index_version</code>：索引版本</li>
+<li><code>prompt_version</code>：prompt 版本</li>
+<li><code>model_version</code>：模型版本</li>
+<li><code>experiment_id</code>：实验或 A/B 测试 ID</li>
+</ul>
+<p>一次在线请求里，最重要的是 <code>trace_id</code> 和 <code>query_id</code>。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;trace_id&#34;</span><span class="p">:</span> <span class="s2">&#34;trc_20260516_9f31c2&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;session_id&#34;</span><span class="p">:</span> <span class="s2">&#34;ses_8a72&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;query_id&#34;</span><span class="p">:</span> <span class="s2">&#34;qry_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;tenant_id&#34;</span><span class="p">:</span> <span class="s2">&#34;tenant_a&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;user_id_hash&#34;</span><span class="p">:</span> <span class="s2">&#34;u_7d91&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;timestamp&#34;</span><span class="p">:</span> <span class="s2">&#34;2026-05-16T10:20:31+08:00&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>后面每个阶段的日志都带上这些字段。</p>
+<p>这样排查问题时，可以从最终答案一路追溯到召回、索引和原始文档。</p>
+<h2 id="22-日志要分层不要只存一坨文本">2.2 日志要分层，不要只存一坨文本
+</h2><p>RAG 日志至少可以分成四类。</p>
+<p>第一类是请求日志：</p>
+<ul>
+<li>用户问题</li>
+<li>会话上下文</li>
+<li>用户权限</li>
+<li>业务入口</li>
+<li>实验分组</li>
+</ul>
+<p>第二类是链路日志：</p>
+<ul>
+<li>查询理解结果</li>
+<li>filter 条件</li>
+<li>各路召回结果</li>
+<li>rerank 结果</li>
+<li>上下文组装结果</li>
+<li>prompt 构造结果</li>
+<li>模型调用结果</li>
+</ul>
+<p>第三类是系统日志：</p>
+<ul>
+<li>耗时</li>
+<li>错误码</li>
+<li>重试次数</li>
+<li>超时情况</li>
+<li>依赖服务状态</li>
+</ul>
+<p>第四类是反馈日志：</p>
+<ul>
+<li>点赞点踩</li>
+<li>用户追问</li>
+<li>人工纠错</li>
+<li>是否采纳</li>
+<li>客服转人工</li>
+<li>业务转化结果</li>
+</ul>
+<p>不要把所有内容只塞进一个 <code>message</code> 字段。</p>
+<p>更好的方式是结构化记录：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;trace_id&#34;</span><span class="p">:</span> <span class="s2">&#34;trc_20260516_9f31c2&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;stage&#34;</span><span class="p">:</span> <span class="s2">&#34;retrieval&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;query&#34;</span><span class="p">:</span> <span class="s2">&#34;Pro 套餐每月 API 调用额度是多少？&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;retrieval_routes&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;bm25&#34;</span><span class="p">,</span> <span class="s2">&#34;vector&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;top_k&#34;</span><span class="p">:</span> <span class="mi">20</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;latency_ms&#34;</span><span class="p">:</span> <span class="mi">86</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;results&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_003_chunk_012&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;doc_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;score&#34;</span><span class="p">:</span> <span class="mf">0.83</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;route&#34;</span><span class="p">:</span> <span class="s2">&#34;vector&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;rank&#34;</span><span class="p">:</span> <span class="mi">1</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">  <span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>结构化日志后面才能用于检索、统计、评估和回放。</p>
+<h2 id="23-日志要能复现一次回答">2.3 日志要能复现一次回答
+</h2><p>一个合格的 RAG 日志，至少应该能回答这几个问题：</p>
+<ul>
+<li>当时用户原始问题是什么</li>
+<li>查询是否被改写过</li>
+<li>使用了哪个知识库和索引版本</li>
+<li>召回候选有哪些</li>
+<li>rerank 前后排序有什么变化</li>
+<li>哪些证据最终进入了 prompt</li>
+<li>prompt 的完整结构是什么</li>
+<li>调用的是哪个模型</li>
+<li>模型参数是什么</li>
+<li>输出答案是什么</li>
+<li>后处理有没有改写答案</li>
+</ul>
+<p>如果不能复现，就很难判断一次线上失败是偶发问题还是系统性问题。</p>
+<p>例如模型调用日志应该包含：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;stage&#34;</span><span class="p">:</span> <span class="s2">&#34;generation&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;trace_id&#34;</span><span class="p">:</span> <span class="s2">&#34;trc_20260516_9f31c2&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;model&#34;</span><span class="p">:</span> <span class="s2">&#34;llm-x&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;model_version&#34;</span><span class="p">:</span> <span class="s2">&#34;2026-05-01&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;temperature&#34;</span><span class="p">:</span> <span class="mf">0.2</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;max_tokens&#34;</span><span class="p">:</span> <span class="mi">800</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;prompt_version&#34;</span><span class="p">:</span> <span class="s2">&#34;rag_answer_v12&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;input_token_count&#34;</span><span class="p">:</span> <span class="mi">3620</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;output_token_count&#34;</span><span class="p">:</span> <span class="mi">214</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;latency_ms&#34;</span><span class="p">:</span> <span class="mi">1320</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;finish_reason&#34;</span><span class="p">:</span> <span class="s2">&#34;stop&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>生产环境里是否保存完整 prompt，要结合隐私、安全和合规要求。</p>
+<p>但至少要保存 prompt 模板版本、证据 ID、token 统计和模型参数。</p>
+<h2 id="24-原文内容和敏感信息怎么处理">2.4 原文内容和敏感信息怎么处理
+</h2><p>RAG 日志经常包含业务文档和用户问题，里面可能有敏感信息。</p>
+<p>所以要区分三类数据。</p>
+<p>第一类是可直接记录的数据：</p>
+<ul>
+<li><code>trace_id</code></li>
+<li>阶段名</li>
+<li>耗时</li>
+<li>状态码</li>
+<li>分数</li>
+<li>排名</li>
+<li>token 数</li>
+<li>模型版本</li>
+<li>索引版本</li>
+</ul>
+<p>第二类是需要脱敏的数据：</p>
+<ul>
+<li>用户 ID</li>
+<li>手机号</li>
+<li>邮箱</li>
+<li>姓名</li>
+<li>订单号</li>
+<li>合同号</li>
+<li>地址</li>
+</ul>
+<p>第三类是需要按权限保存的数据：</p>
+<ul>
+<li>用户原始问题</li>
+<li>检索到的 chunk 内容</li>
+<li>完整 prompt</li>
+<li>模型完整回答</li>
+<li>内部文档原文</li>
+</ul>
+<p>生产系统常见做法是：</p>
+<ul>
+<li>默认日志只保存 ID、分数、摘要和统计信息</li>
+<li>完整内容进入受控的 debug 日志或对象存储</li>
+<li>debug 日志设置更短的保留周期</li>
+<li>对敏感字段做脱敏、加密或哈希</li>
+<li>只有具备权限的排障人员可以查看原文</li>
+</ul>
+<p>不要为了排查方便，把所有用户问题和内部知识无差别写进普通日志。</p>
+<h2 id="25-如何平衡日志完整性和存储空间">2.5 如何平衡日志完整性和存储空间
+</h2><p>RAG 日志有一个天然矛盾：</p>
+<blockquote>
+<p>记录得太少，线上问题无法复现；记录得太多，日志成本、存储压力和数据风险都会快速上升。</p></blockquote>
+<p>尤其是 RAG 请求里经常包含：</p>
+<ul>
+<li>用户原始问题</li>
+<li>多轮会话历史</li>
+<li>召回候选列表</li>
+<li>chunk 原文</li>
+<li>rerank 中间结果</li>
+<li>最终上下文</li>
+<li>完整 prompt</li>
+<li>模型原始输出</li>
+</ul>
+<p>这些内容如果每次请求都全量长期保存，空间会非常大。</p>
+<p>更合理的原则是：</p>
+<blockquote>
+<p>ID、版本、分数、排名、耗时全量保存；大文本、完整 prompt、chunk 原文分级保存、采样保存或外置保存。</p></blockquote>
+<h3 id="251-哪些日志应该全量保存">2.5.1 哪些日志应该全量保存
+</h3><p>体积小、排障价值高的字段，建议每次请求都保存。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">trace_id
+</span></span><span class="line"><span class="cl">session_id
+</span></span><span class="line"><span class="cl">query_id
+</span></span><span class="line"><span class="cl">tenant_id
+</span></span><span class="line"><span class="cl">user_id_hash
+</span></span><span class="line"><span class="cl">timestamp
+</span></span><span class="line"><span class="cl">index_version
+</span></span><span class="line"><span class="cl">chunker_version
+</span></span><span class="line"><span class="cl">embedding_model_version
+</span></span><span class="line"><span class="cl">retrieval_config_version
+</span></span><span class="line"><span class="cl">reranker_version
+</span></span><span class="line"><span class="cl">context_builder_version
+</span></span><span class="line"><span class="cl">prompt_version
+</span></span><span class="line"><span class="cl">model_version
+</span></span><span class="line"><span class="cl">status
+</span></span><span class="line"><span class="cl">error_code
+</span></span><span class="line"><span class="cl">latency_ms
+</span></span><span class="line"><span class="cl">input_tokens
+</span></span><span class="line"><span class="cl">output_tokens
+</span></span><span class="line"><span class="cl">cost
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>RAG 链路里还应该全量保存 ID 级结果：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回 top-k 的 chunk_id、doc_id、rank、score、route
+</span></span><span class="line"><span class="cl">rerank 后的 chunk_id、rank_before、rank_after、rerank_score
+</span></span><span class="line"><span class="cl">最终进入上下文的 chunk_id、citation_id、tokens、selection_reason
+</span></span><span class="line"><span class="cl">被丢弃证据的 chunk_id 和 drop_reason
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这些字段不保存大段原文，但可以还原“当时用了哪些证据”。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;trace_id&#34;</span><span class="p">:</span> <span class="s2">&#34;trc_20260516_9f31c2&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;stage&#34;</span><span class="p">:</span> <span class="s2">&#34;context_assembly&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;index_version&#34;</span><span class="p">:</span> <span class="s2">&#34;kb_20260516_0200&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;selected_chunk_ids&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;pricing_doc_003_chunk_012&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;pricing_doc_003_chunk_013&#34;</span>
+</span></span><span class="line"><span class="cl">  <span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;dropped_chunks&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_old_chunk_009&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;reason&#34;</span><span class="p">:</span> <span class="s2">&#34;older_version&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">  <span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;context_token_count&#34;</span><span class="p">:</span> <span class="mi">2860</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这类日志适合进入长期的结构化日志系统。</p>
+<h3 id="252-哪些内容不应该默认全量长期保存">2.5.2 哪些内容不应该默认全量长期保存
+</h3><p>体积大、敏感度高、重复率高的内容，不建议默认全量长期保存。</p>
+<p>典型包括：</p>
+<ul>
+<li>用户原始问题</li>
+<li>多轮对话全文</li>
+<li>召回 chunk 原文</li>
+<li>完整上下文</li>
+<li>完整 prompt</li>
+<li>模型原始输出</li>
+<li>内部文档原文</li>
+</ul>
+<p>这些内容应该分层处理：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">普通日志：只保存 ID、版本、分数、排名、耗时、token 数
+</span></span><span class="line"><span class="cl">debug 日志：保存完整 query、context、prompt、answer
+</span></span><span class="line"><span class="cl">审计日志：保存关键请求的完整链路，严格控制权限
+</span></span><span class="line"><span class="cl">评估样本库：保存经过筛选和脱敏的高价值样本
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>普通请求可以只记录：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;trace_id&#34;</span><span class="p">:</span> <span class="s2">&#34;trc_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;query_hash&#34;</span><span class="p">:</span> <span class="s2">&#34;sha256:9a18...&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;selected_chunk_ids&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;chunk_001&#34;</span><span class="p">,</span> <span class="s2">&#34;chunk_002&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;prompt_version&#34;</span><span class="p">:</span> <span class="s2">&#34;rag_answer_v12&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;model_version&#34;</span><span class="p">:</span> <span class="s2">&#34;2026-05-01&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;input_tokens&#34;</span><span class="p">:</span> <span class="mi">3620</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;output_tokens&#34;</span><span class="p">:</span> <span class="mi">214</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果后续需要排查，再通过 <code>chunk_id</code>、<code>index_version</code> 和受控的对象存储回查完整内容。</p>
+<h3 id="253-用采样控制完整日志体积">2.5.3 用采样控制完整日志体积
+</h3><p>不是所有请求都需要保存完整 prompt 和完整上下文。</p>
+<p>推荐策略是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">100% 保存轻量结构化日志
+</span></span><span class="line"><span class="cl">100% 保存失败请求的完整 debug 日志
+</span></span><span class="line"><span class="cl">100% 保存用户点踩请求的完整 debug 日志
+</span></span><span class="line"><span class="cl">100% 保存低置信请求的完整 debug 日志
+</span></span><span class="line"><span class="cl">100% 保存灰度实验样本的完整 debug 日志
+</span></span><span class="line"><span class="cl">1% 到 5% 保存正常请求的完整 debug 日志
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>低置信请求可以包括：</p>
+<ul>
+<li>召回为空</li>
+<li>最高 rerank 分低于阈值</li>
+<li>上下文证据数过少</li>
+<li>模型回答资料不足</li>
+<li>无引用答案</li>
+<li>citation mismatch</li>
+<li>fallback 触发</li>
+<li>总延迟超阈值</li>
+</ul>
+<p>例如可以设计这样的采样规则：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">if status != &#34;success&#34;:
+</span></span><span class="line"><span class="cl">    sample_full_log = true
+</span></span><span class="line"><span class="cl">elif user_feedback == &#34;negative&#34;:
+</span></span><span class="line"><span class="cl">    sample_full_log = true
+</span></span><span class="line"><span class="cl">elif empty_retrieval or low_rerank_score:
+</span></span><span class="line"><span class="cl">    sample_full_log = true
+</span></span><span class="line"><span class="cl">elif experiment_id is not null:
+</span></span><span class="line"><span class="cl">    sample_full_log = true
+</span></span><span class="line"><span class="cl">else:
+</span></span><span class="line"><span class="cl">    sample_full_log = random() &lt; 0.02
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样可以把空间主要花在最有排障和评估价值的请求上。</p>
+<h3 id="254-大字段外置保存日志里只保存引用">2.5.4 大字段外置保存，日志里只保存引用
+</h3><p>完整 prompt、完整上下文、模型原始输出不一定要直接写进日志系统。</p>
+<p>更常见的做法是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">结构化日志系统：保存元数据、ID、指标、对象引用
+</span></span><span class="line"><span class="cl">对象存储：保存完整 prompt、context、answer、召回详情快照
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;trace_id&#34;</span><span class="p">:</span> <span class="s2">&#34;trc_20260516_9f31c2&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;stage&#34;</span><span class="p">:</span> <span class="s2">&#34;generation&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;prompt_ref&#34;</span><span class="p">:</span> <span class="s2">&#34;s3://rag-debug-logs/2026/05/16/trc_20260516_9f31c2/prompt.json&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;context_ref&#34;</span><span class="p">:</span> <span class="s2">&#34;s3://rag-debug-logs/2026/05/16/trc_20260516_9f31c2/context.json&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;answer_ref&#34;</span><span class="p">:</span> <span class="s2">&#34;s3://rag-debug-logs/2026/05/16/trc_20260516_9f31c2/answer.json&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;input_token_count&#34;</span><span class="p">:</span> <span class="mi">3620</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;output_token_count&#34;</span><span class="p">:</span> <span class="mi">214</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样日志系统不会被大字段撑爆，排障时又可以取回完整内容。</p>
+<p>如果没有对象存储，也可以用：</p>
+<ul>
+<li>MinIO</li>
+<li>HDFS</li>
+<li>云厂商 OSS / COS / OBS</li>
+<li>数据湖表</li>
+<li>冷存储归档</li>
+</ul>
+<p>关键是日志系统和大文本存储要分工明确。</p>
+<h3 id="255-对重复内容做去重">2.5.5 对重复内容做去重
+</h3><p>RAG 日志里最容易重复的是 chunk 原文。</p>
+<p>同一个热门 chunk 可能在一天内被上万次请求召回。</p>
+<p>如果每次日志都保存完整 chunk 内容，会造成巨大浪费。</p>
+<p>更好的做法是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">chunk 原文只在知识库或 chunk store 里保存一份
+</span></span><span class="line"><span class="cl">日志里保存 chunk_id、doc_id、content_hash、index_version
+</span></span><span class="line"><span class="cl">需要复现时再通过 chunk_id 回查
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_003_chunk_012&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;doc_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;content_hash&#34;</span><span class="p">:</span> <span class="s2">&#34;sha256:af91...&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;index_version&#34;</span><span class="p">:</span> <span class="s2">&#34;kb_20260516_0200&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;rank&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;score&#34;</span><span class="p">:</span> <span class="mf">0.94</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果担心知识库后续更新导致无法复现，可以只对异常请求保存 chunk 快照。</p>
+<p>或者在 chunk store 中保留历史版本：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">chunk_id + index_version -&gt; chunk content
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样既能复现，又不会在请求日志里重复存大量原文。</p>
+<h3 id="256-设置不同保留周期">2.5.6 设置不同保留周期
+</h3><p>不同类型日志的价值和体积不同，保留周期也应该不同。</p>
+<p>一个常见方案是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">指标数据：保留 6 到 12 个月
+</span></span><span class="line"><span class="cl">轻量结构化链路日志：保留 30 到 90 天
+</span></span><span class="line"><span class="cl">完整 debug 日志：保留 7 到 30 天
+</span></span><span class="line"><span class="cl">错误、点踩、低置信样本：保留 3 到 12 个月
+</span></span><span class="line"><span class="cl">人工标注评估样本：长期保留
+</span></span><span class="line"><span class="cl">合规审计日志：按业务合规要求保留
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>长期保留的重点不应该是“所有请求的所有原文”，而应该是：</p>
+<ul>
+<li>高价值失败样本</li>
+<li>用户负反馈样本</li>
+<li>人工标注样本</li>
+<li>回归评估样本</li>
+<li>关键审计样本</li>
+</ul>
+<p>这些数据能持续改进系统，比无差别保存全量请求更有价值。</p>
+<h2 id="26-日志中间件和技术架构怎么选">2.6 日志中间件和技术架构怎么选
+</h2><p>RAG 日志系统不要只选一个数据库硬扛所有需求。</p>
+<p>因为 RAG 日志同时有几类不同访问模式：</p>
+<ul>
+<li>按 <code>trace_id</code> 查单次请求链路</li>
+<li>按时间窗口统计错误率、延迟、召回为空比例</li>
+<li>按租户、业务线、模型版本做聚合分析</li>
+<li>保存完整 prompt、context、answer 等大对象</li>
+<li>把高价值样本送入评估集和标注系统</li>
+<li>支持告警和看板</li>
+</ul>
+<p>这些需求适合用分层架构解决。</p>
+<h3 id="261-推荐的整体架构">2.6.1 推荐的整体架构
+</h3><p>一个比较通用的架构是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">RAG 应用服务
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">结构化日志 SDK / OpenTelemetry
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">日志采集 Agent
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Kafka / Pulsar / 云消息队列
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">实时消费与清洗
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">日志检索系统 + OLAP 分析库 + 对象存储 + 指标监控系统
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">看板 / 告警 / 评估平台 / 标注平台
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>可以展开成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">在线请求
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">应用内生成 structured event
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">OpenTelemetry Collector / Fluent Bit / Vector
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Kafka
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Flink / Kafka Streams / Logstash
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Elasticsearch / OpenSearch：查 trace 和排障
+</span></span><span class="line"><span class="cl">ClickHouse / Doris / BigQuery：聚合分析和报表
+</span></span><span class="line"><span class="cl">S3 / MinIO / OSS：保存完整 prompt、context、answer
+</span></span><span class="line"><span class="cl">Prometheus / Grafana：服务指标和告警
+</span></span><span class="line"><span class="cl">评估平台：沉淀失败样本、回归集、LLM-as-Judge 结果
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>其中每一层职责不同。</p>
+<p>不要把完整 prompt、聚合指标、trace 检索、长期归档都塞进同一个系统。</p>
+<h3 id="262-日志检索用什么">2.6.2 日志检索用什么
+</h3><p>如果目标是排查单次请求、搜索错误日志、按 <code>trace_id</code> 查看链路，常见选择是：</p>
+<ul>
+<li>Elasticsearch</li>
+<li>OpenSearch</li>
+<li>Loki</li>
+<li>Grafana Tempo</li>
+<li>云厂商日志服务</li>
+</ul>
+<p>Elasticsearch / OpenSearch 适合：</p>
+<ul>
+<li>结构化字段检索</li>
+<li>关键词搜索</li>
+<li>trace_id 查询</li>
+<li>错误日志排查</li>
+<li>中短期日志保存</li>
+</ul>
+<p>例如查询某次请求：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">trace_id = &#34;trc_20260516_9f31c2&#34;
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>或者查询最近一小时召回为空的请求：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">stage = &#34;retrieval&#34; AND empty_result = true
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>Loki 更偏日志流和低成本检索，适合日志量大、查询模式相对简单的场景。</p>
+<p>Tempo / Jaeger 更偏分布式 tracing，适合看调用链和阶段耗时，但不适合存大量业务字段和大文本。</p>
+<h3 id="263-聚合分析用什么">2.6.3 聚合分析用什么
+</h3><p>如果要做质量趋势、成本分析、租户统计、A/B 实验对比，建议使用 OLAP 系统。</p>
+<p>常见选择：</p>
+<ul>
+<li>ClickHouse</li>
+<li>Apache Doris</li>
+<li>Apache Druid</li>
+<li>BigQuery</li>
+<li>Snowflake</li>
+<li>Databricks</li>
+</ul>
+<p>这类系统适合回答：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">过去 7 天各业务域的 empty_retrieval_rate 是多少
+</span></span><span class="line"><span class="cl">不同 prompt_version 的点踩率有什么差异
+</span></span><span class="line"><span class="cl">每个 tenant 的 token 成本是多少
+</span></span><span class="line"><span class="cl">reranker_v2 上线后 P95 延迟变化多少
+</span></span><span class="line"><span class="cl">不同 query_intent 的 answer_correctness 分布如何
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>例如 ClickHouse 表可以按天分区：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">rag_query_events</span><span class="w"> </span><span class="p">(</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">event_date</span><span class="w"> </span><span class="nb">Date</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="k">timestamp</span><span class="w"> </span><span class="n">DateTime</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">trace_id</span><span class="w"> </span><span class="n">String</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">tenant_id</span><span class="w"> </span><span class="n">String</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">query_intent</span><span class="w"> </span><span class="n">String</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">index_version</span><span class="w"> </span><span class="n">String</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">prompt_version</span><span class="w"> </span><span class="n">String</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">model_version</span><span class="w"> </span><span class="n">String</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">status</span><span class="w"> </span><span class="n">String</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">total_latency_ms</span><span class="w"> </span><span class="n">UInt32</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">retrieval_latency_ms</span><span class="w"> </span><span class="n">UInt32</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">rerank_latency_ms</span><span class="w"> </span><span class="n">UInt32</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">llm_latency_ms</span><span class="w"> </span><span class="n">UInt32</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">empty_retrieval</span><span class="w"> </span><span class="n">UInt8</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">no_citation</span><span class="w"> </span><span class="n">UInt8</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">input_tokens</span><span class="w"> </span><span class="n">UInt32</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">output_tokens</span><span class="w"> </span><span class="n">UInt32</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">cost</span><span class="w"> </span><span class="n">Float64</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="n">ENGINE</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MergeTree</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="n">PARTITION</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">event_date</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="p">(</span><span class="n">event_date</span><span class="p">,</span><span class="w"> </span><span class="n">tenant_id</span><span class="p">,</span><span class="w"> </span><span class="k">timestamp</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></td></tr></table>
+</div>
+</div><p>日志检索系统适合查“某一次发生了什么”。</p>
+<p>OLAP 系统适合看“整体趋势发生了什么”。</p>
+<h3 id="264-大文本和快照用什么">2.6.4 大文本和快照用什么
+</h3><p>完整 prompt、上下文、召回结果快照、模型原始输出，建议放对象存储。</p>
+<p>常见选择：</p>
+<ul>
+<li>S3</li>
+<li>MinIO</li>
+<li>阿里云 OSS</li>
+<li>腾讯云 COS</li>
+<li>华为云 OBS</li>
+<li>HDFS</li>
+</ul>
+<p>对象存储适合：</p>
+<ul>
+<li>成本低</li>
+<li>保存大 JSON</li>
+<li>生命周期管理</li>
+<li>冷热分层</li>
+<li>按 trace_id 回查</li>
+</ul>
+<p>一个完整 debug 对象可以长这样：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;trace_id&#34;</span><span class="p">:</span> <span class="s2">&#34;trc_20260516_9f31c2&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;raw_query&#34;</span><span class="p">:</span> <span class="s2">&#34;pro 每月能调多少次接口&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;rewritten_query&#34;</span><span class="p">:</span> <span class="s2">&#34;Pro 套餐每月 API 调用额度是多少？&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;retrieval_results&#34;</span><span class="p">:</span> <span class="p">[],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;rerank_results&#34;</span><span class="p">:</span> <span class="p">[],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;selected_context&#34;</span><span class="p">:</span> <span class="p">[],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;prompt&#34;</span><span class="p">:</span> <span class="s2">&#34;...&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;raw_answer&#34;</span><span class="p">:</span> <span class="s2">&#34;...&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;final_answer&#34;</span><span class="p">:</span> <span class="s2">&#34;...&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>结构化日志里只保存：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">debug_snapshot_ref
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样既保留完整性，又不会拖慢日志检索。</p>
+<h3 id="265-指标监控和告警用什么">2.6.5 指标监控和告警用什么
+</h3><p>服务指标和告警适合用时序监控系统。</p>
+<p>常见选择：</p>
+<ul>
+<li>Prometheus + Grafana</li>
+<li>VictoriaMetrics</li>
+<li>Datadog</li>
+<li>New Relic</li>
+<li>云厂商监控服务</li>
+</ul>
+<p>适合上报：</p>
+<ul>
+<li>QPS</li>
+<li>错误率</li>
+<li>P95 / P99 延迟</li>
+<li>embedding 调用失败率</li>
+<li>向量库超时率</li>
+<li>LLM 调用失败率</li>
+<li>empty_retrieval_rate</li>
+<li>fallback_rate</li>
+<li>token 成本</li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">rag_request_total{tenant_id, route, model_version}
+</span></span><span class="line"><span class="cl">rag_request_latency_ms_bucket{stage}
+</span></span><span class="line"><span class="cl">rag_empty_retrieval_total{tenant_id, index_version}
+</span></span><span class="line"><span class="cl">rag_llm_token_total{type=&#34;input|output&#34;, model_version}
+</span></span><span class="line"><span class="cl">rag_negative_feedback_total{tenant_id, query_intent}
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>指标系统负责发现异常。</p>
+<p>日志系统负责定位细节。</p>
+<p>OLAP 系统负责分析趋势。</p>
+<p>对象存储负责保留完整上下文。</p>
+<h3 id="266-小团队和大团队的选型建议">2.6.6 小团队和大团队的选型建议
+</h3><p>如果是小团队或早期项目，可以先用轻量方案：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">应用结构化 JSON 日志
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">云日志服务 / OpenSearch
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">对象存储保存完整 debug 快照
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Prometheus + Grafana 做基础指标
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这个阶段不要一开始就搭复杂数据平台。</p>
+<p>先保证：</p>
+<ul>
+<li><code>trace_id</code> 可查</li>
+<li>召回和上下文 chunk_id 可查</li>
+<li>错误请求完整快照可查</li>
+<li>核心指标可告警</li>
+</ul>
+<p>如果是中大型生产系统，可以采用更完整的架构：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">OpenTelemetry + Fluent Bit / Vector
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Kafka
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Flink 清洗、脱敏、分流
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">OpenSearch 查日志
+</span></span><span class="line"><span class="cl">ClickHouse 做分析
+</span></span><span class="line"><span class="cl">S3 / MinIO 存 debug 快照
+</span></span><span class="line"><span class="cl">Prometheus / Grafana 做监控
+</span></span><span class="line"><span class="cl">标注平台和评估平台消费失败样本
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果已经在云上，也可以直接用云厂商组合：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">云日志服务
+</span></span><span class="line"><span class="cl">云消息队列
+</span></span><span class="line"><span class="cl">云对象存储
+</span></span><span class="line"><span class="cl">云数据仓库
+</span></span><span class="line"><span class="cl">云监控
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>关键不是工具名字，而是职责拆分清楚。</p>
+<h3 id="267-rag-日志事件表怎么设计">2.6.7 RAG 日志事件表怎么设计
+</h3><p>实践中可以把日志事件拆成几张逻辑表。</p>
+<p>请求总表：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">rag_query_event
+</span></span><span class="line"><span class="cl">- trace_id
+</span></span><span class="line"><span class="cl">- session_id
+</span></span><span class="line"><span class="cl">- tenant_id
+</span></span><span class="line"><span class="cl">- user_id_hash
+</span></span><span class="line"><span class="cl">- raw_query_hash
+</span></span><span class="line"><span class="cl">- query_intent
+</span></span><span class="line"><span class="cl">- index_version
+</span></span><span class="line"><span class="cl">- prompt_version
+</span></span><span class="line"><span class="cl">- model_version
+</span></span><span class="line"><span class="cl">- total_latency_ms
+</span></span><span class="line"><span class="cl">- input_tokens
+</span></span><span class="line"><span class="cl">- output_tokens
+</span></span><span class="line"><span class="cl">- cost
+</span></span><span class="line"><span class="cl">- status
+</span></span><span class="line"><span class="cl">- feedback
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>召回明细表：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">rag_retrieval_result
+</span></span><span class="line"><span class="cl">- trace_id
+</span></span><span class="line"><span class="cl">- route
+</span></span><span class="line"><span class="cl">- query_text_hash
+</span></span><span class="line"><span class="cl">- chunk_id
+</span></span><span class="line"><span class="cl">- doc_id
+</span></span><span class="line"><span class="cl">- rank
+</span></span><span class="line"><span class="cl">- score
+</span></span><span class="line"><span class="cl">- index_version
+</span></span><span class="line"><span class="cl">- latency_ms
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>重排明细表：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">rag_rerank_result
+</span></span><span class="line"><span class="cl">- trace_id
+</span></span><span class="line"><span class="cl">- chunk_id
+</span></span><span class="line"><span class="cl">- rank_before
+</span></span><span class="line"><span class="cl">- rank_after
+</span></span><span class="line"><span class="cl">- retrieval_score
+</span></span><span class="line"><span class="cl">- rerank_score
+</span></span><span class="line"><span class="cl">- reranker_version
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>上下文明细表：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">rag_context_evidence
+</span></span><span class="line"><span class="cl">- trace_id
+</span></span><span class="line"><span class="cl">- citation_id
+</span></span><span class="line"><span class="cl">- chunk_id
+</span></span><span class="line"><span class="cl">- doc_id
+</span></span><span class="line"><span class="cl">- tokens
+</span></span><span class="line"><span class="cl">- selected
+</span></span><span class="line"><span class="cl">- selection_reason
+</span></span><span class="line"><span class="cl">- drop_reason
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>生成调用表：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">rag_generation_event
+</span></span><span class="line"><span class="cl">- trace_id
+</span></span><span class="line"><span class="cl">- model_version
+</span></span><span class="line"><span class="cl">- prompt_version
+</span></span><span class="line"><span class="cl">- temperature
+</span></span><span class="line"><span class="cl">- input_tokens
+</span></span><span class="line"><span class="cl">- output_tokens
+</span></span><span class="line"><span class="cl">- latency_ms
+</span></span><span class="line"><span class="cl">- finish_reason
+</span></span><span class="line"><span class="cl">- answer_hash
+</span></span><span class="line"><span class="cl">- debug_snapshot_ref
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>反馈与标注表：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">rag_feedback_event
+</span></span><span class="line"><span class="cl">- trace_id
+</span></span><span class="line"><span class="cl">- feedback_type
+</span></span><span class="line"><span class="cl">- feedback_reason
+</span></span><span class="line"><span class="cl">- corrected_answer_ref
+</span></span><span class="line"><span class="cl">- failure_stage
+</span></span><span class="line"><span class="cl">- label_status
+</span></span><span class="line"><span class="cl">- eval_set_version
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这种设计比把所有字段塞进一张宽表更容易维护。</p>
+<p>需要查单次请求时，用 <code>trace_id</code> 关联。</p>
+<p>需要做趋势分析时，可以按表聚合。</p>
+<h3 id="268-一个推荐的默认方案">2.6.8 一个推荐的默认方案
+</h3><p>如果没有特殊约束，可以从下面这个方案开始：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">全量结构化日志：
+</span></span><span class="line"><span class="cl">OpenTelemetry / JSON Logger -&gt; Fluent Bit / Vector -&gt; OpenSearch
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">聚合分析：
+</span></span><span class="line"><span class="cl">Kafka -&gt; Flink -&gt; ClickHouse
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">完整 debug 快照：
+</span></span><span class="line"><span class="cl">S3 / MinIO，日志中保存 snapshot_ref
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">指标和告警：
+</span></span><span class="line"><span class="cl">Prometheus + Grafana
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">评估闭环：
+</span></span><span class="line"><span class="cl">点踩、失败、低置信样本 -&gt; 标注队列 -&gt; 评估集 -&gt; 回归测试
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>对应的保存策略：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">轻量日志：全量保存 30 到 90 天
+</span></span><span class="line"><span class="cl">完整快照：异常和采样请求保存 7 到 30 天
+</span></span><span class="line"><span class="cl">评估样本：脱敏后长期保存
+</span></span><span class="line"><span class="cl">指标数据：保留 6 到 12 个月
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这个方案能同时兼顾：</p>
+<ul>
+<li>单次请求可追溯</li>
+<li>系统质量可监控</li>
+<li>成本和趋势可分析</li>
+<li>高价值样本可沉淀</li>
+<li>存储成本可控制</li>
+</ul>
+<h1 id="三离线知识构建阶段怎么打日志">三、离线知识构建阶段怎么打日志
+</h1><h2 id="31-数据接入日志">3.1 数据接入日志
+</h2><p>数据接入阶段要回答：</p>
+<blockquote>
+<p>哪些知识源进入了系统，哪些没有进入，为什么。</p></blockquote>
+<p>常见字段包括：</p>
+<ul>
+<li><code>source_id</code></li>
+<li><code>source_type</code></li>
+<li><code>doc_id</code></li>
+<li><code>doc_uri</code></li>
+<li><code>doc_title</code></li>
+<li><code>owner</code></li>
+<li><code>permission_group</code></li>
+<li><code>source_updated_at</code></li>
+<li><code>ingested_at</code></li>
+<li><code>content_hash</code></li>
+<li><code>ingestion_status</code></li>
+<li><code>failure_reason</code></li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;stage&#34;</span><span class="p">:</span> <span class="s2">&#34;ingestion&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;source_type&#34;</span><span class="p">:</span> <span class="s2">&#34;markdown&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;doc_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;doc_title&#34;</span><span class="p">:</span> <span class="s2">&#34;计费系统说明&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;content_hash&#34;</span><span class="p">:</span> <span class="s2">&#34;sha256:af91...&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;source_updated_at&#34;</span><span class="p">:</span> <span class="s2">&#34;2026-05-10T09:12:00+08:00&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;ingested_at&#34;</span><span class="p">:</span> <span class="s2">&#34;2026-05-16T02:00:11+08:00&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;permission_group&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;billing_team&#34;</span><span class="p">,</span> <span class="s2">&#34;support_team&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;status&#34;</span><span class="p">:</span> <span class="s2">&#34;success&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这类日志主要用于排查：</p>
+<ul>
+<li>文档是否漏同步</li>
+<li>增量更新是否生效</li>
+<li>是否重复接入</li>
+<li>权限元数据是否丢失</li>
+<li>知识源更新时间和索引更新时间是否一致</li>
+</ul>
+<h2 id="32-文档解析日志">3.2 文档解析日志
+</h2><p>文档解析阶段要回答：</p>
+<blockquote>
+<p>原始文档有没有被正确转换成可检索文本。</p></blockquote>
+<p>常见字段包括：</p>
+<ul>
+<li><code>parser_name</code></li>
+<li><code>parser_version</code></li>
+<li><code>page_count</code></li>
+<li><code>text_length</code></li>
+<li><code>table_count</code></li>
+<li><code>image_count</code></li>
+<li><code>ocr_used</code></li>
+<li><code>parse_warning_count</code></li>
+<li><code>parse_error_count</code></li>
+<li><code>extracted_title_count</code></li>
+<li><code>metadata_fields</code></li>
+</ul>
+<p>例如 PDF 解析日志：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;stage&#34;</span><span class="p">:</span> <span class="s2">&#34;parsing&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;doc_id&#34;</span><span class="p">:</span> <span class="s2">&#34;contract_2026_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;parser_name&#34;</span><span class="p">:</span> <span class="s2">&#34;pdf_parser&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;parser_version&#34;</span><span class="p">:</span> <span class="s2">&#34;v3.4&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;page_count&#34;</span><span class="p">:</span> <span class="mi">18</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;text_length&#34;</span><span class="p">:</span> <span class="mi">36218</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;table_count&#34;</span><span class="p">:</span> <span class="mi">7</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;image_count&#34;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;ocr_used&#34;</span><span class="p">:</span> <span class="kc">true</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;parse_warning_count&#34;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;warnings&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;page_7_table_maybe_broken&#34;</span><span class="p">,</span> <span class="s2">&#34;page_12_low_ocr_confidence&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;status&#34;</span><span class="p">:</span> <span class="s2">&#34;success&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这类日志非常重要。</p>
+<p>很多 RAG 问题不是检索算法造成的，而是文档解析时信息已经丢了。</p>
+<p>例如：</p>
+<ul>
+<li>表格被解析成乱序文本</li>
+<li>标题层级丢失</li>
+<li>页眉页脚混入正文</li>
+<li>OCR 把金额、日期、编号识别错</li>
+<li>PDF 双栏内容顺序错乱</li>
+</ul>
+<p>如果没有解析日志，后面只会看到“召回不到正确答案”，但不知道原始知识根本没有被正确入库。</p>
+<h2 id="33-文本切分日志">3.3 文本切分日志
+</h2><p>文本切分阶段要回答：</p>
+<blockquote>
+<p>一个文档被切成了多少 chunk，每个 chunk 是否足够完整。</p></blockquote>
+<p>常见字段包括：</p>
+<ul>
+<li><code>chunker_name</code></li>
+<li><code>chunker_version</code></li>
+<li><code>chunk_count</code></li>
+<li><code>avg_chunk_chars</code></li>
+<li><code>min_chunk_chars</code></li>
+<li><code>max_chunk_chars</code></li>
+<li><code>overlap_chars</code></li>
+<li><code>section_path_preserved</code></li>
+<li><code>chunk_ids</code></li>
+<li><code>orphan_chunk_count</code></li>
+<li><code>too_short_chunk_count</code></li>
+<li><code>too_long_chunk_count</code></li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;stage&#34;</span><span class="p">:</span> <span class="s2">&#34;chunking&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;doc_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunker_name&#34;</span><span class="p">:</span> <span class="s2">&#34;heading_aware_chunker&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunker_version&#34;</span><span class="p">:</span> <span class="s2">&#34;v2.1&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_count&#34;</span><span class="p">:</span> <span class="mi">46</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;avg_chunk_chars&#34;</span><span class="p">:</span> <span class="mi">612</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;min_chunk_chars&#34;</span><span class="p">:</span> <span class="mi">128</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;max_chunk_chars&#34;</span><span class="p">:</span> <span class="mi">1180</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;overlap_chars&#34;</span><span class="p">:</span> <span class="mi">80</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;orphan_chunk_count&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;too_short_chunk_count&#34;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;too_long_chunk_count&#34;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;status&#34;</span><span class="p">:</span> <span class="s2">&#34;success&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>切分日志可以帮助发现：</p>
+<ul>
+<li>某类文档 chunk 数突然暴涨</li>
+<li>大量 chunk 太短，标题和正文分离</li>
+<li>大量 chunk 太长，语义过杂</li>
+<li>表格行和表头被切开</li>
+<li>代码块被截断</li>
+<li>问答对被拆散</li>
+</ul>
+<p>这些问题会直接影响召回和上下文组装。</p>
+<h2 id="34-embedding-与索引日志">3.4 embedding 与索引日志
+</h2><p>embedding 与索引阶段要回答：</p>
+<blockquote>
+<p>每个 chunk 是否成功生成向量，并写入了正确的索引版本。</p></blockquote>
+<p>常见字段包括：</p>
+<ul>
+<li><code>embedding_model</code></li>
+<li><code>embedding_model_version</code></li>
+<li><code>embedding_dim</code></li>
+<li><code>chunk_count</code></li>
+<li><code>embedded_count</code></li>
+<li><code>embedding_failed_count</code></li>
+<li><code>vector_index</code></li>
+<li><code>keyword_index</code></li>
+<li><code>index_version</code></li>
+<li><code>upsert_count</code></li>
+<li><code>delete_count</code></li>
+<li><code>index_status</code></li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;stage&#34;</span><span class="p">:</span> <span class="s2">&#34;indexing&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;doc_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;index_version&#34;</span><span class="p">:</span> <span class="s2">&#34;kb_20260516_0200&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;embedding_model&#34;</span><span class="p">:</span> <span class="s2">&#34;embedding-x&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;embedding_dim&#34;</span><span class="p">:</span> <span class="mi">1536</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;chunk_count&#34;</span><span class="p">:</span> <span class="mi">46</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;embedded_count&#34;</span><span class="p">:</span> <span class="mi">46</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;embedding_failed_count&#34;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;vector_index&#34;</span><span class="p">:</span> <span class="s2">&#34;rag_vector_prod&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;keyword_index&#34;</span><span class="p">:</span> <span class="s2">&#34;rag_bm25_prod&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;upsert_count&#34;</span><span class="p">:</span> <span class="mi">46</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;delete_count&#34;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;status&#34;</span><span class="p">:</span> <span class="s2">&#34;success&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里最容易踩的坑是索引版本不可追踪。</p>
+<p>如果线上请求没有记录 <code>index_version</code>，当用户反馈答案错误时，就无法确认：</p>
+<ul>
+<li>当时查的是新索引还是旧索引</li>
+<li>文档是否已经完成更新</li>
+<li>向量索引和全文索引是否一致</li>
+<li>A/B 实验是否使用了不同索引</li>
+</ul>
+<h1 id="四在线查询阶段怎么打日志">四、在线查询阶段怎么打日志
+</h1><h2 id="41-查询理解日志">4.1 查询理解日志
+</h2><p>查询理解阶段要回答：</p>
+<blockquote>
+<p>系统是如何理解用户问题的。</p></blockquote>
+<p>常见字段包括：</p>
+<ul>
+<li><code>raw_query</code></li>
+<li><code>normalized_query</code></li>
+<li><code>rewritten_query</code></li>
+<li><code>query_intent</code></li>
+<li><code>detected_entities</code></li>
+<li><code>detected_product</code></li>
+<li><code>detected_time_range</code></li>
+<li><code>detected_language</code></li>
+<li><code>need_retrieval</code></li>
+<li><code>rewrite_model</code></li>
+<li><code>rewrite_prompt_version</code></li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;stage&#34;</span><span class="p">:</span> <span class="s2">&#34;query_understanding&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;trace_id&#34;</span><span class="p">:</span> <span class="s2">&#34;trc_20260516_9f31c2&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;raw_query&#34;</span><span class="p">:</span> <span class="s2">&#34;pro 每月能调多少次接口&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;normalized_query&#34;</span><span class="p">:</span> <span class="s2">&#34;Pro 每月能调用多少次 API&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;rewritten_query&#34;</span><span class="p">:</span> <span class="s2">&#34;Pro 套餐每月 API 调用额度是多少？&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;query_intent&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_limit&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;detected_entities&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;Pro&#34;</span><span class="p">,</span> <span class="s2">&#34;API 调用额度&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;need_retrieval&#34;</span><span class="p">:</span> <span class="kc">true</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;latency_ms&#34;</span><span class="p">:</span> <span class="mi">41</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>查询改写不是越多越好。</p>
+<p>如果改写日志缺失，排查时可能看不到一个关键问题：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户原始问题：pro 每月能调多少次接口
+</span></span><span class="line"><span class="cl">错误改写结果：如何开通 Pro 套餐
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>后续召回再怎么调，也是在错误问题上检索。</p>
+<h2 id="42-metadata-filter-日志">4.2 metadata filter 日志
+</h2><p>metadata filter 阶段要回答：</p>
+<blockquote>
+<p>这次查询到底被限制在了哪些知识范围内。</p></blockquote>
+<p>常见字段包括：</p>
+<ul>
+<li><code>tenant_id</code></li>
+<li><code>permission_groups</code></li>
+<li><code>product</code></li>
+<li><code>region</code></li>
+<li><code>version</code></li>
+<li><code>doc_status</code></li>
+<li><code>time_range</code></li>
+<li><code>filter_expression</code></li>
+<li><code>filter_hit_count</code></li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;stage&#34;</span><span class="p">:</span> <span class="s2">&#34;metadata_filter&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;trace_id&#34;</span><span class="p">:</span> <span class="s2">&#34;trc_20260516_9f31c2&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;filter_expression&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;tenant_id&#34;</span><span class="p">:</span> <span class="s2">&#34;tenant_a&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;product&#34;</span><span class="p">:</span> <span class="s2">&#34;billing&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;region&#34;</span><span class="p">:</span> <span class="s2">&#34;cn&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;doc_status&#34;</span><span class="p">:</span> <span class="s2">&#34;active&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;permission_group&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;support_team&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">  <span class="p">},</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;filter_hit_count&#34;</span><span class="p">:</span> <span class="mi">1286</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;latency_ms&#34;</span><span class="p">:</span> <span class="mi">9</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>RAG 系统里很多“召回不到”的问题，其实是 filter 过严。</p>
+<p>例如：</p>
+<ul>
+<li>用户有权限，但权限组没有同步</li>
+<li>文档 region 标错</li>
+<li>最新文档 <code>doc_status</code> 仍然是 <code>draft</code></li>
+<li>查询识别错产品线</li>
+<li>默认只查中文文档，实际答案在英文文档里</li>
+</ul>
+<p>所以 filter 条件必须记录清楚。</p>
+<h2 id="43-召回日志">4.3 召回日志
+</h2><p>召回日志是 RAG 排障中最核心的日志之一。</p>
+<p>它要回答：</p>
+<blockquote>
+<p>系统从哪些召回通道找到了哪些候选。</p></blockquote>
+<p>常见字段包括：</p>
+<ul>
+<li><code>retrieval_routes</code></li>
+<li><code>query_for_each_route</code></li>
+<li><code>top_k_per_route</code></li>
+<li><code>candidate_count</code></li>
+<li><code>empty_result</code></li>
+<li><code>chunk_id</code></li>
+<li><code>doc_id</code></li>
+<li><code>rank</code></li>
+<li><code>score</code></li>
+<li><code>route</code></li>
+<li><code>metadata</code></li>
+</ul>
+<p>例如多路召回：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span><span class="lnt">28
+</span><span class="lnt">29
+</span><span class="lnt">30
+</span><span class="lnt">31
+</span><span class="lnt">32
+</span><span class="lnt">33
+</span><span class="lnt">34
+</span><span class="lnt">35
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;stage&#34;</span><span class="p">:</span> <span class="s2">&#34;retrieval&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;trace_id&#34;</span><span class="p">:</span> <span class="s2">&#34;trc_20260516_9f31c2&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;routes&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;route&#34;</span><span class="p">:</span> <span class="s2">&#34;bm25&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;query&#34;</span><span class="p">:</span> <span class="s2">&#34;Pro 套餐 API 调用额度&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;top_k&#34;</span><span class="p">:</span> <span class="mi">50</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;latency_ms&#34;</span><span class="p">:</span> <span class="mi">32</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;results&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">        <span class="p">{</span>
+</span></span><span class="line"><span class="cl">          <span class="nt">&#34;rank&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">          <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_003_chunk_012&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">          <span class="nt">&#34;doc_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">          <span class="nt">&#34;score&#34;</span><span class="p">:</span> <span class="mf">12.84</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">      <span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="p">},</span>
+</span></span><span class="line"><span class="cl">    <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;route&#34;</span><span class="p">:</span> <span class="s2">&#34;vector&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;query&#34;</span><span class="p">:</span> <span class="s2">&#34;Pro 套餐每月 API 调用额度是多少？&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;top_k&#34;</span><span class="p">:</span> <span class="mi">50</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;latency_ms&#34;</span><span class="p">:</span> <span class="mi">48</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;results&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">        <span class="p">{</span>
+</span></span><span class="line"><span class="cl">          <span class="nt">&#34;rank&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">          <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_003_chunk_012&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">          <span class="nt">&#34;doc_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_003&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">          <span class="nt">&#34;score&#34;</span><span class="p">:</span> <span class="mf">0.86</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">      <span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">  <span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;merged_candidate_count&#34;</span><span class="p">:</span> <span class="mi">73</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>召回日志不要只记录最终 top-5。</p>
+<p>因为排查时经常需要看：</p>
+<ul>
+<li>正确 chunk 有没有进入 top-50</li>
+<li>是 BM25 召回到的，还是向量召回到的</li>
+<li>多路召回合并时有没有被去掉</li>
+<li>metadata filter 之后是否还有结果</li>
+<li>同一个 doc 是否占满了候选集</li>
+</ul>
+<p>如果只存最终上下文，很难判断召回阶段是否成功。</p>
+<h2 id="44-候选合并与去重日志">4.4 候选合并与去重日志
+</h2><p>多路召回之后通常要合并去重。</p>
+<p>这一步要回答：</p>
+<blockquote>
+<p>多路结果如何融合，哪些候选被保留，哪些被丢弃。</p></blockquote>
+<p>常见字段包括：</p>
+<ul>
+<li><code>merge_strategy</code></li>
+<li><code>dedup_key</code></li>
+<li><code>before_dedup_count</code></li>
+<li><code>after_dedup_count</code></li>
+<li><code>duplicate_groups</code></li>
+<li><code>fusion_score</code></li>
+<li><code>source_routes</code></li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;stage&#34;</span><span class="p">:</span> <span class="s2">&#34;candidate_merge&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;trace_id&#34;</span><span class="p">:</span> <span class="s2">&#34;trc_20260516_9f31c2&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;merge_strategy&#34;</span><span class="p">:</span> <span class="s2">&#34;rrf&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;dedup_key&#34;</span><span class="p">:</span> <span class="s2">&#34;chunk_id&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;before_dedup_count&#34;</span><span class="p">:</span> <span class="mi">100</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;after_dedup_count&#34;</span><span class="p">:</span> <span class="mi">73</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;top_candidates&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_003_chunk_012&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;source_routes&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;bm25&#34;</span><span class="p">,</span> <span class="s2">&#34;vector&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;bm25_rank&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;vector_rank&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;fusion_score&#34;</span><span class="p">:</span> <span class="mf">0.0328</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">  <span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里常见问题包括：</p>
+<ul>
+<li>使用 <code>content</code> 去重导致不同版本文档被误删</li>
+<li>使用 <code>doc_id</code> 去重导致同一文档多个关键 chunk 只剩一个</li>
+<li>分数归一化错误导致某一路召回被完全压制</li>
+<li>RRF 参数不合理导致精确关键词命中结果排不起来</li>
+</ul>
+<h2 id="45-rerank-日志">4.5 rerank 日志
+</h2><p>rerank 日志要回答：</p>
+<blockquote>
+<p>重排前后候选顺序发生了什么变化。</p></blockquote>
+<p>常见字段包括：</p>
+<ul>
+<li><code>reranker_type</code></li>
+<li><code>reranker_model</code></li>
+<li><code>reranker_version</code></li>
+<li><code>input_candidate_count</code></li>
+<li><code>output_candidate_count</code></li>
+<li><code>rank_before</code></li>
+<li><code>rank_after</code></li>
+<li><code>retrieval_score</code></li>
+<li><code>rerank_score</code></li>
+<li><code>score_threshold</code></li>
+<li><code>truncated</code></li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;stage&#34;</span><span class="p">:</span> <span class="s2">&#34;rerank&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;trace_id&#34;</span><span class="p">:</span> <span class="s2">&#34;trc_20260516_9f31c2&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;reranker_model&#34;</span><span class="p">:</span> <span class="s2">&#34;reranker-x&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;input_candidate_count&#34;</span><span class="p">:</span> <span class="mi">73</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;output_candidate_count&#34;</span><span class="p">:</span> <span class="mi">20</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;latency_ms&#34;</span><span class="p">:</span> <span class="mi">146</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;results&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_003_chunk_012&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;rank_before&#34;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;rank_after&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;retrieval_score&#34;</span><span class="p">:</span> <span class="mf">0.0328</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;rerank_score&#34;</span><span class="p">:</span> <span class="mf">0.94</span>
+</span></span><span class="line"><span class="cl">    <span class="p">},</span>
+</span></span><span class="line"><span class="cl">    <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_old_chunk_009&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;rank_before&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;rank_after&#34;</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;retrieval_score&#34;</span><span class="p">:</span> <span class="mf">0.0412</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;rerank_score&#34;</span><span class="p">:</span> <span class="mf">0.51</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">  <span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果最终答案错了，rerank 日志可以帮助判断：</p>
+<ul>
+<li>正确 chunk 是否被 rerank 提到前面</li>
+<li>rerank 是否过度偏向语义相似但业务口径错误的内容</li>
+<li>rerank 是否把旧版本文档排得太高</li>
+<li>输入候选是否已经不包含正确证据</li>
+</ul>
+<h2 id="46-上下文组装日志">4.6 上下文组装日志
+</h2><p>上下文组装日志要回答：</p>
+<blockquote>
+<p>最终哪些证据进入了 prompt，为什么进入，为什么有些没进入。</p></blockquote>
+<p>常见字段包括：</p>
+<ul>
+<li><code>context_builder_version</code></li>
+<li><code>token_budget</code></li>
+<li><code>selected_chunk_ids</code></li>
+<li><code>dropped_chunk_ids</code></li>
+<li><code>drop_reason</code></li>
+<li><code>evidence_count</code></li>
+<li><code>context_token_count</code></li>
+<li><code>dedup_strategy</code></li>
+<li><code>compression_used</code></li>
+<li><code>citation_ids</code></li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span><span class="lnt">28
+</span><span class="lnt">29
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;stage&#34;</span><span class="p">:</span> <span class="s2">&#34;context_assembly&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;trace_id&#34;</span><span class="p">:</span> <span class="s2">&#34;trc_20260516_9f31c2&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;context_builder_version&#34;</span><span class="p">:</span> <span class="s2">&#34;v5&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;token_budget&#34;</span><span class="p">:</span> <span class="mi">5000</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;context_token_count&#34;</span><span class="p">:</span> <span class="mi">2860</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;selected_evidence&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;citation_id&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_003_chunk_012&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;rank_after_rerank&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;tokens&#34;</span><span class="p">:</span> <span class="mi">168</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;reason&#34;</span><span class="p">:</span> <span class="s2">&#34;top_relevant&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">},</span>
+</span></span><span class="line"><span class="cl">    <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;citation_id&#34;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_003_chunk_013&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;rank_after_rerank&#34;</span><span class="p">:</span> <span class="mi">4</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;tokens&#34;</span><span class="p">:</span> <span class="mi">142</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;reason&#34;</span><span class="p">:</span> <span class="s2">&#34;neighbor_chunk_for_condition&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">  <span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;dropped_evidence&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;chunk_id&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing_doc_old_chunk_009&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;reason&#34;</span><span class="p">:</span> <span class="s2">&#34;older_version&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">  <span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>很多线上问题都发生在这一层：</p>
+<ul>
+<li>正确证据被 token 预算挤掉</li>
+<li>表格表头没有和数据行一起放入</li>
+<li>多个版本文档没有标明时间</li>
+<li>引用编号和证据对应不上</li>
+<li>上下文压缩把关键条件压掉</li>
+</ul>
+<p>所以只记录召回和生成还不够，必须记录最终上下文证据包。</p>
+<h2 id="47-生成与后处理日志">4.7 生成与后处理日志
+</h2><p>生成阶段要回答：</p>
+<blockquote>
+<p>模型拿到了什么输入，以什么参数生成了什么输出。</p></blockquote>
+<p>常见字段包括：</p>
+<ul>
+<li><code>model</code></li>
+<li><code>model_version</code></li>
+<li><code>temperature</code></li>
+<li><code>max_tokens</code></li>
+<li><code>prompt_version</code></li>
+<li><code>system_prompt_version</code></li>
+<li><code>input_token_count</code></li>
+<li><code>output_token_count</code></li>
+<li><code>latency_ms</code></li>
+<li><code>finish_reason</code></li>
+<li><code>raw_answer</code></li>
+<li><code>final_answer</code></li>
+<li><code>postprocess_rules</code></li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;stage&#34;</span><span class="p">:</span> <span class="s2">&#34;generation&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;trace_id&#34;</span><span class="p">:</span> <span class="s2">&#34;trc_20260516_9f31c2&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;model&#34;</span><span class="p">:</span> <span class="s2">&#34;llm-x&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;model_version&#34;</span><span class="p">:</span> <span class="s2">&#34;2026-05-01&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;prompt_version&#34;</span><span class="p">:</span> <span class="s2">&#34;rag_answer_v12&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;temperature&#34;</span><span class="p">:</span> <span class="mf">0.2</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;input_token_count&#34;</span><span class="p">:</span> <span class="mi">3620</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;output_token_count&#34;</span><span class="p">:</span> <span class="mi">214</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;latency_ms&#34;</span><span class="p">:</span> <span class="mi">1320</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;finish_reason&#34;</span><span class="p">:</span> <span class="s2">&#34;stop&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;citation_ids_used&#34;</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;status&#34;</span><span class="p">:</span> <span class="s2">&#34;success&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>后处理也要记录。</p>
+<p>例如：</p>
+<ul>
+<li>敏感词过滤</li>
+<li>引用格式修复</li>
+<li>Markdown 格式修复</li>
+<li>JSON schema 校验</li>
+<li>答案截断</li>
+<li>安全拒答</li>
+</ul>
+<p>否则你看到的最终答案，可能已经不是模型原始输出。</p>
+<h1 id="五rag-线上监控怎么做">五、RAG 线上监控怎么做
+</h1><h2 id="51-监控要分四层">5.1 监控要分四层
+</h2><p>RAG 线上监控建议分成四层。</p>
+<p>第一层是服务稳定性：</p>
+<ul>
+<li>QPS</li>
+<li>P50 / P95 / P99 延迟</li>
+<li>错误率</li>
+<li>超时率</li>
+<li>重试次数</li>
+<li>队列积压</li>
+</ul>
+<p>第二层是依赖健康度：</p>
+<ul>
+<li>embedding 服务成功率</li>
+<li>向量数据库延迟</li>
+<li>搜索引擎延迟</li>
+<li>rerank 服务延迟</li>
+<li>LLM 调用成功率</li>
+<li>对象存储或文档源访问状态</li>
+</ul>
+<p>第三层是 RAG 链路质量：</p>
+<ul>
+<li>召回为空比例</li>
+<li>rerank 后低分比例</li>
+<li>上下文 token 使用率</li>
+<li>无引用答案比例</li>
+<li>证据不足回答比例</li>
+<li>fallback 触发比例</li>
+</ul>
+<p>第四层是用户体验和业务结果：</p>
+<ul>
+<li>点赞率</li>
+<li>点踩率</li>
+<li>追问率</li>
+<li>用户改问率</li>
+<li>转人工率</li>
+<li>问题解决率</li>
+<li>业务转化率</li>
+</ul>
+<p>只监控第一层是不够的。</p>
+<p>RAG 服务可能接口全部 200，但答案质量已经明显变差。</p>
+<h2 id="52-延迟监控要拆阶段">5.2 延迟监控要拆阶段
+</h2><p>RAG 的总延迟通常来自多个阶段：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">查询理解
+</span></span><span class="line"><span class="cl">  + embedding query
+</span></span><span class="line"><span class="cl">  + BM25 召回
+</span></span><span class="line"><span class="cl">  + 向量召回
+</span></span><span class="line"><span class="cl">  + rerank
+</span></span><span class="line"><span class="cl">  + 上下文组装
+</span></span><span class="line"><span class="cl">  + LLM 生成
+</span></span><span class="line"><span class="cl">  + 后处理
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>所以不要只看总耗时。</p>
+<p>更好的监控是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">total_latency_ms
+</span></span><span class="line"><span class="cl">query_understanding_latency_ms
+</span></span><span class="line"><span class="cl">embedding_latency_ms
+</span></span><span class="line"><span class="cl">bm25_latency_ms
+</span></span><span class="line"><span class="cl">vector_latency_ms
+</span></span><span class="line"><span class="cl">rerank_latency_ms
+</span></span><span class="line"><span class="cl">context_assembly_latency_ms
+</span></span><span class="line"><span class="cl">llm_latency_ms
+</span></span><span class="line"><span class="cl">postprocess_latency_ms
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样当 P95 延迟升高时，可以立刻判断是：</p>
+<ul>
+<li>向量库慢了</li>
+<li>rerank 服务慢了</li>
+<li>LLM 输出太长</li>
+<li>多路召回串行执行了</li>
+<li>某个外部知识源超时</li>
+</ul>
+<p>生产里通常还会设置阶段级超时。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">查询理解：100 ms
+</span></span><span class="line"><span class="cl">召回：300 ms
+</span></span><span class="line"><span class="cl">rerank：500 ms
+</span></span><span class="line"><span class="cl">LLM 首 token：3000 ms
+</span></span><span class="line"><span class="cl">总请求：8000 ms
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>超时后可以降级：</p>
+<ul>
+<li>跳过 rerank</li>
+<li>减少召回 top-k</li>
+<li>使用缓存答案</li>
+<li>使用更快模型</li>
+<li>返回“暂时无法查询完整知识”</li>
+</ul>
+<h2 id="53-成本监控要按请求和租户拆">5.3 成本监控要按请求和租户拆
+</h2><p>RAG 成本不只来自 LLM。</p>
+<p>常见成本包括：</p>
+<ul>
+<li>文档解析成本</li>
+<li>OCR 成本</li>
+<li>embedding 成本</li>
+<li>向量数据库存储成本</li>
+<li>搜索引擎成本</li>
+<li>rerank 成本</li>
+<li>LLM 输入 token 成本</li>
+<li>LLM 输出 token 成本</li>
+</ul>
+<p>在线请求至少要监控：</p>
+<ul>
+<li><code>input_tokens</code></li>
+<li><code>output_tokens</code></li>
+<li><code>retrieved_candidate_count</code></li>
+<li><code>rerank_candidate_count</code></li>
+<li><code>context_token_count</code></li>
+<li><code>cost_per_query</code></li>
+<li><code>cost_per_tenant</code></li>
+<li><code>cost_per_feature</code></li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">单次请求总成本 =
+</span></span><span class="line"><span class="cl">query embedding 成本
+</span></span><span class="line"><span class="cl">+ rerank 候选数 * rerank 单价
+</span></span><span class="line"><span class="cl">+ LLM input tokens 成本
+</span></span><span class="line"><span class="cl">+ LLM output tokens 成本
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果没有成本监控，很容易出现：</p>
+<ul>
+<li>top-k 调大后质量没提升，但成本翻倍</li>
+<li>上下文组装放太多重复证据</li>
+<li>输出答案过长导致成本异常</li>
+<li>某个租户知识库过大导致查询成本失控</li>
+</ul>
+<h2 id="54-质量监控要关注异常比例">5.4 质量监控要关注异常比例
+</h2><p>线上质量不能完全依赖人工评估。</p>
+<p>可以先监控一些自动化代理指标：</p>
+<ul>
+<li><code>empty_retrieval_rate</code>：召回为空比例</li>
+<li><code>low_rerank_score_rate</code>：最高 rerank 分低于阈值比例</li>
+<li><code>no_citation_rate</code>：无引用答案比例</li>
+<li><code>insufficient_context_rate</code>：模型回答资料不足比例</li>
+<li><code>fallback_rate</code>：降级或兜底比例</li>
+<li><code>answer_too_short_rate</code>：异常短答案比例</li>
+<li><code>answer_too_long_rate</code>：异常长答案比例</li>
+<li><code>citation_mismatch_rate</code>：引用不匹配比例</li>
+<li><code>negative_feedback_rate</code>：负反馈比例</li>
+</ul>
+<p>这些指标不等于最终质量，但可以作为预警信号。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">empty_retrieval_rate 从 3% 升到 18%
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>可能说明：</p>
+<ul>
+<li>新索引构建失败</li>
+<li>metadata filter 改坏了</li>
+<li>查询改写模块异常</li>
+<li>向量数据库部分分片不可用</li>
+</ul>
+<p>再例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">no_citation_rate 从 8% 升到 35%
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>可能说明：</p>
+<ul>
+<li>prompt 版本发生变化</li>
+<li>上下文证据包为空</li>
+<li>生成模型开始忽略引用要求</li>
+<li>后处理把引用过滤掉了</li>
+</ul>
+<h2 id="55-告警不要只按技术指标设置">5.5 告警不要只按技术指标设置
+</h2><p>RAG 告警可以分成三类。</p>
+<p>第一类是硬故障告警：</p>
+<ul>
+<li>LLM 调用失败率超过阈值</li>
+<li>向量库超时率超过阈值</li>
+<li>索引构建失败</li>
+<li>文档同步任务连续失败</li>
+</ul>
+<p>第二类是质量异常告警：</p>
+<ul>
+<li>召回为空比例异常升高</li>
+<li>低置信答案比例异常升高</li>
+<li>点踩率异常升高</li>
+<li>某类意图问题解决率下降</li>
+</ul>
+<p>第三类是成本异常告警：</p>
+<ul>
+<li>单请求 token 成本异常升高</li>
+<li>某租户日成本超过预算</li>
+<li>rerank 候选数异常升高</li>
+<li>输出 token 异常增长</li>
+</ul>
+<p>告警要尽量带上诊断信息。</p>
+<p>例如不要只发：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">RAG 质量异常
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>而应该包含：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">empty_retrieval_rate: 18.2%
+</span></span><span class="line"><span class="cl">baseline: 3.1%
+</span></span><span class="line"><span class="cl">影响租户: tenant_a, tenant_b
+</span></span><span class="line"><span class="cl">影响索引版本: kb_20260516_0200
+</span></span><span class="line"><span class="cl">最近变更: metadata_filter_v7 -&gt; v8
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样值班人员才能快速定位方向。</p>
+<h1 id="六rag-评估体系怎么搭建">六、RAG 评估体系怎么搭建
+</h1><h2 id="61-评估要按链路拆开">6.1 评估要按链路拆开
+</h2><p>RAG 评估最常见的错误是只评最终答案。</p>
+<p>最终答案当然重要，但如果只评最终答案，你无法知道应该优化哪一层。</p>
+<p>更合理的评估结构是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">数据质量评估
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">解析质量评估
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">chunk 质量评估
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">召回评估
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">rerank 评估
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">上下文组装评估
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">生成答案评估
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">端到端用户体验评估
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>每一层都有自己的指标。</p>
+<p>例如：</p>
+<ul>
+<li>召回看 <code>Recall@K</code></li>
+<li>rerank 看 <code>MRR</code>、<code>NDCG@K</code></li>
+<li>上下文看证据覆盖率和 token 利用率</li>
+<li>生成看忠实度、正确性、完整性</li>
+<li>端到端看解决率、满意度、转人工率</li>
+</ul>
+<h2 id="62-评估集要怎么构建">6.2 评估集要怎么构建
+</h2><p>一个 RAG 评估集通常包含：</p>
+<ul>
+<li>用户问题</li>
+<li>标准答案</li>
+<li>标准证据</li>
+<li>相关 chunk ID</li>
+<li>问题类型</li>
+<li>难度等级</li>
+<li>权限范围</li>
+<li>期望引用</li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;question_id&#34;</span><span class="p">:</span> <span class="s2">&#34;eval_pricing_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;question&#34;</span><span class="p">:</span> <span class="s2">&#34;Pro 套餐每月 API 调用额度是多少？&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;gold_answer&#34;</span><span class="p">:</span> <span class="s2">&#34;Pro 套餐每月包含 100 万次 API 调用，按自然月统计。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;gold_chunk_ids&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;pricing_doc_003_chunk_012&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;pricing_doc_003_chunk_013&#34;</span>
+</span></span><span class="line"><span class="cl">  <span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;topic&#34;</span><span class="p">:</span> <span class="s2">&#34;pricing&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;intent&#34;</span><span class="p">:</span> <span class="s2">&#34;quota_query&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;difficulty&#34;</span><span class="p">:</span> <span class="s2">&#34;easy&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;permission_group&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;support_team&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;expected_citations&#34;</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>评估集来源可以有几类。</p>
+<p>第一类是真实用户问题：</p>
+<ul>
+<li>搜索日志</li>
+<li>客服工单</li>
+<li>用户追问</li>
+<li>点踩样本</li>
+<li>高频 FAQ</li>
+</ul>
+<p>第二类是专家构造问题：</p>
+<ul>
+<li>产品规则</li>
+<li>政策条款</li>
+<li>API 文档</li>
+<li>合同条款</li>
+<li>业务边界条件</li>
+</ul>
+<p>第三类是失败案例沉淀：</p>
+<ul>
+<li>线上答错的问题</li>
+<li>召回为空的问题</li>
+<li>引用错误的问题</li>
+<li>用户明确纠正的问题</li>
+</ul>
+<p>第四类是合成问题：</p>
+<ul>
+<li>从文档自动生成问答</li>
+<li>按章节生成覆盖性问题</li>
+<li>针对边界条件生成反例</li>
+</ul>
+<p>合成问题可以提高覆盖率，但不能完全替代真实问题。</p>
+<h2 id="63-评估集要分层管理">6.3 评估集要分层管理
+</h2><p>不要把所有问题混成一个总分。</p>
+<p>RAG 评估集最好按维度分层：</p>
+<ul>
+<li>按业务域：计费、权限、售后、API、合同</li>
+<li>按问题类型：事实查询、步骤说明、条件判断、对比总结、多跳推理</li>
+<li>按难度：简单、普通、困难、边界问题</li>
+<li>按知识形态：正文、表格、代码、图片 OCR、FAQ</li>
+<li>按权限：公开、内部、租户隔离、角色限定</li>
+<li>按时间敏感度：长期有效、版本相关、实时数据</li>
+</ul>
+<p>这样才知道系统到底哪里强、哪里弱。</p>
+<p>例如一个系统总准确率 82%，看起来还可以。</p>
+<p>但拆开后可能是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">FAQ 类问题：94%
+</span></span><span class="line"><span class="cl">表格类问题：61%
+</span></span><span class="line"><span class="cl">多版本规则问题：58%
+</span></span><span class="line"><span class="cl">权限过滤问题：97%
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这时优化方向就很明确。</p>
+<h2 id="64-评估集要有训练集和回归集">6.4 评估集要有训练集和回归集
+</h2><p>评估集不能只用一份。</p>
+<p>通常至少分成：</p>
+<ul>
+<li><code>dev set</code>：日常调参和开发使用</li>
+<li><code>regression set</code>：每次上线前必须通过</li>
+<li><code>challenge set</code>：困难样本和边界样本</li>
+<li><code>fresh set</code>：最近线上新增问题</li>
+</ul>
+<p>其中 <code>regression set</code> 要尽量稳定。</p>
+<p>它的作用不是追求覆盖所有问题，而是防止改动破坏已有能力。</p>
+<p>例如你优化了召回策略，必须确认：</p>
+<ul>
+<li>旧的 FAQ 问题没有变差</li>
+<li>权限过滤没有失效</li>
+<li>引用格式没有破坏</li>
+<li>成本和延迟没有超预算</li>
+</ul>
+<h1 id="七检索重排和上下文怎么评估">七、检索、重排和上下文怎么评估
+</h1><h2 id="71-召回评估">7.1 召回评估
+</h2><p>召回评估关注：</p>
+<blockquote>
+<p>正确证据有没有进入候选集。</p></blockquote>
+<p>常用指标包括：</p>
+<ul>
+<li><code>Recall@K</code></li>
+<li><code>Hit@K</code></li>
+<li><code>Precision@K</code></li>
+<li><code>MRR</code></li>
+</ul>
+<p>最重要的是 <code>Recall@K</code>。</p>
+<p>例如 <code>Recall@20</code> 的含义是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">在召回 top 20 里，是否包含回答问题所需的 gold chunk。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果一个问题需要多个证据，可以定义：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">All Evidence Recall@K：所有 gold chunk 都被召回
+</span></span><span class="line"><span class="cl">Any Evidence Recall@K：至少一个 gold chunk 被召回
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">问题：企业合同订单可以退款吗？
+</span></span><span class="line"><span class="cl">gold chunks：
+</span></span><span class="line"><span class="cl">1. 普通退款规则
+</span></span><span class="line"><span class="cl">2. 企业合同订单例外规则
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>只召回普通退款规则是不够的。</p>
+<p>这时 <code>Any Evidence Recall</code> 可能通过，但 <code>All Evidence Recall</code> 不通过。</p>
+<h2 id="72-召回评估要分通道看">7.2 召回评估要分通道看
+</h2><p>如果系统有多路召回，不能只看合并后的总分。</p>
+<p>应该分别看：</p>
+<ul>
+<li>BM25 Recall@K</li>
+<li>Vector Recall@K</li>
+<li>Hybrid Recall@K</li>
+<li>Query Rewrite 后 Recall@K</li>
+<li>Metadata Filter 后 Recall@K</li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">BM25 Recall@20: 72%
+</span></span><span class="line"><span class="cl">Vector Recall@20: 81%
+</span></span><span class="line"><span class="cl">Hybrid Recall@20: 91%
+</span></span><span class="line"><span class="cl">Filter 后 Hybrid Recall@20: 76%
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这个结果说明 hybrid 本身不错，但 filter 可能误杀了不少正确证据。</p>
+<p>如果只看最终 76%，就会误以为召回算法不行。</p>
+<h2 id="73-rerank-评估">7.3 rerank 评估
+</h2><p>rerank 评估关注：</p>
+<blockquote>
+<p>正确证据有没有被排到更靠前的位置。</p></blockquote>
+<p>常用指标包括：</p>
+<ul>
+<li><code>MRR</code></li>
+<li><code>NDCG@K</code></li>
+<li><code>Precision@K</code></li>
+<li><code>Recall@K</code></li>
+<li><code>Top-1 Accuracy</code></li>
+</ul>
+<p><code>MRR</code> 关注第一个正确结果的位置。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">正确 chunk 排第 1：得分 1
+</span></span><span class="line"><span class="cl">正确 chunk 排第 2：得分 1/2
+</span></span><span class="line"><span class="cl">正确 chunk 排第 5：得分 1/5
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>NDCG@K</code> 更适合有多级相关性标注的场景。</p>
+<p>例如：</p>
+<ul>
+<li>3 分：直接回答问题的证据</li>
+<li>2 分：有辅助信息</li>
+<li>1 分：弱相关</li>
+<li>0 分：无关</li>
+</ul>
+<p>RAG 里 rerank 不只是把相关文档排前面，还要把“适合作为答案依据”的 chunk 排前面。</p>
+<p>所以标注时要区分：</p>
+<ul>
+<li>语义相关</li>
+<li>可以回答</li>
+<li>权限正确</li>
+<li>版本正确</li>
+<li>条件完整</li>
+</ul>
+<h2 id="74-上下文组装评估">7.4 上下文组装评估
+</h2><p>上下文组装评估关注：</p>
+<blockquote>
+<p>最终进入 prompt 的证据是否足够、干净、完整。</p></blockquote>
+<p>常用指标包括：</p>
+<ul>
+<li><code>Context Recall</code>：gold chunk 是否进入上下文</li>
+<li><code>Context Precision</code>：上下文中有用证据占比</li>
+<li><code>Evidence Coverage</code>：必要证据覆盖率</li>
+<li><code>Token Utilization</code>：有效证据 token 占比</li>
+<li><code>Redundancy Rate</code>：重复证据比例</li>
+<li><code>Citation Availability</code>：证据是否具备可引用来源</li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Context Recall = 进入上下文的 gold chunk 数 / 所需 gold chunk 总数
+</span></span><span class="line"><span class="cl">Context Precision = 有用证据 chunk 数 / 上下文 chunk 总数
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>一个常见问题是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回 Recall@20 很高，但 Context Recall 很低。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这说明正确证据被召回了，但没有进入最终 prompt。</p>
+<p>原因可能是：</p>
+<ul>
+<li>rerank 排名靠后</li>
+<li>token 预算不够</li>
+<li>去重误删</li>
+<li>上下文压缩丢失</li>
+<li>只取 top-k，没有做证据补全</li>
+</ul>
+<p>这类问题不能靠调 embedding 解决。</p>
+<h1 id="八生成答案怎么评估">八、生成答案怎么评估
+</h1><h2 id="81-最终答案不能只看像不像">8.1 最终答案不能只看“像不像”
+</h2><p>RAG 生成评估至少要看四个维度。</p>
+<p>第一是正确性：</p>
+<blockquote>
+<p>答案是否回答了用户问题。</p></blockquote>
+<p>第二是忠实度：</p>
+<blockquote>
+<p>答案是否严格基于给定证据，没有编造。</p></blockquote>
+<p>第三是完整性：</p>
+<blockquote>
+<p>是否包含必要条件、例外、时间、范围、单位。</p></blockquote>
+<p>第四是可引用性：</p>
+<blockquote>
+<p>答案是否给出了正确来源，引用是否能支撑对应结论。</p></blockquote>
+<p>例如用户问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 套餐每月 API 调用额度是多少？
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>答案：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 套餐每月包含 100 万次 API 调用。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果证据里还写了“按自然月统计”，那这个答案可能正确但不够完整。</p>
+<p>如果答案写成“每天 100 万次”，那就是事实错误。</p>
+<p>如果答案写对了但引用了 Basic 套餐文档，那就是引用错误。</p>
+<h2 id="82-常见生成评估指标">8.2 常见生成评估指标
+</h2><p>常见指标包括：</p>
+<ul>
+<li><code>Answer Correctness</code></li>
+<li><code>Faithfulness</code></li>
+<li><code>Groundedness</code></li>
+<li><code>Completeness</code></li>
+<li><code>Citation Accuracy</code></li>
+<li><code>Refusal Accuracy</code></li>
+<li><code>Format Compliance</code></li>
+<li><code>Safety Compliance</code></li>
+</ul>
+<p>可以用 0 到 2 分或 0 到 5 分标注。</p>
+<p>例如 <code>Faithfulness</code>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">2 分：所有关键结论都能被证据支持
+</span></span><span class="line"><span class="cl">1 分：大部分结论有证据，存在轻微信息扩展
+</span></span><span class="line"><span class="cl">0 分：包含明显无证据支持的结论
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>Completeness</code>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">2 分：覆盖结论、条件、限制、例外
+</span></span><span class="line"><span class="cl">1 分：覆盖主要结论，但遗漏部分条件
+</span></span><span class="line"><span class="cl">0 分：缺失关键信息，可能误导用户
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>Citation Accuracy</code>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">2 分：引用能直接支持对应结论
+</span></span><span class="line"><span class="cl">1 分：引用相关但不够直接
+</span></span><span class="line"><span class="cl">0 分：引用错误或没有引用
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="83-llm-as-judge-可以用但不能盲信">8.3 LLM-as-Judge 可以用，但不能盲信
+</h2><p>使用大模型做自动评估很常见。</p>
+<p>一个评估 prompt 可以让 judge 模型输入：</p>
+<ul>
+<li>用户问题</li>
+<li>标准答案</li>
+<li>检索证据</li>
+<li>被评估答案</li>
+<li>评分标准</li>
+</ul>
+<p>然后输出：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;correctness&#34;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;faithfulness&#34;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;completeness&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;citation_accuracy&#34;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;reason&#34;</span><span class="p">:</span> <span class="s2">&#34;答案正确说明了额度，但遗漏了按自然月统计。&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>但 LLM-as-Judge 有几个问题：</p>
+<ul>
+<li>不同 judge 模型打分不一致</li>
+<li>prompt 变化会影响分数</li>
+<li>对细微业务规则可能判断不准</li>
+<li>容易被流畅答案误导</li>
+<li>成本较高</li>
+</ul>
+<p>所以更稳的方式是：</p>
+<ul>
+<li>关键回归集使用人工标注</li>
+<li>大规模样本使用 LLM 初评</li>
+<li>对低置信或分歧样本人工复核</li>
+<li>固定 judge 模型和 judge prompt 版本</li>
+<li>定期抽样校准 judge 与人工一致率</li>
+</ul>
+<p>不要把 LLM-as-Judge 当成绝对真值。</p>
+<h2 id="84-幻觉评估要看证据支撑">8.4 幻觉评估要看证据支撑
+</h2><p>RAG 里的幻觉不只是“答案离谱”。</p>
+<p>更常见的是：</p>
+<ul>
+<li>答案包含证据没有提到的条件</li>
+<li>把旧版本规则当成新版本</li>
+<li>把普通用户规则套到企业用户</li>
+<li>把多个文档的内容错误合并</li>
+<li>数字、日期、单位写错</li>
+<li>引用了 A 文档，却回答了 B 文档的内容</li>
+</ul>
+<p>所以幻觉评估的关键是：</p>
+<blockquote>
+<p>答案中的每个关键声明是否能被上下文证据支持。</p></blockquote>
+<p>可以把答案拆成 claims。</p>
+<p>例如答案：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 套餐每月包含 100 万次 API 调用，按自然月统计，超出后按量计费。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>可以拆成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">claim_1: Pro 套餐每月包含 100 万次 API 调用
+</span></span><span class="line"><span class="cl">claim_2: API 调用按自然月统计
+</span></span><span class="line"><span class="cl">claim_3: 超出后按量计费
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>然后逐条判断：</p>
+<ul>
+<li>是否有证据支持</li>
+<li>证据 ID 是什么</li>
+<li>是否存在冲突证据</li>
+<li>是否有版本或权限限制</li>
+</ul>
+<p>这种 claim-level 评估比只评整体答案更精细。</p>
+<h1 id="九用户反馈和人工标注闭环">九、用户反馈和人工标注闭环
+</h1><h2 id="91-用户反馈不能只做点赞点踩">9.1 用户反馈不能只做点赞点踩
+</h2><p>点赞点踩有用，但信息量太低。</p>
+<p>更好的反馈体系可以包含：</p>
+<ul>
+<li>答案有帮助 / 没帮助</li>
+<li>答案不准确</li>
+<li>答案不完整</li>
+<li>引用不对</li>
+<li>没有回答问题</li>
+<li>内容过期</li>
+<li>权限不该看到</li>
+<li>用户手动改写后的正确答案</li>
+</ul>
+<p>例如点踩后让用户选择原因：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">为什么这个回答没有帮助？
+</span></span><span class="line"><span class="cl">- 答案事实错误
+</span></span><span class="line"><span class="cl">- 答案缺少关键信息
+</span></span><span class="line"><span class="cl">- 引用资料不对
+</span></span><span class="line"><span class="cl">- 没找到我想问的内容
+</span></span><span class="line"><span class="cl">- 回答太长或太绕
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这些反馈可以反向定位问题层级。</p>
+<p>例如：</p>
+<ul>
+<li>“没找到内容”多，优先看召回和知识覆盖</li>
+<li>“引用不对”多，优先看上下文和引用映射</li>
+<li>“内容过期”多，优先看索引更新和版本过滤</li>
+<li>“回答太绕”多，优先看生成 prompt 和输出格式</li>
+</ul>
+<h2 id="92-点踩样本要进入评估集">9.2 点踩样本要进入评估集
+</h2><p>线上负反馈是最有价值的评估数据来源之一。</p>
+<p>建议建立流程：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户点踩
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">记录 trace_id
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">自动收集该次请求的全链路日志
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">人工标注失败原因
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">补充 gold answer 和 gold chunk
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">加入 regression 或 challenge set
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">后续版本必须回归
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>失败原因最好结构化。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">failure_stage:
+</span></span><span class="line"><span class="cl">- knowledge_missing
+</span></span><span class="line"><span class="cl">- parsing_error
+</span></span><span class="line"><span class="cl">- chunking_error
+</span></span><span class="line"><span class="cl">- retrieval_miss
+</span></span><span class="line"><span class="cl">- rerank_error
+</span></span><span class="line"><span class="cl">- context_missing
+</span></span><span class="line"><span class="cl">- generation_hallucination
+</span></span><span class="line"><span class="cl">- citation_error
+</span></span><span class="line"><span class="cl">- permission_error
+</span></span><span class="line"><span class="cl">- outdated_knowledge
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样累计一段时间后，就能知道系统主要瓶颈在哪里。</p>
+<h2 id="93-人工标注要标证据不只是标答案">9.3 人工标注要标证据，不只是标答案
+</h2><p>很多团队做评估时只标标准答案。</p>
+<p>但对 RAG 来说，还应该标标准证据。</p>
+<p>至少包括：</p>
+<ul>
+<li>正确答案</li>
+<li>支撑答案的 <code>doc_id</code></li>
+<li>支撑答案的 <code>chunk_id</code></li>
+<li>必须引用的片段</li>
+<li>不能使用的过期片段</li>
+<li>冲突证据处理规则</li>
+</ul>
+<p>如果没有 gold chunk，就无法精确评估召回和 rerank。</p>
+<p>最后只能评端到端答案，但不知道中间哪里坏了。</p>
+<h2 id="94-反馈闭环要有版本管理">9.4 反馈闭环要有版本管理
+</h2><p>每次改动都要能回答：</p>
+<blockquote>
+<p>这个版本比上个版本到底好在哪里，坏在哪里。</p></blockquote>
+<p>所以需要记录：</p>
+<ul>
+<li>代码版本</li>
+<li>prompt 版本</li>
+<li>embedding 模型版本</li>
+<li>rerank 模型版本</li>
+<li>chunker 版本</li>
+<li>index 版本</li>
+<li>eval set 版本</li>
+<li>judge prompt 版本</li>
+</ul>
+<p>评估结果也要带版本：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;run_id&#34;</span><span class="p">:</span> <span class="s2">&#34;eval_20260516_001&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;app_version&#34;</span><span class="p">:</span> <span class="s2">&#34;rag_app_v1.18&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;index_version&#34;</span><span class="p">:</span> <span class="s2">&#34;kb_20260516_0200&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;retrieval_config&#34;</span><span class="p">:</span> <span class="s2">&#34;hybrid_rrf_v4&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;reranker_version&#34;</span><span class="p">:</span> <span class="s2">&#34;reranker_x_v2&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;prompt_version&#34;</span><span class="p">:</span> <span class="s2">&#34;rag_answer_v12&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;eval_set&#34;</span><span class="p">:</span> <span class="s2">&#34;rag_regression_202605&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;metrics&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;retrieval_recall_at_20&#34;</span><span class="p">:</span> <span class="mf">0.91</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;context_recall&#34;</span><span class="p">:</span> <span class="mf">0.86</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;answer_correctness&#34;</span><span class="p">:</span> <span class="mf">0.82</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;faithfulness&#34;</span><span class="p">:</span> <span class="mf">0.88</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>没有版本管理的评估结果，很难用于决策。</p>
+<h1 id="十回归测试ab-测试和持续优化">十、回归测试、A/B 测试和持续优化
+</h1><h2 id="101-每次上线前做离线回归">10.1 每次上线前做离线回归
+</h2><p>RAG 系统里这些改动都应该触发回归测试：</p>
+<ul>
+<li>chunk 策略变化</li>
+<li>embedding 模型变化</li>
+<li>召回参数变化</li>
+<li>hybrid 融合策略变化</li>
+<li>rerank 模型变化</li>
+<li>上下文组装策略变化</li>
+<li>prompt 变化</li>
+<li>LLM 模型变化</li>
+<li>metadata filter 变化</li>
+<li>知识库批量更新</li>
+</ul>
+<p>回归测试至少输出：</p>
+<ul>
+<li>召回指标变化</li>
+<li>rerank 指标变化</li>
+<li>上下文指标变化</li>
+<li>答案指标变化</li>
+<li>延迟变化</li>
+<li>成本变化</li>
+<li>失败样本列表</li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">版本：hybrid_rrf_v4 -&gt; hybrid_rrf_v5
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">Recall@20: 89.4% -&gt; 91.2%
+</span></span><span class="line"><span class="cl">NDCG@10: 76.1% -&gt; 77.0%
+</span></span><span class="line"><span class="cl">Context Recall: 83.5% -&gt; 84.1%
+</span></span><span class="line"><span class="cl">Answer Correctness: 80.2% -&gt; 80.0%
+</span></span><span class="line"><span class="cl">P95 Latency: 2.8s -&gt; 3.4s
+</span></span><span class="line"><span class="cl">Cost/query: +12%
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这时是否上线就不是只看质量，而要看质量、延迟、成本的综合权衡。</p>
+<h2 id="102-离线评估通过不代表线上一定变好">10.2 离线评估通过不代表线上一定变好
+</h2><p>离线评估集通常是有限的。</p>
+<p>线上还会遇到：</p>
+<ul>
+<li>新问题</li>
+<li>长尾表达</li>
+<li>多轮对话</li>
+<li>权限差异</li>
+<li>实时数据变化</li>
+<li>用户不完整输入</li>
+<li>噪声问题</li>
+</ul>
+<p>所以重要改动最好做 A/B 测试。</p>
+<p>A/B 测试可以比较：</p>
+<ul>
+<li>点赞率</li>
+<li>点踩率</li>
+<li>追问率</li>
+<li>转人工率</li>
+<li>首次解决率</li>
+<li>平均延迟</li>
+<li>平均成本</li>
+</ul>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">A 组：旧召回策略
+</span></span><span class="line"><span class="cl">B 组：新 hybrid + rerank 策略
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">B 组：
+</span></span><span class="line"><span class="cl">点赞率 +3.2%
+</span></span><span class="line"><span class="cl">点踩率 -1.1%
+</span></span><span class="line"><span class="cl">追问率 -2.4%
+</span></span><span class="line"><span class="cl">P95 延迟 +280 ms
+</span></span><span class="line"><span class="cl">单请求成本 +8%
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果质量收益明确、延迟和成本可接受，就可以逐步放量。</p>
+<h2 id="103-建立失败样本分析机制">10.3 建立失败样本分析机制
+</h2><p>持续优化不能只看总指标。</p>
+<p>每次评估后都应该分析失败样本。</p>
+<p>建议按失败阶段归因：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">知识缺失：12%
+</span></span><span class="line"><span class="cl">解析错误：8%
+</span></span><span class="line"><span class="cl">chunk 切分问题：15%
+</span></span><span class="line"><span class="cl">召回未命中：21%
+</span></span><span class="line"><span class="cl">rerank 排序错误：14%
+</span></span><span class="line"><span class="cl">上下文未覆盖：10%
+</span></span><span class="line"><span class="cl">生成幻觉：13%
+</span></span><span class="line"><span class="cl">引用错误：5%
+</span></span><span class="line"><span class="cl">权限或版本错误：2%
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这种归因比“准确率 82%”更有指导意义。</p>
+<p>例如：</p>
+<ul>
+<li>召回未命中最多，就优先优化 query rewrite、hybrid search、metadata filter</li>
+<li>chunk 问题最多，就优先改切分策略</li>
+<li>生成幻觉最多，就优化上下文约束、prompt、模型和拒答策略</li>
+<li>内容过期最多，就优化索引更新和版本过滤</li>
+</ul>
+<h2 id="104-形成指标看板">10.4 形成指标看板
+</h2><p>一个实用的 RAG 看板通常包含这些区域。</p>
+<p>服务健康：</p>
+<ul>
+<li>QPS</li>
+<li>成功率</li>
+<li>P95 / P99 延迟</li>
+<li>各阶段耗时</li>
+<li>依赖服务状态</li>
+</ul>
+<p>质量趋势：</p>
+<ul>
+<li>召回为空比例</li>
+<li>低置信比例</li>
+<li>无引用比例</li>
+<li>点踩率</li>
+<li>追问率</li>
+<li>转人工率</li>
+</ul>
+<p>成本趋势：</p>
+<ul>
+<li>平均 input tokens</li>
+<li>平均 output tokens</li>
+<li>平均 context tokens</li>
+<li>单请求成本</li>
+<li>租户成本排行</li>
+</ul>
+<p>知识库健康：</p>
+<ul>
+<li>文档总数</li>
+<li>chunk 总数</li>
+<li>最近同步时间</li>
+<li>索引版本</li>
+<li>解析失败数</li>
+<li>embedding 失败数</li>
+<li>过期文档数</li>
+</ul>
+<p>评估结果：</p>
+<ul>
+<li>最新回归分数</li>
+<li>关键指标变化</li>
+<li>失败样本数量</li>
+<li>各业务域准确率</li>
+<li>各问题类型准确率</li>
+</ul>
+<p>这个看板的目标不是好看，而是让研发、算法、产品、运营都能看到同一套事实。</p>
+<h1 id="十一常见工程坑">十一、常见工程坑
+</h1><h2 id="111-只记录最终答案不记录中间证据">11.1 只记录最终答案，不记录中间证据
+</h2><p>这是最常见的问题。</p>
+<p>用户反馈答案错了，但你只能看到：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Q: Pro 套餐额度是多少？
+</span></span><span class="line"><span class="cl">A: Pro 套餐每月 80 万次。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>你不知道：</p>
+<ul>
+<li>是否召回了旧文档</li>
+<li>是否新文档没入库</li>
+<li>是否上下文里同时有新旧规则</li>
+<li>是否模型自己编了一个数字</li>
+</ul>
+<p>正确做法是记录：</p>
+<ul>
+<li>召回 top-k</li>
+<li>rerank top-k</li>
+<li>context selected chunks</li>
+<li>prompt version</li>
+<li>model version</li>
+<li>citation mapping</li>
+</ul>
+<h2 id="112-日志没有版本字段">11.2 日志没有版本字段
+</h2><p>RAG 系统版本很多。</p>
+<p>如果日志里没有版本字段，评估和排障会非常困难。</p>
+<p>至少要有：</p>
+<ul>
+<li><code>index_version</code></li>
+<li><code>chunker_version</code></li>
+<li><code>embedding_model_version</code></li>
+<li><code>retrieval_config_version</code></li>
+<li><code>reranker_version</code></li>
+<li><code>context_builder_version</code></li>
+<li><code>prompt_version</code></li>
+<li><code>llm_model_version</code></li>
+</ul>
+<p>否则某个答案为什么变了，很难说清楚。</p>
+<h2 id="113-评估集只覆盖简单-faq">11.3 评估集只覆盖简单 FAQ
+</h2><p>很多评估集只包含：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">问题：如何重置密码？
+</span></span><span class="line"><span class="cl">答案：进入设置页重置密码。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这种问题太简单，容易高估系统效果。</p>
+<p>真实 RAG 还需要覆盖：</p>
+<ul>
+<li>多条件问题</li>
+<li>表格问题</li>
+<li>版本问题</li>
+<li>权限问题</li>
+<li>例外规则</li>
+<li>多文档综合</li>
+<li>不可回答问题</li>
+<li>易混淆问题</li>
+</ul>
+<p>否则上线后会发现评估分很高，但用户仍然觉得不好用。</p>
+<h2 id="114-只看平均分不看分桶指标">11.4 只看平均分，不看分桶指标
+</h2><p>总准确率可能掩盖很多问题。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">整体正确率：85%
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>看起来不错。</p>
+<p>但分桶后可能是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">普通 FAQ：96%
+</span></span><span class="line"><span class="cl">API 错误码：89%
+</span></span><span class="line"><span class="cl">合同条款：71%
+</span></span><span class="line"><span class="cl">表格问答：58%
+</span></span><span class="line"><span class="cl">多版本政策：52%
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>优化 RAG 一定要看分桶指标。</p>
+<p>否则很容易在已经很好的简单问题上继续优化，却忽略真正影响业务的问题。</p>
+<h2 id="115-用线上用户反馈直接当准确率">11.5 用线上用户反馈直接当准确率
+</h2><p>点赞率和点踩率不是准确率。</p>
+<p>因为：</p>
+<ul>
+<li>很多用户不会反馈</li>
+<li>用户点踩可能是答案太长，不一定是错</li>
+<li>用户点赞也可能只是觉得态度好</li>
+<li>不同入口用户反馈习惯不同</li>
+<li>新用户和专家用户标准不同</li>
+</ul>
+<p>用户反馈适合做趋势监控和样本发现。</p>
+<p>准确率评估仍然需要标准答案、标准证据和一致的评测规则。</p>
+<h2 id="116-调-prompt-掩盖检索问题">11.6 调 prompt 掩盖检索问题
+</h2><p>如果正确证据没有被召回，prompt 很难救。</p>
+<p>排查顺序应该是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1. 知识库里有没有正确内容
+</span></span><span class="line"><span class="cl">2. 正确内容有没有被解析和切分好
+</span></span><span class="line"><span class="cl">3. 正确 chunk 有没有被召回
+</span></span><span class="line"><span class="cl">4. 正确 chunk 有没有被 rerank 排前
+</span></span><span class="line"><span class="cl">5. 正确证据有没有进入上下文
+</span></span><span class="line"><span class="cl">6. 模型有没有基于证据回答
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>只有前面都没问题时，再重点调 prompt 和模型。</p>
+<h1 id="十二一个推荐的落地流程">十二、一个推荐的落地流程
+</h1><h2 id="121-第一阶段先把日志打全">12.1 第一阶段：先把日志打全
+</h2><p>如果系统还没有可观测性，第一步不是做复杂评估，而是先补齐链路日志。</p>
+<p>最小可用日志包括：</p>
+<ul>
+<li><code>trace_id</code></li>
+<li>用户问题</li>
+<li>索引版本</li>
+<li>召回 top-k chunk ID</li>
+<li>rerank top-k chunk ID</li>
+<li>最终上下文 chunk ID</li>
+<li>prompt 版本</li>
+<li>模型版本</li>
+<li>token 数</li>
+<li>延迟</li>
+<li>最终答案</li>
+<li>用户反馈</li>
+</ul>
+<p>有了这些，至少能排查大部分线上问题。</p>
+<h2 id="122-第二阶段建立核心监控">12.2 第二阶段：建立核心监控
+</h2><p>先做最关键的监控：</p>
+<ul>
+<li>总请求量</li>
+<li>成功率</li>
+<li>P95 延迟</li>
+<li>LLM 调用失败率</li>
+<li>召回为空比例</li>
+<li>无引用答案比例</li>
+<li>点踩率</li>
+<li>单请求平均 token</li>
+<li>索引构建失败数</li>
+</ul>
+<p>这些指标可以覆盖稳定性、质量和成本的基本风险。</p>
+<h2 id="123-第三阶段构建评估集">12.3 第三阶段：构建评估集
+</h2><p>从真实问题开始，先积累 100 到 300 条高质量评估样本。</p>
+<p>每条样本至少包含：</p>
+<ul>
+<li>问题</li>
+<li>标准答案</li>
+<li>gold chunk ID</li>
+<li>问题类型</li>
+<li>业务域</li>
+<li>难度</li>
+</ul>
+<p>不要一开始追求几万条。</p>
+<p>小而准的评估集，比大而脏的评估集更有用。</p>
+<h2 id="124-第四阶段接入自动化回归">12.4 第四阶段：接入自动化回归
+</h2><p>每次改动后自动跑：</p>
+<ul>
+<li>召回评估</li>
+<li>rerank 评估</li>
+<li>上下文评估</li>
+<li>生成评估</li>
+<li>延迟和成本评估</li>
+</ul>
+<p>输出对比报告：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">旧版本 vs 新版本
+</span></span><span class="line"><span class="cl">哪些指标提升
+</span></span><span class="line"><span class="cl">哪些指标下降
+</span></span><span class="line"><span class="cl">哪些样本从错变对
+</span></span><span class="line"><span class="cl">哪些样本从对变错
+</span></span><span class="line"><span class="cl">是否满足上线门槛
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>上线门槛可以是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Answer Correctness 不下降超过 1%
+</span></span><span class="line"><span class="cl">Faithfulness 不下降
+</span></span><span class="line"><span class="cl">Recall@20 不下降
+</span></span><span class="line"><span class="cl">P95 延迟不超过 3s
+</span></span><span class="line"><span class="cl">Cost/query 不增加超过 10%
+</span></span><span class="line"><span class="cl">权限测试全部通过
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="125-第五阶段线上反馈闭环">12.5 第五阶段：线上反馈闭环
+</h2><p>最后把线上反馈接入评估体系。</p>
+<p>推荐闭环：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">线上请求
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">用户反馈 / 自动异常检测
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">采样进入标注队列
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">标注失败原因和 gold evidence
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">进入评估集
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">驱动下一轮优化
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">回归测试验证
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">灰度上线
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样 RAG 系统才会越用越稳，而不是每次靠人工临时修。</p>
+<h1 id="十三高频面试题">十三、高频面试题
+</h1><h2 id="131-rag-系统线上答案错了你怎么排查">13.1 RAG 系统线上答案错了，你怎么排查
+</h2><p>按链路排查：</p>
+<ol>
+<li>查 <code>trace_id</code>，还原用户问题、索引版本、prompt 版本和模型版本</li>
+<li>看知识库是否有正确文档</li>
+<li>看文档解析和 chunk 是否保留了正确信息</li>
+<li>看召回 top-k 是否包含 gold chunk</li>
+<li>看 rerank 是否把正确 chunk 排到前面</li>
+<li>看上下文组装是否把正确证据放进 prompt</li>
+<li>看模型是否基于证据回答</li>
+<li>看后处理是否改坏答案</li>
+<li>把失败样本加入回归集</li>
+</ol>
+<p>核心原则是先定位失败阶段，再优化对应模块。</p>
+<h2 id="132-rag-应该记录哪些日志">13.2 RAG 应该记录哪些日志
+</h2><p>至少记录：</p>
+<ul>
+<li>请求 ID、会话 ID、用户和租户信息</li>
+<li>用户原始问题和改写问题</li>
+<li>metadata filter 条件</li>
+<li>各路召回结果和分数</li>
+<li>合并去重结果</li>
+<li>rerank 前后排名和分数</li>
+<li>最终上下文证据和 token 数</li>
+<li>prompt 版本、模型版本和模型参数</li>
+<li>模型输出、后处理结果</li>
+<li>各阶段耗时、错误和重试</li>
+<li>用户反馈和人工标注结果</li>
+</ul>
+<p>生产中要注意隐私、脱敏、权限和日志保留周期。</p>
+<h2 id="133-如何评估-rag-的召回效果">13.3 如何评估 RAG 的召回效果
+</h2><p>先构建带 gold chunk 的评估集。</p>
+<p>然后计算：</p>
+<ul>
+<li><code>Recall@K</code></li>
+<li><code>Hit@K</code></li>
+<li><code>MRR</code></li>
+<li><code>Precision@K</code></li>
+</ul>
+<p>如果问题需要多个证据，还要区分：</p>
+<ul>
+<li><code>Any Evidence Recall</code></li>
+<li><code>All Evidence Recall</code></li>
+</ul>
+<p>多路召回要分别看 BM25、向量、hybrid、filter 后的指标，不能只看最终总分。</p>
+<h2 id="134-如何评估-rag-最终答案质量">13.4 如何评估 RAG 最终答案质量
+</h2><p>通常从四个维度评估：</p>
+<ul>
+<li>正确性：是否回答问题</li>
+<li>忠实度：是否基于证据</li>
+<li>完整性：是否覆盖条件和例外</li>
+<li>引用准确性：引用是否支撑结论</li>
+</ul>
+<p>可以结合人工评估和 LLM-as-Judge。</p>
+<p>关键回归集建议人工复核，大规模样本可以用 LLM 初评。</p>
+<h2 id="135-为什么离线评估很好线上效果仍然不好">13.5 为什么离线评估很好，线上效果仍然不好
+</h2><p>常见原因包括：</p>
+<ul>
+<li>离线评估集太简单</li>
+<li>评估集没有覆盖真实用户表达</li>
+<li>没有覆盖多轮对话</li>
+<li>没有覆盖权限和版本问题</li>
+<li>线上知识库与离线索引版本不一致</li>
+<li>线上 latency 限制导致 top-k 或 rerank 被降级</li>
+<li>用户反馈标准和离线评分标准不同</li>
+</ul>
+<p>所以离线评估、线上监控和 A/B 测试要一起看。</p>
+<h2 id="136-rag-的监控指标怎么设计">13.6 RAG 的监控指标怎么设计
+</h2><p>可以分四层：</p>
+<ul>
+<li>服务稳定性：QPS、错误率、P95 延迟、超时率</li>
+<li>依赖健康度：向量库、搜索引擎、rerank、LLM 的成功率和延迟</li>
+<li>链路质量：召回为空比例、低分比例、无引用比例、fallback 比例</li>
+<li>用户体验：点赞率、点踩率、追问率、转人工率、问题解决率</li>
+</ul>
+<p>同时要监控成本：</p>
+<ul>
+<li>input tokens</li>
+<li>output tokens</li>
+<li>context tokens</li>
+<li>rerank 候选数</li>
+<li>单请求成本</li>
+<li>租户成本</li>
+</ul>
+<h1 id="总结">总结
+</h1><p>RAG 的效果问题通常不是一个点的问题，而是一整条链路的问题。</p>
+<p>所以一个成熟的 RAG 系统，不能只关注“模型回答得好不好”，还要能回答：</p>
+<ul>
+<li>知识有没有正确进入系统</li>
+<li>文档有没有解析好</li>
+<li>chunk 有没有切好</li>
+<li>正确证据有没有被召回</li>
+<li>正确证据有没有排到前面</li>
+<li>最终上下文有没有包含必要证据</li>
+<li>模型有没有基于证据回答</li>
+<li>用户是否认可答案</li>
+<li>新版本是否真的比旧版本更好</li>
+</ul>
+<p>日志让单次问题可追溯。</p>
+<p>监控让系统异常可发现。</p>
+<p>评估让方案改动可比较。</p>
+<p>这三者合在一起，才是 RAG 从 demo 走向生产系统的关键基础设施。</p>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/ai/">AI</a>
+        
+            <a href="/tags/rag/">Rag</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/rag-%E4%B8%8A%E4%B8%8B%E6%96%87%E7%BB%84%E8%A3%85%E8%AF%A6%E8%A7%A3%E8%AF%81%E6%8D%AE%E9%80%89%E6%8B%A9token-%E9%A2%84%E7%AE%97prompt-%E6%9E%84%E9%80%A0%E4%B8%8E%E5%B7%A5%E7%A8%8B%E8%B0%83%E4%BC%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">RAG 上下文组装详解：证据选择、Token 预算、Prompt 构造与工程调优</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/rag-%E9%87%8D%E6%8E%92%E8%AF%A6%E8%A7%A3rerank-%E5%8E%9F%E7%90%86%E6%A8%A1%E5%9E%8B%E9%80%89%E6%8B%A9%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E8%B0%83%E4%BC%98%E6%96%B9%E6%B3%95/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">RAG 重排详解：Rerank 原理、模型选择、工程实现与调优方法</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/rag-%E5%90%91%E9%87%8F%E5%8C%96%E4%B8%8E%E7%B4%A2%E5%BC%95%E6%9E%84%E5%BB%BA%E8%AF%A6%E8%A7%A3embedding%E5%90%91%E9%87%8F%E7%B4%A2%E5%BC%95%E6%B7%B7%E5%90%88%E7%B4%A2%E5%BC%95%E4%B8%8E%E5%B7%A5%E7%A8%8B%E8%90%BD%E5%9C%B0/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">RAG 向量化与索引构建详解：Embedding、向量索引、混合索引与工程落地</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/rag-%E6%96%87%E6%9C%AC%E5%88%87%E5%88%86%E8%AF%A6%E8%A7%A3chunk-%E8%AE%BE%E8%AE%A1%E5%88%87%E5%88%86%E7%AD%96%E7%95%A5%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E5%B8%B8%E8%A7%81%E5%9D%91/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">RAG 文本切分详解：Chunk 设计、切分策略、工程实现与常见坑</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/rag-%E6%96%87%E6%A1%A3%E8%A7%A3%E6%9E%90%E8%AF%A6%E8%A7%A3%E4%BB%8E%E5%8E%9F%E5%A7%8B%E6%96%87%E4%BB%B6%E5%88%B0%E5%8F%AF%E6%A3%80%E7%B4%A2%E7%9F%A5%E8%AF%86%E7%9A%84%E5%B7%A5%E7%A8%8B%E9%93%BE%E8%B7%AF/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">RAG 文档解析详解：从原始文件到可检索知识的工程链路</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>
