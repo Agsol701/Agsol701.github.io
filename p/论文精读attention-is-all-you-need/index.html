@@ -1,0 +1,2013 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="系统解析 Transformer 原论文 Attention Is All You Need，梳理模型结构、自注意力、多头注意力、位置编码、训练方法与学习重点。">
+<title>论文精读：Attention Is All You Need</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/%E8%AE%BA%E6%96%87%E7%B2%BE%E8%AF%BBattention-is-all-you-need/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="论文精读：Attention Is All You Need">
+<meta property='og:description' content="系统解析 Transformer 原论文 Attention Is All You Need，梳理模型结构、自注意力、多头注意力、位置编码、训练方法与学习重点。">
+<meta property='og:url' content='https://Agsol701.github.io/p/%E8%AE%BA%E6%96%87%E7%B2%BE%E8%AF%BBattention-is-all-you-need/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='Transformer' /><meta property='article:tag' content='Attention' /><meta property='article:tag' content='Self-Attention' /><meta property='article:tag' content='NLP' /><meta property='article:tag' content='Deep Learning' /><meta property='article:tag' content='Paper Reading' /><meta property='article:published_time' content='2026-05-18T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-18T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="论文精读：Attention Is All You Need">
+<meta name="twitter:description" content="系统解析 Transformer 原论文 Attention Is All You Need，梳理模型结构、自注意力、多头注意力、位置编码、训练方法与学习重点。">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-论文基本信息">1. 论文基本信息</a></li>
+    <li><a href="#2-这篇论文解决了什么问题">2. 这篇论文解决了什么问题？</a>
+      <ol>
+        <li><a href="#21-顺序计算导致训练难以并行化">2.1 顺序计算导致训练难以并行化</a></li>
+        <li><a href="#22-长距离依赖建模困难">2.2 长距离依赖建模困难</a></li>
+        <li><a href="#23-计算路径长度较长">2.3 计算路径长度较长</a></li>
+        <li><a href="#24-机器翻译中的效率和效果瓶颈">2.4 机器翻译中的效率和效果瓶颈</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-核心思想概览">3. 核心思想概览</a></li>
+    <li><a href="#4-transformer-整体架构">4. Transformer 整体架构</a>
+      <ol>
+        <li><a href="#41-encoder">4.1 Encoder</a></li>
+        <li><a href="#42-decoder">4.2 Decoder</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-scaled-dot-product-attention">5. Scaled Dot-Product Attention</a>
+      <ol>
+        <li><a href="#51-qkv-分别是什么">5.1 Q、K、V 分别是什么</a></li>
+        <li><a href="#52-为什么用点积衡量相似度">5.2 为什么用点积衡量相似度</a></li>
+        <li><a href="#53-为什么除以-sqrtd_k">5.3 为什么除以 $\sqrt{d_k}$</a></li>
+        <li><a href="#54-softmax-的作用">5.4 softmax 的作用</a></li>
+        <li><a href="#55-为什么输出是-v-的加权和">5.5 为什么输出是 V 的加权和</a></li>
+        <li><a href="#56-一个直观类比">5.6 一个直观类比</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-multi-head-attention">6. Multi-Head Attention</a>
+      <ol>
+        <li><a href="#61-为什么多头比单头更强">6.1 为什么多头比单头更强</a></li>
+        <li><a href="#62-为什么计算成本仍然可控">6.2 为什么计算成本仍然可控</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-transformer-中的三种-attention">7. Transformer 中的三种 Attention</a>
+      <ol>
+        <li><a href="#71-encoder-self-attention">7.1 Encoder Self-Attention</a></li>
+        <li><a href="#72-decoder-masked-self-attention">7.2 Decoder Masked Self-Attention</a></li>
+        <li><a href="#73-encoder-decoder-attention">7.3 Encoder-Decoder Attention</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-position-wise-feed-forward-network">8. Position-wise Feed-Forward Network</a></li>
+    <li><a href="#9-positional-encoding">9. Positional Encoding</a>
+      <ol>
+        <li><a href="#91-sinusoidal-positional-encoding">9.1 Sinusoidal Positional Encoding</a></li>
+        <li><a href="#92-learned-positional-embedding-vs-sinusoidal-positional-encoding">9.2 Learned Positional Embedding vs Sinusoidal Positional Encoding</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-为什么-self-attention-有优势">10. 为什么 Self-Attention 有优势？</a></li>
+    <li><a href="#11-训练设置">11. 训练设置</a>
+      <ol>
+        <li><a href="#111-learning-rate-schedule">11.1 Learning Rate Schedule</a></li>
+        <li><a href="#112-label-smoothing">11.2 Label Smoothing</a></li>
+      </ol>
+    </li>
+    <li><a href="#12-实验结果">12. 实验结果</a>
+      <ol>
+        <li><a href="#121-wmt-2014-english-to-german">12.1 WMT 2014 English-to-German</a></li>
+        <li><a href="#122-wmt-2014-english-to-french">12.2 WMT 2014 English-to-French</a></li>
+        <li><a href="#123-english-constituency-parsing">12.3 English Constituency Parsing</a></li>
+        <li><a href="#124-结果总结">12.4 结果总结</a></li>
+      </ol>
+    </li>
+    <li><a href="#13-论文的关键贡献">13. 论文的关键贡献</a></li>
+    <li><a href="#14-学习这篇论文需要重点掌握什么">14. 学习这篇论文需要重点掌握什么？</a>
+      <ol>
+        <li><a href="#141-必须掌握">14.1 必须掌握</a></li>
+        <li><a href="#142-建议掌握">14.2 建议掌握</a></li>
+        <li><a href="#143-可以延伸">14.3 可以延伸</a></li>
+      </ol>
+    </li>
+    <li><a href="#15-从代码实现角度理解-transformer">15. 从代码实现角度理解 Transformer</a>
+      <ol>
+        <li><a href="#151-scaleddotproductattention">15.1 ScaledDotProductAttention</a></li>
+        <li><a href="#152-multiheadattention">15.2 MultiHeadAttention</a></li>
+        <li><a href="#153-positionwisefeedforward">15.3 PositionwiseFeedForward</a></li>
+        <li><a href="#154-positionalencoding">15.4 PositionalEncoding</a></li>
+        <li><a href="#155-encoderlayer">15.5 EncoderLayer</a></li>
+        <li><a href="#156-decoderlayer">15.6 DecoderLayer</a></li>
+        <li><a href="#157-causal-mask-示例">15.7 Causal Mask 示例</a></li>
+      </ol>
+    </li>
+    <li><a href="#16-常见误区">16. 常见误区</a>
+      <ol>
+        <li><a href="#161-attention-不是简单的权重可视化">16.1 Attention 不是简单的“权重可视化”</a></li>
+        <li><a href="#162-self-attention-并不天然知道顺序">16.2 Self-Attention 并不天然知道顺序</a></li>
+        <li><a href="#163-multi-head-不是简单重复多个-attention">16.3 Multi-head 不是简单重复多个 attention</a></li>
+        <li><a href="#164-decoder-mask-不是-padding-mask">16.4 Decoder mask 不是 padding mask</a></li>
+        <li><a href="#165-transformer-原论文主要验证的是机器翻译任务">16.5 Transformer 原论文主要验证的是机器翻译任务</a></li>
+        <li><a href="#166-原始-transformer-和现代-gptbert-架构有差异">16.6 原始 Transformer 和现代 GPT/BERT 架构有差异</a></li>
+      </ol>
+    </li>
+    <li><a href="#17-读完这篇论文后的学习路线">17. 读完这篇论文后的学习路线</a></li>
+    <li><a href="#18-总结">18. 总结</a></li>
+  </ol>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/paper/" >
+                Paper
+            </a>
+        
+            <a href="/categories/deep-learning/" >
+                Deep-Learning
+            </a>
+        
+            <a href="/categories/transformer/" >
+                Transformer
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/%E8%AE%BA%E6%96%87%E7%B2%BE%E8%AF%BBattention-is-all-you-need/">论文精读：Attention Is All You Need</a>
+        </h2>
+    
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">May 18, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h1 id="论文精读attention-is-all-you-need">论文精读：Attention Is All You Need
+</h1><p>这篇论文是现代深度学习，尤其是大语言模型时代最重要的论文之一。它提出的 Transformer 架构，把序列建模从长期依赖 RNN/CNN 的范式中解放出来，证明了仅依靠 attention 机制也可以构建高质量、高并行度的序列转导模型。</p>
+<p>本文不是逐句翻译论文，而是从学习者和工程实现的角度拆解它：Transformer 为什么出现、每个模块解决什么问题、公式背后的直觉是什么，以及如何把这些概念落到 PyTorch 风格代码中。</p>
+<h2 id="1-论文基本信息">1. 论文基本信息
+</h2><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>项目</th>
+          <th>内容</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>标题</td>
+          <td>Attention Is All You Need</td>
+      </tr>
+      <tr>
+          <td>arXiv 编号</td>
+          <td>1706.03762v7</td>
+      </tr>
+      <tr>
+          <td>版本日期</td>
+          <td>2023-08-02</td>
+      </tr>
+      <tr>
+          <td>作者</td>
+          <td>Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, Illia Polosukhin</td>
+      </tr>
+      <tr>
+          <td>论文链接</td>
+          <td><a class="link" href="https://arxiv.org/html/1706.03762v7"  target="_blank" rel="noopener"
+    >https://arxiv.org/html/1706.03762v7</a></td>
+      </tr>
+      <tr>
+          <td>研究领域</td>
+          <td>Natural Language Processing, Neural Machine Translation, Sequence Transduction</td>
+      </tr>
+      <tr>
+          <td>核心贡献</td>
+          <td>提出完全基于 attention 的 encoder-decoder 架构 Transformer，用 self-attention 替代 RNN/CNN，在机器翻译中同时提升效果和训练效率。</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>一句话总结：</p>
+<blockquote>
+<p>Transformer 的关键思想是：序列内部和序列之间的依赖关系，可以主要通过 attention 来建模，不必依赖循环结构或卷积结构。</p></blockquote>
+<h2 id="2-这篇论文解决了什么问题">2. 这篇论文解决了什么问题？
+</h2><p>在 Transformer 之前，主流序列转导模型通常是 encoder-decoder 架构，但 encoder 和 decoder 的主体大多依赖 RNN、LSTM、GRU 或 CNN。</p>
+<p>这些模型有几个核心限制。</p>
+<h3 id="21-顺序计算导致训练难以并行化">2.1 顺序计算导致训练难以并行化
+</h3><p>RNN/LSTM/GRU 按时间步处理序列。第 <code>t</code> 个位置的隐藏状态依赖第 <code>t-1</code> 个位置的隐藏状态，因此同一个样本内部很难并行计算。</p>
+<p>这会带来两个问题：</p>
+<ul>
+<li>长句子训练慢，因为必须一步一步算。</li>
+<li>GPU/TPU 的矩阵并行能力无法被充分利用。</li>
+</ul>
+<p>机器翻译中句子长度不固定，长句越多，这个瓶颈越明显。</p>
+<h3 id="22-长距离依赖建模困难">2.2 长距离依赖建模困难
+</h3><p>虽然 LSTM/GRU 通过门控机制缓解了梯度消失问题，但远距离 token 之间的信息仍然需要经过很多状态传递。</p>
+<p>例如句首的主语影响句尾的动词形式，在 RNN 中信息要跨过许多时间步。路径越长，学习越困难。</p>
+<h3 id="23-计算路径长度较长">2.3 计算路径长度较长
+</h3><p>论文第 4 节强调了一个重要指标：任意两个位置之间的信息路径长度。</p>
+<ul>
+<li>RNN 中，两个距离为 <code>n</code> 的位置之间需要经过 <code>O(n)</code> 步。</li>
+<li>CNN 中，如果卷积核大小为 <code>k</code>，需要堆叠多层才能覆盖远距离位置。</li>
+<li>Self-attention 中，任意两个位置可以在一层内直接交互，最大路径长度是 <code>O(1)</code>。</li>
+</ul>
+<p>路径短意味着前向信息和反向梯度都更容易传递。</p>
+<h3 id="24-机器翻译中的效率和效果瓶颈">2.4 机器翻译中的效率和效果瓶颈
+</h3><p>当时最强的机器翻译系统通常结构复杂，训练成本高。即使 attention 已经被广泛使用，它也通常只是 RNN/CNN 之外的辅助模块。</p>
+<p>Transformer 要回答的问题是：</p>
+<blockquote>
+<p>如果 attention 已经能直接建模 token 之间的依赖，是否可以完全去掉 recurrence 和 convolution？</p></blockquote>
+<p>论文的实验结果证明：可以，而且效果更好、训练更快。</p>
+<h2 id="3-核心思想概览">3. 核心思想概览
+</h2><p>Transformer 最重要的观点包括：</p>
+<ul>
+<li>不再依赖 RNN 或 CNN。</li>
+<li>完全基于 attention mechanism 建模序列依赖。</li>
+<li>仍然使用 encoder-decoder 架构处理序列转导任务。</li>
+<li>使用 self-attention 建模同一序列内部 token 之间的关系。</li>
+<li>使用 multi-head attention 从多个表示子空间捕获不同关系。</li>
+<li>使用 positional encoding 弥补 attention 本身不包含顺序信息的问题。</li>
+</ul>
+<p>“Attention is all you need” 的意思不是“模型里只有一个 attention 公式”，也不是“其他组件都不重要”。原始 Transformer 仍然包含 embedding、残差连接、LayerNorm、FFN、dropout、label smoothing 等组件。</p>
+<p>它真正表达的是：</p>
+<blockquote>
+<p>对于序列转导任务，核心的依赖建模可以完全交给 attention，而不必再依赖循环或卷积作为主体结构。</p></blockquote>
+<p>从工程角度看，Transformer 把序列建模转换成了大规模矩阵乘法问题。这让模型更适合 GPU 并行训练，也为后来扩大模型参数规模和数据规模奠定了基础。</p>
+<h2 id="4-transformer-整体架构">4. Transformer 整体架构
+</h2><p>Transformer 仍然是 encoder-decoder 模型：</p>
+<ul>
+<li>Encoder 读取源序列，输出每个输入 token 的上下文表示。</li>
+<li>Decoder 根据已经生成的目标 token 和 encoder 输出，逐步预测下一个 token。</li>
+</ul>
+<p>论文中的 base Transformer 使用：</p>
+<ul>
+<li><code>N = 6</code> 层 encoder</li>
+<li><code>N = 6</code> 层 decoder</li>
+<li><code>d_model = 512</code></li>
+<li><code>d_ff = 2048</code></li>
+<li><code>h = 8</code> 个 attention heads</li>
+<li>每个 head 的 <code>d_k = d_v = 64</code></li>
+</ul>
+<p>整体数据流可以先这样理解：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span><span class="lnt">28
+</span><span class="lnt">29
+</span><span class="lnt">30
+</span><span class="lnt">31
+</span><span class="lnt">32
+</span><span class="lnt">33
+</span><span class="lnt">34
+</span><span class="lnt">35
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">源语言 tokens
+</span></span><span class="line"><span class="cl">    │
+</span></span><span class="line"><span class="cl">    ▼
+</span></span><span class="line"><span class="cl">Token Embedding + Positional Encoding
+</span></span><span class="line"><span class="cl">    │
+</span></span><span class="line"><span class="cl">    ▼
+</span></span><span class="line"><span class="cl">┌──────────────────────────────┐
+</span></span><span class="line"><span class="cl">│ Encoder Layer 1              │
+</span></span><span class="line"><span class="cl">│ Encoder Layer 2              │
+</span></span><span class="line"><span class="cl">│ ...                          │
+</span></span><span class="line"><span class="cl">│ Encoder Layer N              │
+</span></span><span class="line"><span class="cl">└──────────────────────────────┘
+</span></span><span class="line"><span class="cl">    │
+</span></span><span class="line"><span class="cl">    ▼
+</span></span><span class="line"><span class="cl">Encoder Memory
+</span></span><span class="line"><span class="cl">    │
+</span></span><span class="line"><span class="cl">    │      目标语言 tokens shifted right
+</span></span><span class="line"><span class="cl">    │              │
+</span></span><span class="line"><span class="cl">    │              ▼
+</span></span><span class="line"><span class="cl">    │      Token Embedding + Positional Encoding
+</span></span><span class="line"><span class="cl">    │              │
+</span></span><span class="line"><span class="cl">    └──────────────┼──────────────┐
+</span></span><span class="line"><span class="cl">                   ▼              │
+</span></span><span class="line"><span class="cl">        ┌──────────────────────────────┐
+</span></span><span class="line"><span class="cl">        │ Decoder Layer 1              │
+</span></span><span class="line"><span class="cl">        │ Decoder Layer 2              │
+</span></span><span class="line"><span class="cl">        │ ...                          │
+</span></span><span class="line"><span class="cl">        │ Decoder Layer N              │
+</span></span><span class="line"><span class="cl">        └──────────────────────────────┘
+</span></span><span class="line"><span class="cl">                   │
+</span></span><span class="line"><span class="cl">                   ▼
+</span></span><span class="line"><span class="cl">             Linear + Softmax
+</span></span><span class="line"><span class="cl">                   │
+</span></span><span class="line"><span class="cl">                   ▼
+</span></span><span class="line"><span class="cl">             下一个 token 概率
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="41-encoder">4.1 Encoder
+</h3><p>Encoder 由 <code>N</code> 层相同结构堆叠而成。每一层包含两个子层：</p>
+<ol>
+<li>Multi-Head Self-Attention</li>
+<li>Position-wise Feed-Forward Network</li>
+</ol>
+<p>每个子层外部都有：</p>
+<ul>
+<li>Residual Connection</li>
+<li>Layer Normalization</li>
+</ul>
+<p>可以抽象为：</p>
+$$
+\text{LayerNorm}(x + \text{Sublayer}(x))
+$$<p>在 encoder self-attention 中，每个 token 都可以关注输入序列中的所有 token。因此，encoder 输出的每个位置都融合了整句上下文信息。</p>
+<p>单个 encoder layer 的流程如下：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">x
+</span></span><span class="line"><span class="cl">│
+</span></span><span class="line"><span class="cl">├─────────────── residual ───────────────┐
+</span></span><span class="line"><span class="cl">│                                        │
+</span></span><span class="line"><span class="cl">▼                                        │
+</span></span><span class="line"><span class="cl">Multi-Head Self-Attention                │
+</span></span><span class="line"><span class="cl">│                                        │
+</span></span><span class="line"><span class="cl">▼                                        │
+</span></span><span class="line"><span class="cl">Dropout                                  │
+</span></span><span class="line"><span class="cl">│                                        │
+</span></span><span class="line"><span class="cl">└──────────────► Add + LayerNorm ◄───────┘
+</span></span><span class="line"><span class="cl">                 │
+</span></span><span class="line"><span class="cl">                 ├──────── residual ─────┐
+</span></span><span class="line"><span class="cl">                 │                       │
+</span></span><span class="line"><span class="cl">                 ▼                       │
+</span></span><span class="line"><span class="cl">        Position-wise FFN                │
+</span></span><span class="line"><span class="cl">                 │                       │
+</span></span><span class="line"><span class="cl">                 ▼                       │
+</span></span><span class="line"><span class="cl">              Dropout                    │
+</span></span><span class="line"><span class="cl">                 │                       │
+</span></span><span class="line"><span class="cl">                 └────► Add + LayerNorm ◄┘
+</span></span><span class="line"><span class="cl">                         │
+</span></span><span class="line"><span class="cl">                         ▼
+</span></span><span class="line"><span class="cl">                    layer output
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="42-decoder">4.2 Decoder
+</h3><p>Decoder 也由 <code>N</code> 层相同结构堆叠而成。每层包含三个子层：</p>
+<ol>
+<li>Masked Multi-Head Self-Attention</li>
+<li>Encoder-Decoder Attention</li>
+<li>Position-wise Feed-Forward Network</li>
+</ol>
+<p>同样，每个子层外部也使用 residual connection 和 layer normalization。</p>
+<p>Decoder 中的 mask 非常关键。训练时，目标序列一次性输入 decoder，但预测第 <code>t</code> 个 token 时，模型不能看到第 <code>t+1</code>、<code>t+2</code> 等未来 token。否则训练时会发生信息泄露，推理时又无法使用未来信息，训练和推理就不一致。</p>
+<p>因此 masked self-attention 会把当前位置之后的 attention score 设为负无穷，经过 softmax 后这些位置的权重接近 0。</p>
+<p>单个 decoder layer 比 encoder layer 多了一个 cross-attention：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">target hidden states
+</span></span><span class="line"><span class="cl">        │
+</span></span><span class="line"><span class="cl">        ▼
+</span></span><span class="line"><span class="cl">Masked Multi-Head Self-Attention
+</span></span><span class="line"><span class="cl">        │
+</span></span><span class="line"><span class="cl">        ▼
+</span></span><span class="line"><span class="cl">Add + LayerNorm
+</span></span><span class="line"><span class="cl">        │
+</span></span><span class="line"><span class="cl">        │                 encoder memory
+</span></span><span class="line"><span class="cl">        │                       │
+</span></span><span class="line"><span class="cl">        ▼                       │
+</span></span><span class="line"><span class="cl">Encoder-Decoder Attention ◄─────┘
+</span></span><span class="line"><span class="cl">        │
+</span></span><span class="line"><span class="cl">        ▼
+</span></span><span class="line"><span class="cl">Add + LayerNorm
+</span></span><span class="line"><span class="cl">        │
+</span></span><span class="line"><span class="cl">        ▼
+</span></span><span class="line"><span class="cl">Position-wise FFN
+</span></span><span class="line"><span class="cl">        │
+</span></span><span class="line"><span class="cl">        ▼
+</span></span><span class="line"><span class="cl">Add + LayerNorm
+</span></span><span class="line"><span class="cl">        │
+</span></span><span class="line"><span class="cl">        ▼
+</span></span><span class="line"><span class="cl">decoder layer output
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="5-scaled-dot-product-attention">5. Scaled Dot-Product Attention
+</h2><p>论文中的核心公式是：</p>
+$$
+\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V
+$$<p>其中：</p>
+<ul>
+<li><code>Q</code> 是 Query，表示“当前 token 想找什么信息”。</li>
+<li><code>K</code> 是 Key，表示“每个 token 能被怎样匹配”。</li>
+<li><code>V</code> 是 Value，表示“每个 token 真正提供的信息内容”。</li>
+<li><code>d_k</code> 是 key/query 的向量维度。</li>
+</ul>
+<p>计算流程图：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Q: [batch, q_len, d_k]      K: [batch, k_len, d_k]
+</span></span><span class="line"><span class="cl">          │                            │
+</span></span><span class="line"><span class="cl">          │                            ▼
+</span></span><span class="line"><span class="cl">          │                  transpose last two dims
+</span></span><span class="line"><span class="cl">          │                            │
+</span></span><span class="line"><span class="cl">          └────────────── matmul ◄─────┘
+</span></span><span class="line"><span class="cl">                         │
+</span></span><span class="line"><span class="cl">                         ▼
+</span></span><span class="line"><span class="cl">              scores = QK^T / sqrt(d_k)
+</span></span><span class="line"><span class="cl">              [batch, q_len, k_len]
+</span></span><span class="line"><span class="cl">                         │
+</span></span><span class="line"><span class="cl">                         ▼
+</span></span><span class="line"><span class="cl">                 apply mask if needed
+</span></span><span class="line"><span class="cl">                         │
+</span></span><span class="line"><span class="cl">                         ▼
+</span></span><span class="line"><span class="cl">              softmax over key positions
+</span></span><span class="line"><span class="cl">                         │
+</span></span><span class="line"><span class="cl">                         ▼
+</span></span><span class="line"><span class="cl">        attention weights [batch, q_len, k_len]
+</span></span><span class="line"><span class="cl">                         │
+</span></span><span class="line"><span class="cl">                         │
+</span></span><span class="line"><span class="cl">                         ▼
+</span></span><span class="line"><span class="cl">              matmul with V: [batch, k_len, d_v]
+</span></span><span class="line"><span class="cl">                         │
+</span></span><span class="line"><span class="cl">                         ▼
+</span></span><span class="line"><span class="cl">              output: [batch, q_len, d_v]
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="51-qkv-分别是什么">5.1 Q、K、V 分别是什么
+</h3><p>在 self-attention 中，<code>Q</code>、<code>K</code>、<code>V</code> 都来自同一个输入序列，只是经过不同的线性变换：</p>
+$$
+Q = XW^Q,\quad K = XW^K,\quad V = XW^V
+$$<p>直观地说，同一个 token 会被投影成三种角色：</p>
+<ul>
+<li>作为 query：我现在需要什么上下文？</li>
+<li>作为 key：我有什么特征可以被别人匹配？</li>
+<li>作为 value：如果别人关注我，我提供什么信息？</li>
+</ul>
+<h3 id="52-为什么用点积衡量相似度">5.2 为什么用点积衡量相似度
+</h3><p>点积可以衡量两个向量方向的一致程度。<code>q_i \cdot k_j</code> 越大，说明第 <code>i</code> 个 token 的 query 和第 <code>j</code> 个 token 的 key 越匹配。</p>
+<p>在矩阵形式中，<code>QK^T</code> 会得到一个 attention score 矩阵：</p>
+$$
+QK^T \in \mathbb{R}^{\text{seq\_len} \times \text{seq\_len}}
+$$<p>第 <code>i</code> 行表示第 <code>i</code> 个 token 对所有 token 的关注分数。</p>
+<h3 id="53-为什么除以-sqrtd_k">5.3 为什么除以 $\sqrt{d_k}$
+</h3><p>当 <code>d_k</code> 较大时，点积结果的方差会变大，softmax 输入可能变得很大或很小，导致 softmax 饱和，梯度变小。</p>
+<p>除以 $\sqrt{d_k}$ 的作用是缩放 score，让它们保持在更稳定的范围内。这就是 “Scaled” Dot-Product Attention 中 scaled 的含义。</p>
+<h3 id="54-softmax-的作用">5.4 softmax 的作用
+</h3><p>softmax 把 raw score 转换成概率分布：</p>
+<ul>
+<li>每个权重非负。</li>
+<li>同一行权重之和为 1。</li>
+<li>分数越高的位置权重越大。</li>
+</ul>
+<p>于是每个 token 都得到一组“应该从其他 token 读取多少信息”的权重。</p>
+<h3 id="55-为什么输出是-v-的加权和">5.5 为什么输出是 V 的加权和
+</h3><p>attention 的最终目标不是得到相似度，而是聚合信息。</p>
+<p><code>softmax(QK^T / sqrt(d_k))</code> 得到的是权重矩阵，乘以 <code>V</code> 后，每个位置都会得到所有 value 的加权和。也就是说：</p>
+<blockquote>
+<p>Query 和 Key 决定“看哪里”，Value 决定“拿什么”。</p></blockquote>
+<h3 id="56-一个直观类比">5.6 一个直观类比
+</h3><p>可以把 Q/K/V 想成图书馆检索：</p>
+<ul>
+<li>Query：你输入的检索需求，比如“Transformer 位置编码”。</li>
+<li>Key：每本书或文章的索引标签。</li>
+<li>Value：书或文章的实际内容。</li>
+</ul>
+<p>检索系统先比较 query 和 key 的匹配程度，再根据匹配分数从 value 中汇总信息。attention 做的就是这个过程，只不过它是端到端可学习的。</p>
+<h2 id="6-multi-head-attention">6. Multi-Head Attention
+</h2><p>单头 attention 只在一个表示空间里计算相关性。Multi-head attention 的做法是把 Q、K、V 投影到多个子空间，让多个 head 并行关注不同关系。</p>
+<p>计算流程：</p>
+<ol>
+<li>将输入的 <code>Q</code>、<code>K</code>、<code>V</code> 分别通过线性层投影。</li>
+<li>切分成 <code>h</code> 个 head。</li>
+<li>每个 head 独立计算 scaled dot-product attention。</li>
+<li>拼接所有 head 的输出。</li>
+<li>再经过一个输出线性层。</li>
+</ol>
+<p>公式可以写成：</p>
+$$
+\text{MultiHead}(Q,K,V) = \text{Concat}(\text{head}_1,\dots,\text{head}_h)W^O
+$$$$
+\text{head}_i = \text{Attention}(QW_i^Q, KW_i^K, VW_i^V)
+$$<p>可以把 multi-head attention 看成下面这条流水线：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Q, K, V: [batch, seq_len, d_model]
+</span></span><span class="line"><span class="cl">        │
+</span></span><span class="line"><span class="cl">        ▼
+</span></span><span class="line"><span class="cl">Linear projections: W_q, W_k, W_v
+</span></span><span class="line"><span class="cl">        │
+</span></span><span class="line"><span class="cl">        ▼
+</span></span><span class="line"><span class="cl">Split heads
+</span></span><span class="line"><span class="cl">[batch, num_heads, seq_len, d_k]
+</span></span><span class="line"><span class="cl">        │
+</span></span><span class="line"><span class="cl">        ├────────► Head 1: Scaled Dot-Product Attention
+</span></span><span class="line"><span class="cl">        ├────────► Head 2: Scaled Dot-Product Attention
+</span></span><span class="line"><span class="cl">        ├────────► ...
+</span></span><span class="line"><span class="cl">        └────────► Head h: Scaled Dot-Product Attention
+</span></span><span class="line"><span class="cl">        │
+</span></span><span class="line"><span class="cl">        ▼
+</span></span><span class="line"><span class="cl">Concat heads
+</span></span><span class="line"><span class="cl">[batch, seq_len, num_heads * d_k]
+</span></span><span class="line"><span class="cl">        │
+</span></span><span class="line"><span class="cl">        ▼
+</span></span><span class="line"><span class="cl">Output projection W_o
+</span></span><span class="line"><span class="cl">        │
+</span></span><span class="line"><span class="cl">        ▼
+</span></span><span class="line"><span class="cl">[batch, seq_len, d_model]
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="61-为什么多头比单头更强">6.1 为什么多头比单头更强
+</h3><p>不同 head 可以学习不同类型的关系：</p>
+<ul>
+<li>某些 head 关注相邻词。</li>
+<li>某些 head 关注主谓关系。</li>
+<li>某些 head 关注长距离依赖。</li>
+<li>某些 head 关注标点、边界或特殊 token。</li>
+</ul>
+<p>如果只有一个 head，所有关系会被压到一个 attention 分布中，表达能力有限。多头机制让模型可以在不同子空间中并行建模多种关系。</p>
+<h3 id="62-为什么计算成本仍然可控">6.2 为什么计算成本仍然可控
+</h3><p>论文中 base 模型使用 <code>h = 8</code>，<code>d_model = 512</code>，每个 head 的维度是 <code>64</code>。</p>
+<p>虽然 head 数量增加了，但每个 head 的维度变小了。多个小 head 的总计算量与一个完整维度的单头 attention 大致相当。</p>
+<p>这也是 multi-head attention 工程上可行的原因：它增强表达能力，但没有把计算成本直接乘以 head 数。</p>
+<h2 id="7-transformer-中的三种-attention">7. Transformer 中的三种 Attention
+</h2><p>论文中的 multi-head attention 有三种用法。</p>
+<p>三种 attention 的 Q/K/V 来源对比如下：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1. Encoder Self-Attention
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">encoder hidden states ──► Q
+</span></span><span class="line"><span class="cl">encoder hidden states ──► K
+</span></span><span class="line"><span class="cl">encoder hidden states ──► V
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">2. Decoder Masked Self-Attention
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">decoder hidden states ──► Q
+</span></span><span class="line"><span class="cl">decoder hidden states ──► K
+</span></span><span class="line"><span class="cl">decoder hidden states ──► V
+</span></span><span class="line"><span class="cl">                  │
+</span></span><span class="line"><span class="cl">                  └── causal mask: 不能看未来 token
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">3. Encoder-Decoder Attention
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">decoder hidden states ──► Q
+</span></span><span class="line"><span class="cl">encoder memory        ──► K
+</span></span><span class="line"><span class="cl">encoder memory        ──► V
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="71-encoder-self-attention">7.1 Encoder Self-Attention
+</h3><p>Encoder self-attention 中：</p>
+<ul>
+<li><code>Q</code> 来自 encoder 前一层输出。</li>
+<li><code>K</code> 来自 encoder 前一层输出。</li>
+<li><code>V</code> 来自 encoder 前一层输出。</li>
+</ul>
+<p>每个输入 token 可以关注输入序列中的所有 token。这让每个位置都能直接融合全局上下文。</p>
+<h3 id="72-decoder-masked-self-attention">7.2 Decoder Masked Self-Attention
+</h3><p>Decoder masked self-attention 中：</p>
+<ul>
+<li><code>Q</code>、<code>K</code>、<code>V</code> 都来自 decoder 前一层输出。</li>
+<li>每个目标 token 只能关注当前位置以及之前的位置。</li>
+</ul>
+<p>mask 的作用是保证自回归生成：</p>
+$$
+p(y_t \mid y_{<t}, x)
+$$<p>也就是说，预测第 <code>t</code> 个 token 时，只能使用源序列 <code>x</code> 和已经生成的目标前缀 <code>y_{&lt;t}</code>。</p>
+<h3 id="73-encoder-decoder-attention">7.3 Encoder-Decoder Attention
+</h3><p>Encoder-decoder attention 中：</p>
+<ul>
+<li><code>Q</code> 来自 decoder 前一层输出。</li>
+<li><code>K</code> 来自 encoder 输出。</li>
+<li><code>V</code> 来自 encoder 输出。</li>
+</ul>
+<p>这相当于 decoder 在生成目标 token 时，主动查询源序列信息。它承担了传统 seq2seq attention 的角色：让目标端每一步生成都能对齐和利用源端内容。</p>
+<h2 id="8-position-wise-feed-forward-network">8. Position-wise Feed-Forward Network
+</h2><p>每个 encoder layer 和 decoder layer 都包含一个 position-wise FFN：</p>
+$$
+\text{FFN}(x) = \max(0, xW_1 + b_1)W_2 + b_2
+$$<p>它有几个特点：</p>
+<ul>
+<li>对每个位置独立应用。</li>
+<li>不在不同 token 之间交换信息。</li>
+<li>输入和输出维度都是 <code>d_model</code>。</li>
+<li>中间层维度是 <code>d_ff</code>。</li>
+<li>论文 base 模型中 <code>d_model = 512</code>，<code>d_ff = 2048</code>。</li>
+</ul>
+<p>如果 attention 负责“token 之间的信息交互”，FFN 就负责“对每个 token 的表示做非线性变换”。它类似一个共享在所有位置上的两层 MLP，也可以理解为 kernel size 为 1 的卷积。</p>
+<h2 id="9-positional-encoding">9. Positional Encoding
+</h2><p>Attention 本身对顺序不敏感。对于 self-attention，如果不加入位置信息，模型看到的更像是一组 token，而不是有顺序的句子。</p>
+<p>例如：</p>
+<ul>
+<li>“狗咬人”</li>
+<li>“人咬狗”</li>
+</ul>
+<p>两句话 token 集合相同，但顺序不同，语义完全不同。因此 Transformer 必须注入位置编码。</p>
+<h3 id="91-sinusoidal-positional-encoding">9.1 Sinusoidal Positional Encoding
+</h3><p>论文使用固定的正弦/余弦位置编码：</p>
+$$
+PE_{(pos, 2i)} = \sin\left(\frac{pos}{10000^{2i/d_{model}}}\right)
+$$$$
+PE_{(pos, 2i+1)} = \cos\left(\frac{pos}{10000^{2i/d_{model}}}\right)
+$$<p>其中：</p>
+<ul>
+<li><code>pos</code> 是 token 的位置。</li>
+<li><code>i</code> 是维度索引。</li>
+<li>不同维度对应不同频率。</li>
+<li>偶数维使用 sin，奇数维使用 cos。</li>
+</ul>
+<p>这种设计让每个位置都有一个确定的向量表示，并且不同频率可以编码不同粒度的位置变化。</p>
+<p>论文选择 sinusoidal encoding 的一个动机是：它可能帮助模型泛化到比训练时更长的序列，因为位置编码不是只为训练长度学习出来的查表参数。</p>
+<h3 id="92-learned-positional-embedding-vs-sinusoidal-positional-encoding">9.2 Learned Positional Embedding vs Sinusoidal Positional Encoding
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>类型</th>
+          <th>做法</th>
+          <th>优点</th>
+          <th>局限</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Learned positional embedding</td>
+          <td>为每个位置学习一个 embedding</td>
+          <td>简单，适应训练数据</td>
+          <td>超出训练最大长度时不天然可泛化</td>
+      </tr>
+      <tr>
+          <td>Sinusoidal positional encoding</td>
+          <td>用固定 sin/cos 函数生成</td>
+          <td>无需学习参数，可能外推到更长长度</td>
+          <td>表达形式固定，不一定对所有任务最优</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>论文中也实验了 learned positional embedding，结果与 sinusoidal positional encoding 接近。最终选择 sinusoidal，主要是考虑其外推潜力。</p>
+<h2 id="10-为什么-self-attention-有优势">10. 为什么 Self-Attention 有优势？
+</h2><p>论文第 4 节从三方面比较 self-attention、recurrent layer 和 convolutional layer：</p>
+<ul>
+<li>每层计算复杂度</li>
+<li>顺序操作数量</li>
+<li>最大路径长度</li>
+</ul>
+<p>设：</p>
+<ul>
+<li><code>n</code> 是序列长度。</li>
+<li><code>d</code> 是表示维度。</li>
+<li><code>k</code> 是卷积核大小。</li>
+</ul>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>Layer Type</th>
+          <th>每层复杂度</th>
+          <th>顺序操作数量</th>
+          <th>最大路径长度</th>
+          <th>直观理解</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Self-Attention</td>
+          <td>$O(n^2 d)$</td>
+          <td>$O(1)$</td>
+          <td>$O(1)$</td>
+          <td>所有 token 两两直接交互，并行度高</td>
+      </tr>
+      <tr>
+          <td>Recurrent</td>
+          <td>$O(n d^2)$</td>
+          <td>$O(n)$</td>
+          <td>$O(n)$</td>
+          <td>必须按时间步顺序计算</td>
+      </tr>
+      <tr>
+          <td>Convolutional</td>
+          <td>$O(k n d^2)$</td>
+          <td>$O(1)$</td>
+          <td>$O(\log_k n)$ 或 $O(n/k)$</td>
+          <td>可并行，但远距离依赖需要多层堆叠</td>
+      </tr>
+      <tr>
+          <td>Restricted Self-Attention</td>
+          <td>$O(r n d)$</td>
+          <td>$O(1)$</td>
+          <td>$O(n/r)$</td>
+          <td>只看局部窗口，降低长序列成本</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>Self-attention 的优势主要在于：</p>
+<ul>
+<li>并行化能力强：同一层所有位置可以同时计算。</li>
+<li>长距离依赖路径短：任意两个位置一层即可建立联系。</li>
+<li>在机器翻译常见设置下，当 <code>n &lt; d</code> 时，复杂度相比 recurrent layer 有优势。</li>
+</ul>
+<p>它的代价也很明确：标准 self-attention 对序列长度是二次复杂度 <code>O(n^2)</code>。这就是后来 Longformer、Performer、FlashAttention 等工作持续优化 attention 的原因之一。</p>
+<h2 id="11-训练设置">11. 训练设置
+</h2><p>论文的训练细节非常值得学习，因为 Transformer 的成功不只来自结构，也来自配套训练策略。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>项目</th>
+          <th>设置</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>WMT 2014 English-German</td>
+          <td>约 450 万句对，BPE，共享源/目标词表约 37K</td>
+      </tr>
+      <tr>
+          <td>WMT 2014 English-French</td>
+          <td>约 3600 万句对，word-piece 词表约 32K</td>
+      </tr>
+      <tr>
+          <td>Batching</td>
+          <td>按近似序列长度分 batch，每个 batch 约 25K source tokens 和 25K target tokens</td>
+      </tr>
+      <tr>
+          <td>硬件</td>
+          <td>8 张 NVIDIA P100 GPU</td>
+      </tr>
+      <tr>
+          <td>Base 训练</td>
+          <td>100K steps，约 12 小时</td>
+      </tr>
+      <tr>
+          <td>Big 训练</td>
+          <td>300K steps，约 3.5 天</td>
+      </tr>
+      <tr>
+          <td>Optimizer</td>
+          <td>Adam</td>
+      </tr>
+      <tr>
+          <td>Adam 参数</td>
+          <td>$\beta_1 = 0.9$，$\beta_2 = 0.98$，$\epsilon = 10^{-9}$</td>
+      </tr>
+      <tr>
+          <td>Warmup</td>
+          <td>4000 steps</td>
+      </tr>
+      <tr>
+          <td>Dropout</td>
+          <td>base 模型使用 0.1</td>
+      </tr>
+      <tr>
+          <td>Label smoothing</td>
+          <td>$\epsilon_{ls} = 0.1$</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>训练阶段可以用下面的流程理解：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">parallel corpus
+</span></span><span class="line"><span class="cl">    │
+</span></span><span class="line"><span class="cl">    ▼
+</span></span><span class="line"><span class="cl">BPE / word-piece tokenization
+</span></span><span class="line"><span class="cl">    │
+</span></span><span class="line"><span class="cl">    ▼
+</span></span><span class="line"><span class="cl">source tokens + target tokens shifted right
+</span></span><span class="line"><span class="cl">    │
+</span></span><span class="line"><span class="cl">    ▼
+</span></span><span class="line"><span class="cl">Transformer forward
+</span></span><span class="line"><span class="cl">    │
+</span></span><span class="line"><span class="cl">    ▼
+</span></span><span class="line"><span class="cl">token logits
+</span></span><span class="line"><span class="cl">    │
+</span></span><span class="line"><span class="cl">    ▼
+</span></span><span class="line"><span class="cl">cross entropy with label smoothing
+</span></span><span class="line"><span class="cl">    │
+</span></span><span class="line"><span class="cl">    ▼
+</span></span><span class="line"><span class="cl">Adam optimizer
+</span></span><span class="line"><span class="cl">    │
+</span></span><span class="line"><span class="cl">    ▼
+</span></span><span class="line"><span class="cl">learning rate schedule
+</span></span><span class="line"><span class="cl">warmup first, inverse sqrt decay later
+</span></span><span class="line"><span class="cl">    │
+</span></span><span class="line"><span class="cl">    ▼
+</span></span><span class="line"><span class="cl">update parameters
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="111-learning-rate-schedule">11.1 Learning Rate Schedule
+</h3><p>论文使用的学习率公式是：</p>
+$$
+lrate = d_{model}^{-0.5} \cdot \min(step\_num^{-0.5}, step\_num \cdot warmup\_steps^{-1.5})
+$$<p>直观理解：</p>
+<ul>
+<li>训练初期，学习率从很小开始线性升高。</li>
+<li>经过 warmup steps 后，学习率按 step 的平方根倒数衰减。</li>
+</ul>
+<p>warmup 的作用是让训练初期更稳定。模型刚初始化时，参数和激活分布都还不稳定，如果一开始学习率太大，容易导致训练震荡甚至发散。warmup 相当于先低速启动，等模型进入较稳定区域后再逐步提高学习率。</p>
+<h3 id="112-label-smoothing">11.2 Label Smoothing
+</h3><p>普通交叉熵会把正确类别当成概率 1，其他类别概率 0。Label smoothing 会把目标分布稍微“软化”，例如正确类别不是 1，而是 0.9，剩下的概率分给其他类别。</p>
+<p>这会让模型不要过度自信。论文中提到它会让 perplexity 变差一些，但能提升 accuracy 和 BLEU。</p>
+<h2 id="12-实验结果">12. 实验结果
+</h2><h3 id="121-wmt-2014-english-to-german">12.1 WMT 2014 English-to-German
+</h3><p>Transformer big 在 WMT 2014 English-to-German newstest2014 上达到 <code>28.4 BLEU</code>，超过此前强模型和集成模型。Base 模型也达到 <code>27.3 BLEU</code>。</p>
+<h3 id="122-wmt-2014-english-to-french">12.2 WMT 2014 English-to-French
+</h3><p>Transformer big 在 WMT 2014 English-to-French newstest2014 上达到 <code>41.8 BLEU</code>，训练成本显著低于此前文献中的强模型。Base 模型结果为 <code>38.1 BLEU</code>。</p>
+<h3 id="123-english-constituency-parsing">12.3 English Constituency Parsing
+</h3><p>论文还在 English constituency parsing 上验证 Transformer 的泛化能力。</p>
+<p>结果包括：</p>
+<ul>
+<li>WSJ only setting 下，4-layer Transformer 达到 <code>91.3 F1</code>。</li>
+<li>Semi-supervised setting 下，4-layer Transformer 达到 <code>92.7 F1</code>。</li>
+</ul>
+<p>这说明 Transformer 不只是机器翻译模型，也可以迁移到其他结构化序列输出任务。</p>
+<h3 id="124-结果总结">12.4 结果总结
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>任务</th>
+          <th>模型</th>
+          <th>指标</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>WMT 2014 EN-DE</td>
+          <td>Transformer base</td>
+          <td>27.3 BLEU</td>
+      </tr>
+      <tr>
+          <td>WMT 2014 EN-DE</td>
+          <td>Transformer big</td>
+          <td>28.4 BLEU</td>
+      </tr>
+      <tr>
+          <td>WMT 2014 EN-FR</td>
+          <td>Transformer base</td>
+          <td>38.1 BLEU</td>
+      </tr>
+      <tr>
+          <td>WMT 2014 EN-FR</td>
+          <td>Transformer big</td>
+          <td>41.8 BLEU</td>
+      </tr>
+      <tr>
+          <td>WSJ Constituency Parsing</td>
+          <td>Transformer 4 layers, WSJ only</td>
+          <td>91.3 F1</td>
+      </tr>
+      <tr>
+          <td>WSJ Constituency Parsing</td>
+          <td>Transformer 4 layers, semi-supervised</td>
+          <td>92.7 F1</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>Transformer 相比已有模型的优势：</p>
+<ul>
+<li>BLEU 更高。</li>
+<li>训练成本更低。</li>
+<li>更适合并行化。</li>
+<li>长距离依赖路径更短。</li>
+</ul>
+<h2 id="13-论文的关键贡献">13. 论文的关键贡献
+</h2><ul>
+<li>提出完全基于 attention 的序列转导架构 Transformer。</li>
+<li>用 self-attention 替代 recurrence 和 convolution 作为主体依赖建模机制。</li>
+<li>系统化使用 multi-head attention，让模型在不同表示子空间中并行捕获关系。</li>
+<li>在 encoder-decoder 架构中明确区分 encoder self-attention、decoder masked self-attention 和 encoder-decoder attention。</li>
+<li>使用 sinusoidal positional encoding 向无序的 attention 结构注入位置信息。</li>
+<li>在 WMT 2014 机器翻译任务中取得更高 BLEU 和更低训练成本。</li>
+<li>展示了 attention-only 架构在 constituency parsing 上的迁移潜力。</li>
+<li>奠定了 BERT、GPT、T5、Vision Transformer 以及现代大语言模型的架构基础。</li>
+</ul>
+<h2 id="14-学习这篇论文需要重点掌握什么">14. 学习这篇论文需要重点掌握什么？
+</h2><h3 id="141-必须掌握">14.1 必须掌握
+</h3><ul>
+<li>Self-Attention</li>
+<li>Scaled Dot-Product Attention</li>
+<li>Multi-Head Attention</li>
+<li>Encoder-Decoder Architecture</li>
+<li>Masked Attention</li>
+<li>Positional Encoding</li>
+</ul>
+<p>这些概念构成 Transformer 的主干。如果不能解释它们的输入输出、张量形状和作用，就还没有真正理解这篇论文。</p>
+<h3 id="142-建议掌握">14.2 建议掌握
+</h3><ul>
+<li>Residual Connection</li>
+<li>Layer Normalization</li>
+<li>Label Smoothing</li>
+<li>Learning Rate Warmup</li>
+<li>BLEU</li>
+</ul>
+<p>这些不是 Transformer 独有，但对模型稳定训练和实验结果很重要。</p>
+<h3 id="143-可以延伸">14.3 可以延伸
+</h3><ul>
+<li>BERT</li>
+<li>GPT</li>
+<li>T5</li>
+<li>Vision Transformer</li>
+<li>FlashAttention</li>
+<li>Rotary Position Embedding</li>
+<li>KV Cache</li>
+</ul>
+<p>这些后续工作大多是在 Transformer 基础上针对预训练目标、架构方向、位置建模或推理效率做改造。</p>
+<h2 id="15-从代码实现角度理解-transformer">15. 从代码实现角度理解 Transformer
+</h2><p>下面用 PyTorch 风格伪代码解释核心模块。代码是简化版，不追求完整可运行，重点是张量流动。</p>
+<h3 id="151-scaleddotproductattention">15.1 ScaledDotProductAttention
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span><span class="lnt">28
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">math</span>
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">torch</span>
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">torch.nn</span> <span class="k">as</span> <span class="nn">nn</span>
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">torch.nn.functional</span> <span class="k">as</span> <span class="nn">F</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">ScaledDotProductAttention</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">mask</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;&#34;&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s2">        Q: [batch_size, num_heads, q_len, d_k]
+</span></span></span><span class="line"><span class="cl"><span class="s2">        K: [batch_size, num_heads, k_len, d_k]
+</span></span></span><span class="line"><span class="cl"><span class="s2">        V: [batch_size, num_heads, v_len, d_v]
+</span></span></span><span class="line"><span class="cl"><span class="s2">        mask: [batch_size, 1, q_len, k_len] or None
+</span></span></span><span class="line"><span class="cl"><span class="s2">        &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">        <span class="n">d_k</span> <span class="o">=</span> <span class="n">Q</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="c1"># scores: [batch_size, num_heads, q_len, k_len]</span>
+</span></span><span class="line"><span class="cl">        <span class="n">scores</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">matmul</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">))</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">d_k</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="n">mask</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">            <span class="n">scores</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="n">mask</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&#34;-inf&#34;</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="c1"># attn: [batch_size, num_heads, q_len, k_len]</span>
+</span></span><span class="line"><span class="cl">        <span class="n">attn</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="c1"># output: [batch_size, num_heads, q_len, d_v]</span>
+</span></span><span class="line"><span class="cl">        <span class="n">output</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">matmul</span><span class="p">(</span><span class="n">attn</span><span class="p">,</span> <span class="n">V</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="n">output</span><span class="p">,</span> <span class="n">attn</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>关键点：</p>
+<ul>
+<li><code>QK^T</code> 产生 attention scores。</li>
+<li>mask 通常在 softmax 前应用。</li>
+<li>softmax 后乘以 <code>V</code>，得到加权聚合结果。</li>
+</ul>
+<h3 id="152-multiheadattention">15.2 MultiHeadAttention
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span><span class="lnt">28
+</span><span class="lnt">29
+</span><span class="lnt">30
+</span><span class="lnt">31
+</span><span class="lnt">32
+</span><span class="lnt">33
+</span><span class="lnt">34
+</span><span class="lnt">35
+</span><span class="lnt">36
+</span><span class="lnt">37
+</span><span class="lnt">38
+</span><span class="lnt">39
+</span><span class="lnt">40
+</span><span class="lnt">41
+</span><span class="lnt">42
+</span><span class="lnt">43
+</span><span class="lnt">44
+</span><span class="lnt">45
+</span><span class="lnt">46
+</span><span class="lnt">47
+</span><span class="lnt">48
+</span><span class="lnt">49
+</span><span class="lnt">50
+</span><span class="lnt">51
+</span><span class="lnt">52
+</span><span class="lnt">53
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">MultiHeadAttention</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">num_heads</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">        <span class="k">assert</span> <span class="n">d_model</span> <span class="o">%</span> <span class="n">num_heads</span> <span class="o">==</span> <span class="mi">0</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">d_model</span> <span class="o">=</span> <span class="n">d_model</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">num_heads</span> <span class="o">=</span> <span class="n">num_heads</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">d_k</span> <span class="o">=</span> <span class="n">d_model</span> <span class="o">//</span> <span class="n">num_heads</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">W_q</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">W_k</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">W_v</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">W_o</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">attention</span> <span class="o">=</span> <span class="n">ScaledDotProductAttention</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">split_heads</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;&#34;&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s2">        x: [batch_size, seq_len, d_model]
+</span></span></span><span class="line"><span class="cl"><span class="s2">        return: [batch_size, num_heads, seq_len, d_k]
+</span></span></span><span class="line"><span class="cl"><span class="s2">        &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">        <span class="n">batch_size</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">size</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">batch_size</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_heads</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">d_k</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">combine_heads</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;&#34;&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s2">        x: [batch_size, num_heads, seq_len, d_k]
+</span></span></span><span class="line"><span class="cl"><span class="s2">        return: [batch_size, seq_len, d_model]
+</span></span></span><span class="line"><span class="cl"><span class="s2">        &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">        <span class="n">batch_size</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">size</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">batch_size</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">d_model</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">query</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">mask</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;&#34;&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s2">        query: [batch_size, q_len, d_model]
+</span></span></span><span class="line"><span class="cl"><span class="s2">        key:   [batch_size, k_len, d_model]
+</span></span></span><span class="line"><span class="cl"><span class="s2">        value: [batch_size, v_len, d_model]
+</span></span></span><span class="line"><span class="cl"><span class="s2">        &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">        <span class="n">Q</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">split_heads</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">W_q</span><span class="p">(</span><span class="n">query</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">        <span class="n">K</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">split_heads</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">W_k</span><span class="p">(</span><span class="n">key</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">        <span class="n">V</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">split_heads</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">W_v</span><span class="p">(</span><span class="n">value</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="c1"># context: [batch_size, num_heads, q_len, d_k]</span>
+</span></span><span class="line"><span class="cl">        <span class="n">context</span><span class="p">,</span> <span class="n">attn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">attention</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">mask</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="c1"># context: [batch_size, q_len, d_model]</span>
+</span></span><span class="line"><span class="cl">        <span class="n">context</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">combine_heads</span><span class="p">(</span><span class="n">context</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="c1"># output: [batch_size, q_len, d_model]</span>
+</span></span><span class="line"><span class="cl">        <span class="n">output</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_o</span><span class="p">(</span><span class="n">context</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="n">output</span><span class="p">,</span> <span class="n">attn</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>工程上最容易出错的是 shape 变换。多头注意力通常要在 <code>[batch_size, seq_len, d_model]</code> 和 <code>[batch_size, num_heads, seq_len, d_k]</code> 之间切换。</p>
+<h3 id="153-positionwisefeedforward">15.3 PositionwiseFeedForward
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">PositionwiseFeedForward</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">d_ff</span><span class="p">,</span> <span class="n">dropout</span><span class="o">=</span><span class="mf">0.1</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">fc1</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_ff</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">fc2</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">d_ff</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="n">dropout</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;&#34;&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s2">        x: [batch_size, seq_len, d_model]
+</span></span></span><span class="line"><span class="cl"><span class="s2">        &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">fc1</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>       <span class="c1"># [batch_size, seq_len, d_ff]</span>
+</span></span><span class="line"><span class="cl">        <span class="n">x</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">relu</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">fc2</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>       <span class="c1"># [batch_size, seq_len, d_model]</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="n">x</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>FFN 不改变序列长度，也不混合不同位置的信息。它只对每个 token 的向量表示做非线性变换。</p>
+<h3 id="154-positionalencoding">15.4 PositionalEncoding
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">PositionalEncoding</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">max_len</span><span class="o">=</span><span class="mi">5000</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="c1"># pe: [max_len, d_model]</span>
+</span></span><span class="line"><span class="cl">        <span class="n">pe</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">max_len</span><span class="p">,</span> <span class="n">d_model</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="n">position</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">max_len</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="n">div_term</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">            <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">            <span class="o">*</span> <span class="p">(</span><span class="o">-</span><span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="mf">10000.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">d_model</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="n">pe</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">::</span><span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">position</span> <span class="o">*</span> <span class="n">div_term</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="n">pe</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">::</span><span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">position</span> <span class="o">*</span> <span class="n">div_term</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="c1"># pe: [1, max_len, d_model]</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">register_buffer</span><span class="p">(</span><span class="s2">&#34;pe&#34;</span><span class="p">,</span> <span class="n">pe</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;&#34;&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s2">        x: [batch_size, seq_len, d_model]
+</span></span></span><span class="line"><span class="cl"><span class="s2">        &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">        <span class="n">seq_len</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">pe</span><span class="p">[:,</span> <span class="p">:</span><span class="n">seq_len</span><span class="p">,</span> <span class="p">:]</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>register_buffer</code> 表示 <code>pe</code> 不是可训练参数，但会跟随模型保存和迁移设备。</p>
+<h3 id="155-encoderlayer">15.5 EncoderLayer
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">EncoderLayer</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">num_heads</span><span class="p">,</span> <span class="n">d_ff</span><span class="p">,</span> <span class="n">dropout</span><span class="o">=</span><span class="mf">0.1</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">self_attn</span> <span class="o">=</span> <span class="n">MultiHeadAttention</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">num_heads</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">ffn</span> <span class="o">=</span> <span class="n">PositionwiseFeedForward</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_ff</span><span class="p">,</span> <span class="n">dropout</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">norm1</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">norm2</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="n">dropout</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">src_mask</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;&#34;&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s2">        x: [batch_size, src_len, d_model]
+</span></span></span><span class="line"><span class="cl"><span class="s2">        src_mask: padding mask
+</span></span></span><span class="line"><span class="cl"><span class="s2">        &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">        <span class="n">attn_out</span><span class="p">,</span> <span class="n">attn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">self_attn</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">src_mask</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">norm1</span><span class="p">(</span><span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span><span class="p">(</span><span class="n">attn_out</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="n">ffn_out</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">ffn</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">norm2</span><span class="p">(</span><span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span><span class="p">(</span><span class="n">ffn_out</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="n">x</span><span class="p">,</span> <span class="n">attn</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里的 <code>self_attn(x, x, x)</code> 表示 Q、K、V 都来自同一个序列。</p>
+<h3 id="156-decoderlayer">15.6 DecoderLayer
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span><span class="lnt">28
+</span><span class="lnt">29
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">DecoderLayer</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">d_model</span><span class="p">,</span> <span class="n">num_heads</span><span class="p">,</span> <span class="n">d_ff</span><span class="p">,</span> <span class="n">dropout</span><span class="o">=</span><span class="mf">0.1</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">self_attn</span> <span class="o">=</span> <span class="n">MultiHeadAttention</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">num_heads</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">cross_attn</span> <span class="o">=</span> <span class="n">MultiHeadAttention</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">num_heads</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">ffn</span> <span class="o">=</span> <span class="n">PositionwiseFeedForward</span><span class="p">(</span><span class="n">d_model</span><span class="p">,</span> <span class="n">d_ff</span><span class="p">,</span> <span class="n">dropout</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">norm1</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">norm2</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">norm3</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LayerNorm</span><span class="p">(</span><span class="n">d_model</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="n">dropout</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">memory</span><span class="p">,</span> <span class="n">tgt_mask</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">src_mask</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;&#34;&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s2">        x: [batch_size, tgt_len, d_model]
+</span></span></span><span class="line"><span class="cl"><span class="s2">        memory: [batch_size, src_len, d_model], encoder output
+</span></span></span><span class="line"><span class="cl"><span class="s2">        tgt_mask: causal mask + target padding mask
+</span></span></span><span class="line"><span class="cl"><span class="s2">        src_mask: source padding mask
+</span></span></span><span class="line"><span class="cl"><span class="s2">        &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">        <span class="n">self_attn_out</span><span class="p">,</span> <span class="n">self_attn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">self_attn</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">tgt_mask</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">norm1</span><span class="p">(</span><span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span><span class="p">(</span><span class="n">self_attn_out</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="c1"># Q comes from decoder, K/V come from encoder memory.</span>
+</span></span><span class="line"><span class="cl">        <span class="n">cross_attn_out</span><span class="p">,</span> <span class="n">cross_attn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cross_attn</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">memory</span><span class="p">,</span> <span class="n">memory</span><span class="p">,</span> <span class="n">src_mask</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">norm2</span><span class="p">(</span><span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span><span class="p">(</span><span class="n">cross_attn_out</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="n">ffn_out</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">ffn</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">norm3</span><span class="p">(</span><span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span><span class="p">(</span><span class="n">ffn_out</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="n">x</span><span class="p">,</span> <span class="n">self_attn</span><span class="p">,</span> <span class="n">cross_attn</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>Decoder layer 的核心差异在于有两类 attention：</p>
+<ul>
+<li>self-attention：看目标端已生成前缀。</li>
+<li>cross-attention：看源端 encoder 输出。</li>
+</ul>
+<h3 id="157-causal-mask-示例">15.7 Causal Mask 示例
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">make_causal_mask</span><span class="p">(</span><span class="n">seq_len</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s2">    return: [1, 1, seq_len, seq_len]
+</span></span></span><span class="line"><span class="cl"><span class="s2">    位置 i 只能看 &lt;= i 的位置。
+</span></span></span><span class="line"><span class="cl"><span class="s2">    &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tril</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">seq_len</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">mask</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>对于 <code>seq_len = 4</code>，mask 是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1 0 0 0
+</span></span><span class="line"><span class="cl">1 1 0 0
+</span></span><span class="line"><span class="cl">1 1 1 0
+</span></span><span class="line"><span class="cl">1 1 1 1
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这保证第 1 个位置看不到第 2、3、4 个位置。</p>
+<h2 id="16-常见误区">16. 常见误区
+</h2><h3 id="161-attention-不是简单的权重可视化">16.1 Attention 不是简单的“权重可视化”
+</h3><p>Attention weight 可以帮助理解模型关注了哪些位置，但它不是严格的人类解释。模型真正的表示还经过 value 聚合、残差、FFN、多层叠加等处理。</p>
+<h3 id="162-self-attention-并不天然知道顺序">16.2 Self-Attention 并不天然知道顺序
+</h3><p>Self-attention 如果没有位置编码，对 token 顺序不敏感。位置编码不是装饰，而是 Transformer 能处理序列顺序的必要组件。</p>
+<h3 id="163-multi-head-不是简单重复多个-attention">16.3 Multi-head 不是简单重复多个 attention
+</h3><p>不同 head 有不同的线性投影参数，它们在不同子空间计算 attention。它不是把同一个 attention 复制多份，而是让模型学习多种关系视角。</p>
+<h3 id="164-decoder-mask-不是-padding-mask">16.4 Decoder mask 不是 padding mask
+</h3><p>Decoder causal mask 用来屏蔽未来 token，保证自回归生成。</p>
+<p>Padding mask 用来屏蔽 padding token，避免模型关注无效位置。</p>
+<p>二者目的不同，但在实现中经常会组合使用。</p>
+<h3 id="165-transformer-原论文主要验证的是机器翻译任务">16.5 Transformer 原论文主要验证的是机器翻译任务
+</h3><p>今天提到 Transformer，很多人会直接联想到大语言模型预训练。但原论文主要实验对象是机器翻译和 constituency parsing，不是 GPT 式大规模自回归预训练。</p>
+<h3 id="166-原始-transformer-和现代-gptbert-架构有差异">16.6 原始 Transformer 和现代 GPT/BERT 架构有差异
+</h3><p>原始 Transformer 是 encoder-decoder。</p>
+<ul>
+<li>BERT 主要使用 encoder-only 架构。</li>
+<li>GPT 主要使用 decoder-only 架构。</li>
+<li>T5 延续 encoder-decoder 思路，但使用文本到文本预训练范式。</li>
+</ul>
+<p>现代 LLM 还常使用 RoPE、RMSNorm、SwiGLU、KV Cache、FlashAttention 等改进，这些都不是原论文中的设计。</p>
+<h2 id="17-读完这篇论文后的学习路线">17. 读完这篇论文后的学习路线
+</h2><ol>
+<li>手写 Scaled Dot-Product Attention，重点检查 <code>QK^T</code>、mask、softmax、乘 <code>V</code> 的 shape。</li>
+<li>手写 Multi-Head Attention，重点理解 split heads 和 concat heads。</li>
+<li>实现一个 mini Transformer encoder，在小文本分类任务上跑通。</li>
+<li>阅读 BERT 论文，理解 encoder-only Transformer 和 masked language modeling。</li>
+<li>阅读 GPT 系列相关资料，理解 decoder-only Transformer 和 causal language modeling。</li>
+<li>学习现代 LLM 中的改进，如 RoPE、RMSNorm、SwiGLU、KV Cache、FlashAttention。</li>
+</ol>
+<p>如果目标是写代码，建议不要一开始就实现完整 Transformer。更好的路径是：</p>
+<ol>
+<li>先实现 attention 单元测试。</li>
+<li>再实现 multi-head attention。</li>
+<li>再拼 encoder layer。</li>
+<li>最后堆叠成完整模型。</li>
+</ol>
+<p>这样每一步都能用 shape 和数值测试验证，不容易在复杂模型里迷失。</p>
+<h2 id="18-总结">18. 总结
+</h2><p>《Attention Is All You Need》的历史意义在于，它重新定义了序列建模的核心算子。</p>
+<p>在它之前，attention 更多是 RNN/CNN seq2seq 模型中的增强模块；在它之后，attention 成为模型架构的主体。Transformer 把序列建模变成了高度并行的矩阵计算，把长距离依赖压缩到极短路径，并用 multi-head attention 提升了表达能力。</p>
+<p>从今天看，Transformer 不只是一个机器翻译模型，而是现代大语言模型、视觉 Transformer、多模态模型的共同基础。学习这篇论文，最重要的不是记住每个 BLEU 数字，而是理解一个更深层的架构思想：</p>
+<blockquote>
+<p>当模型可以通过 attention 直接、并行、可学习地建立任意位置之间的联系时，序列建模的主要瓶颈就从“如何逐步传递信息”转向了“如何高效组织和扩展注意力计算”。</p></blockquote>
+<p>这也是为什么 Transformer 至今仍然是 AI 工程中最值得反复精读和手写实现的架构之一。</p>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/transformer/">Transformer</a>
+        
+            <a href="/tags/attention/">Attention</a>
+        
+            <a href="/tags/self-attention/">Self-Attention</a>
+        
+            <a href="/tags/nlp/">NLP</a>
+        
+            <a href="/tags/deep-learning/">Deep Learning</a>
+        
+            <a href="/tags/paper-reading/">Paper Reading</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>
