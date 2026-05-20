@@ -337,10 +337,42 @@
 
   <ol>
     <li><a href="#121-为什么-agent-的成本容易失控">12.1 为什么 Agent 的成本容易失控</a></li>
-    <li><a href="#122-prompt-caching">12.2 Prompt Caching</a></li>
-    <li><a href="#123-语义缓存">12.3 语义缓存</a></li>
-    <li><a href="#124-多模型成本优化">12.4 多模型成本优化</a></li>
-    <li><a href="#125-成本监控">12.5 成本监控</a></li>
+    <li><a href="#122-缓存的分类与层级">12.2 缓存的分类与层级</a></li>
+    <li><a href="#123-应用层缓存langchain-cache">12.3 应用层缓存：LangChain Cache</a>
+      <ol>
+        <li><a href="#原理">原理</a></li>
+        <li><a href="#缓存-key-如何计算">缓存 Key 如何计算</a></li>
+        <li><a href="#内置缓存实现">内置缓存实现</a></li>
+        <li><a href="#单模型缓存-vs-全局缓存">单模型缓存 vs 全局缓存</a></li>
+        <li><a href="#应用层缓存的局限性">应用层缓存的局限性</a></li>
+        <li><a href="#为什么精确匹配是合理的默认策略">为什么精确匹配是合理的默认策略</a></li>
+        <li><a href="#精确缓存真正适合的场景">精确缓存真正适合的场景</a></li>
+      </ol>
+    </li>
+    <li><a href="#124-provider-层缓存prompt-caching">12.4 Provider 层缓存：Prompt Caching</a>
+      <ol>
+        <li><a href="#从-transformer-推理过程理解-prompt-cache">从 Transformer 推理过程理解 Prompt Cache</a></li>
+        <li><a href="#kv-cache-的三个层级">KV Cache 的三个层级</a></li>
+        <li><a href="#缓存命中的判定过程">缓存命中的判定过程</a></li>
+        <li><a href="#为什么有最低长度要求-1024-tokens">为什么有最低长度要求（≥ 1024 tokens）</a></li>
+        <li><a href="#为什么有-ttl约-5-分钟过期">为什么有 TTL（约 5 分钟过期）</a></li>
+        <li><a href="#原理小结">原理小结</a></li>
+        <li><a href="#anthropic-prompt-caching-实践">Anthropic Prompt Caching 实践</a></li>
+        <li><a href="#openai-prompt-caching">OpenAI Prompt Caching</a></li>
+        <li><a href="#agent-中如何最大化-prompt-cache-命中率">Agent 中如何最大化 Prompt Cache 命中率</a></li>
+      </ol>
+    </li>
+    <li><a href="#125-语义缓存">12.5 语义缓存</a>
+      <ol>
+        <li><a href="#精确缓存-vs-语义缓存">精确缓存 vs 语义缓存</a></li>
+        <li><a href="#语义缓存实现原理">语义缓存实现原理</a></li>
+        <li><a href="#langchain-语义缓存实现">LangChain 语义缓存实现</a></li>
+        <li><a href="#语义缓存的风险和使用边界">语义缓存的风险和使用边界</a></li>
+      </ol>
+    </li>
+    <li><a href="#126-三种缓存的对比和选择">12.6 三种缓存的对比和选择</a></li>
+    <li><a href="#127-多模型成本优化">12.7 多模型成本优化</a></li>
+    <li><a href="#128-成本监控">12.8 成本监控</a></li>
   </ol>
 
   <ol>
@@ -2998,10 +3030,757 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>对于高并发 Agent 服务，这个成本会快速累积。</p>
-<h2 id="122-prompt-caching">12.2 Prompt Caching
-</h2><p>Anthropic 和 OpenAI 都提供了 prompt caching 能力，可以把重复的 prefix（system prompt + 工具定义）缓存起来，后续请求命中缓存时大幅降低成本和延迟。</p>
-<p><strong>Anthropic prompt caching</strong>：</p>
+<h2 id="122-缓存的分类与层级">12.2 缓存的分类与层级
+</h2><p>Agent 中的缓存分为两个完全不同的层级：</p>
 <div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">┌─────────────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│  应用层缓存（LangChain Cache / 自建缓存）             │
+</span></span><span class="line"><span class="cl">│  位置：你的代码里                                     │
+</span></span><span class="line"><span class="cl">│  原理：相同输入 → 跳过 API 调用 → 直接返回缓存结果     │
+</span></span><span class="line"><span class="cl">│  省的是：整个 API 调用的费用和延迟                     │
+</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────┘
+</span></span><span class="line"><span class="cl">                        ↓ 如果未命中
+</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│  Provider 层缓存（Anthropic / OpenAI Prompt Caching） │
+</span></span><span class="line"><span class="cl">│  位置：模型厂商的服务端                               │
+</span></span><span class="line"><span class="cl">│  原理：相同前缀 → 复用已计算的 KV Cache → 省处理时间   │
+</span></span><span class="line"><span class="cl">│  省的是：重复前缀的 token 处理费用（不是跳过整个调用）  │
+</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>两者可以同时使用，互不冲突。</p>
+<h2 id="123-应用层缓存langchain-cache">12.3 应用层缓存：LangChain Cache
+</h2><h3 id="原理">原理
+</h3><p>LangChain 内置了一套 LLM Cache 机制，在 <code>_generate_with_cache</code> 中实现。核心逻辑：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">invoke 调用进入
+</span></span><span class="line"><span class="cl">  → 检查是否启用缓存（self.cache != False）
+</span></span><span class="line"><span class="cl">  → 计算缓存 key：(prompt, llm_string)
+</span></span><span class="line"><span class="cl">  → 查询缓存：cache.lookup(prompt, llm_string)
+</span></span><span class="line"><span class="cl">  → 命中：直接返回缓存的 Generation
+</span></span><span class="line"><span class="cl">  → 未命中：调用 _generate() 请求 API → 存入缓存 → 返回结果
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="缓存-key-如何计算">缓存 Key 如何计算
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># langchain_core/language_models/chat_models.py 简化</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">_generate_with_cache</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">messages</span><span class="p">,</span> <span class="n">stop</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="n">llm_cache</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cache</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cache</span><span class="p">,</span> <span class="n">BaseCache</span><span class="p">)</span> <span class="k">else</span> <span class="n">get_llm_cache</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># key 的两部分：</span>
+</span></span><span class="line"><span class="cl">    <span class="c1"># 1. llm_string：模型配置的序列化（模型名 + temperature + stop + 其他参数）</span>
+</span></span><span class="line"><span class="cl">    <span class="n">llm_string</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_llm_string</span><span class="p">(</span><span class="n">stop</span><span class="o">=</span><span class="n">stop</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># 2. prompt：消息列表的序列化（去掉 message id 后做 JSON dumps）</span>
+</span></span><span class="line"><span class="cl">    <span class="n">normalized_messages</span> <span class="o">=</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">        <span class="n">msg</span><span class="o">.</span><span class="n">model_copy</span><span class="p">(</span><span class="n">update</span><span class="o">=</span><span class="p">{</span><span class="err">“</span><span class="nb">id</span><span class="err">”</span><span class="p">:</span> <span class="kc">None</span><span class="p">})</span> <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">messages</span>
+</span></span><span class="line"><span class="cl">    <span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">prompt</span> <span class="o">=</span> <span class="n">dumps</span><span class="p">(</span><span class="n">normalized_messages</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># 用 (prompt, llm_string) 作为 key 查询缓存</span>
+</span></span><span class="line"><span class="cl">    <span class="n">cache_val</span> <span class="o">=</span> <span class="n">llm_cache</span><span class="o">.</span><span class="n">lookup</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">llm_string</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="n">cache_val</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="n">ChatResult</span><span class="p">(</span><span class="n">generations</span><span class="o">=</span><span class="n">cache_val</span><span class="p">)</span>  <span class="c1"># 缓存命中，跳过 API</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># 缓存未命中，调用模型</span>
+</span></span><span class="line"><span class="cl">    <span class="n">result</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_generate</span><span class="p">(</span><span class="n">messages</span><span class="p">,</span> <span class="n">stop</span><span class="o">=</span><span class="n">stop</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># 存入缓存</span>
+</span></span><span class="line"><span class="cl">    <span class="n">llm_cache</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">llm_string</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">generations</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">result</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>缓存命中条件</strong>（必须同时满足）：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>条件</th>
+          <th>含义</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>messages 完全相同</td>
+          <td>消息内容、角色、顺序完全一致（去掉 id 后比较）</td>
+      </tr>
+      <tr>
+          <td>模型配置完全相同</td>
+          <td>model name + temperature + stop + 其他参数都一样</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>只要有一个字符不同，就是 cache miss。</p>
+<h3 id="内置缓存实现">内置缓存实现
+</h3><p><strong>InMemoryCache</strong>（进程内字典，适合开发调试）：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_core.caches</span> <span class="kn">import</span> <span class="n">InMemoryCache</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_core.globals</span> <span class="kn">import</span> <span class="n">set_llm_cache</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 全局设置缓存</span>
+</span></span><span class="line"><span class="cl"><span class="n">set_llm_cache</span><span class="p">(</span><span class="n">InMemoryCache</span><span class="p">(</span><span class="n">maxsize</span><span class="o">=</span><span class="mi">1000</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">model</span> <span class="o">=</span> <span class="n">init_chat_model</span><span class="p">(</span><span class="err">“</span><span class="n">openai</span><span class="p">:</span><span class="n">gpt</span><span class="o">-</span><span class="mf">4.1</span><span class="o">-</span><span class="n">mini</span><span class="err">”</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 第一次调用：请求 API，结果存入缓存</span>
+</span></span><span class="line"><span class="cl"><span class="n">r1</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="err">“</span><span class="n">什么是Agent</span><span class="err">？”</span><span class="p">)</span>  <span class="c1"># ~500ms</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 第二次相同调用：命中缓存，不请求 API</span>
+</span></span><span class="line"><span class="cl"><span class="n">r2</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="err">“</span><span class="n">什么是Agent</span><span class="err">？”</span><span class="p">)</span>  <span class="c1"># ~1ms</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># r1.content == r2.content</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>源码实现（极其简单）：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># langchain_core/caches.py</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">InMemoryCache</span><span class="p">(</span><span class="n">BaseCache</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">maxsize</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="nb">list</span><span class="p">[</span><span class="n">Generation</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">_maxsize</span> <span class="o">=</span> <span class="n">maxsize</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">lookup</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prompt</span><span class="p">,</span> <span class="n">llm_string</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="o">.</span><span class="n">get</span><span class="p">((</span><span class="n">prompt</span><span class="p">,</span> <span class="n">llm_string</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">update</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prompt</span><span class="p">,</span> <span class="n">llm_string</span><span class="p">,</span> <span class="n">return_val</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_maxsize</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">)</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">_maxsize</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">            <span class="k">del</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">[</span><span class="nb">next</span><span class="p">(</span><span class="nb">iter</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">))]</span>  <span class="c1"># 淘汰最早的</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">[</span><span class="n">prompt</span><span class="p">,</span> <span class="n">llm_string</span><span class="p">]</span> <span class="o">=</span> <span class="n">return_val</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>SQLite Cache</strong>（持久化，适合单机生产）：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_community.cache</span> <span class="kn">import</span> <span class="n">SQLiteCache</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_core.globals</span> <span class="kn">import</span> <span class="n">set_llm_cache</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">set_llm_cache</span><span class="p">(</span><span class="n">SQLiteCache</span><span class="p">(</span><span class="n">database_path</span><span class="o">=</span><span class="err">”</span><span class="o">.</span><span class="n">langchain_cache</span><span class="o">.</span><span class="n">db</span><span class="err">”</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 重启进程后缓存仍然有效</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>Redis Cache</strong>（分布式，适合多实例部署）：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_community.cache</span> <span class="kn">import</span> <span class="n">RedisCache</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_core.globals</span> <span class="kn">import</span> <span class="n">set_llm_cache</span>
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">redis</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">set_llm_cache</span><span class="p">(</span><span class="n">RedisCache</span><span class="p">(</span><span class="n">redis_</span><span class="o">=</span><span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="err">”</span><span class="n">localhost</span><span class="err">”</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">6379</span><span class="p">)))</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 多个服务实例共享同一份缓存</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="单模型缓存-vs-全局缓存">单模型缓存 vs 全局缓存
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># 方式一：全局缓存（所有模型共享）</span>
+</span></span><span class="line"><span class="cl"><span class="n">set_llm_cache</span><span class="p">(</span><span class="n">InMemoryCache</span><span class="p">())</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 方式二：单模型缓存（只缓存特定模型）</span>
+</span></span><span class="line"><span class="cl"><span class="n">model</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="err">”</span><span class="n">gpt</span><span class="o">-</span><span class="mf">4.1</span><span class="o">-</span><span class="n">mini</span><span class="err">”</span><span class="p">,</span> <span class="n">cache</span><span class="o">=</span><span class="n">InMemoryCache</span><span class="p">())</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 其他模型不受影响</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 方式三：禁用缓存（即使全局开启了）</span>
+</span></span><span class="line"><span class="cl"><span class="n">model</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="err">”</span><span class="n">gpt</span><span class="o">-</span><span class="mf">4.1</span><span class="o">-</span><span class="n">mini</span><span class="err">”</span><span class="p">,</span> <span class="n">cache</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="应用层缓存的局限性">应用层缓存的局限性
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>局限</th>
+          <th>原因</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>只能精确匹配</td>
+          <td>“什么是Agent” 和 “什么是 Agent”（多一个空格）就不命中</td>
+      </tr>
+      <tr>
+          <td>temperature &gt; 0 时缓存可能不合适</td>
+          <td>同样输入本来应该有不同输出</td>
+      </tr>
+      <tr>
+          <td>多轮对话几乎不命中</td>
+          <td>历史消息不同导致 key 不同</td>
+      </tr>
+      <tr>
+          <td>工具调用场景不适合</td>
+          <td>工具结果是实时数据，缓存会返回过期信息</td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="为什么精确匹配是合理的默认策略">为什么精确匹配是合理的默认策略
+</h3><p><code>(prompt, llm_string)</code> 作为 key 意味着必须消息内容 + 模型配置完全相同才能命中。这看起来命中率很低，但这是一个<strong>保守正确</strong>的设计选择。</p>
+<p>原因：LLM 对输入极其敏感，一个字的上下文差异都可能导致完全不同的输出。看一个 Agent 多轮对话的例子：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">第一次请求：
+</span></span><span class="line"><span class="cl">  messages = [{“role”: “user”, “content”: “帮我查订单A1024”}]
+</span></span><span class="line"><span class="cl">  prompt_key = &#39;[{“role”:”user”,”content”:”帮我查订单A1024”}]&#39;
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">第二次请求（用户又问了同样的话，但带有历史上下文）：
+</span></span><span class="line"><span class="cl">  messages = [{“role”: “user”, “content”: “帮我查订单A1024”},
+</span></span><span class="line"><span class="cl">              {“role”: “assistant”, “content”: “订单已发货...”},
+</span></span><span class="line"><span class="cl">              {“role”: “user”, “content”: “帮我查订单A1024”}]
+</span></span><span class="line"><span class="cl">  prompt_key = &#39;[{“role”:”user”,...},{“role”:”assistant”,...},{“role”:”user”,...}]&#39;
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">→ key 不同，缓存未命中
+</span></span><span class="line"><span class="cl">→ 这是正确的行为：第二次带了历史上下文，模型可能回答”您刚才已经查过了”
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果用模糊匹配（如只比较最后一条消息），就可能返回错误答案。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>设计思路</th>
+          <th>优点</th>
+          <th>缺点</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>精确匹配（LangChain 默认）</td>
+          <td>零误命中风险，结果一定正确</td>
+          <td>命中率低</td>
+      </tr>
+      <tr>
+          <td>模糊匹配（只比较部分内容）</td>
+          <td>命中率高</td>
+          <td>可能返回错误答案</td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="精确缓存真正适合的场景">精确缓存真正适合的场景
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># ✓ 适合：固定 prompt 的批量处理（如数据清洗管道）</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">data_list</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="c1"># 相同 item 可能出现多次，精确缓存生效</span>
+</span></span><span class="line"><span class="cl">    <span class="n">result</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">f</span><span class="err">”</span><span class="n">提取这段文本的关键词</span><span class="err">：</span><span class="p">{</span><span class="n">item</span><span class="p">}</span><span class="err">”</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✓ 适合：开发调试（同一个问题反复测试，省钱）</span>
+</span></span><span class="line"><span class="cl"><span class="n">result</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="err">“</span><span class="n">解释什么是Agent</span><span class="err">”</span><span class="p">)</span>  <span class="c1"># 反复运行时命中缓存</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✗ 不适合：Agent 多轮对话（每轮 messages 列表都不同）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✗ 不适合：temperature &gt; 0（本来就期望不同输出）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✗ 不适合：工具调用（工具返回实时数据，缓存过期信息有害）</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>所以对 Agent 来说，<strong>Provider Prompt Cache 才是最核心的优化手段</strong>——它不要求输入完全相同，只要请求前缀相同就能生效，而 Agent 的 system prompt + 工具定义每次都是稳定的前缀。</p>
+<h2 id="124-provider-层缓存prompt-caching">12.4 Provider 层缓存：Prompt Caching
+</h2><h3 id="从-transformer-推理过程理解-prompt-cache">从 Transformer 推理过程理解 Prompt Cache
+</h3><p>要理解 Prompt Cache，需要先知道 Transformer 推理时的计算瓶颈。</p>
+<p>每次模型处理输入时，需要对所有 token 逐层计算 Key-Value 矩阵（注意力机制的核心）：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">输入：[system prompt 2000 tokens] + [工具定义 1500 tokens] + [用户问题 50 tokens]
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">正常推理过程（每层 Transformer）：
+</span></span><span class="line"><span class="cl">  对每个 token 计算 Q、K、V 向量
+</span></span><span class="line"><span class="cl">  → 3550 tokens 全部要从头计算
+</span></span><span class="line"><span class="cl">  → 每层都产生对应的 KV 矩阵，用于注意力计算
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>Agent 场景下，system prompt + 工具定义每次请求都一样，但每次都在重复计算这些固定前缀的 KV 矩阵——这就是浪费。</p>
+<h3 id="kv-cache-的三个层级">KV Cache 的三个层级
+</h3><p><strong>层级 1：Token 级 KV Cache（单次请求内，所有 LLM 自动使用）</strong></p>
+<p>Transformer 自回归生成时，生成第 N+1 个 token 不用重算前 N 个 token 的 KV：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">生成第 1 个输出 token → 计算所有输入 token 的 KV，缓存起来
+</span></span><span class="line"><span class="cl">生成第 2 个输出 token → 复用已缓存的 KV，只算新 token 的 KV
+</span></span><span class="line"><span class="cl">生成第 3 个输出 token → 同上
+</span></span><span class="line"><span class="cl">...
+</span></span><span class="line"><span class="cl">→ 这个缓存在单次请求结束后就丢弃了
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>层级 2：Prompt Cache / Prefix Cache（跨请求，Anthropic / OpenAI 提供）</strong></p>
+<p>核心思想：<strong>把层级 1 的 KV Cache 跨请求保留</strong>，下次遇到相同前缀时直接加载。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">请求 1：
+</span></span><span class="line"><span class="cl">  输入 = [system prompt] + [工具定义] + [用户问题A]
+</span></span><span class="line"><span class="cl">  计算：全部 token 的 KV 矩阵
+</span></span><span class="line"><span class="cl">  缓存：把 [system prompt + 工具定义] 的 KV 矩阵存到 GPU 显存
+</span></span><span class="line"><span class="cl">        关联一个 prefix hash 作为索引
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">请求 2（5 分钟内，相同前缀）：
+</span></span><span class="line"><span class="cl">  输入 = [system prompt] + [工具定义] + [用户问题B]
+</span></span><span class="line"><span class="cl">  检查：对前缀 token 序列做 hash → 命中缓存
+</span></span><span class="line"><span class="cl">  加载：直接从显存加载缓存的 KV 矩阵
+</span></span><span class="line"><span class="cl">  计算：只需要计算 [用户问题B] 那 50 tokens 的 KV
+</span></span><span class="line"><span class="cl">        省掉了前 3500 tokens 的全部计算
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>层级 3：应用层 Cache（你的代码里，LangChain Cache）</strong></p>
+<p>完全跳过 API 调用，和模型推理机制无关。</p>
+<h3 id="缓存命中的判定过程">缓存命中的判定过程
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">前缀匹配过程：
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">请求的 messages 序列化为 token 序列后，从第一个 token 开始逐段匹配：
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">  缓存中的 KV：[t1, t2, t3, ..., t3500]
+</span></span><span class="line"><span class="cl">  新请求 token：[t1, t2, t3, ..., t3500, t3501, t3502, ...]
+</span></span><span class="line"><span class="cl">               ├─── 完全匹配的部分 ───┤├── 只算这部分 ──┤
+</span></span><span class="line"><span class="cl">               ├─── 复用 KV Cache ────┤├── 正常计算 ───┤
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">按固定块大小对齐（OpenAI 128 tokens，Anthropic 未公开具体值）
+</span></span><span class="line"><span class="cl">匹配到的最长连续前缀 → 复用其 KV Cache
+</span></span><span class="line"><span class="cl">剩余部分 → 正常计算 KV
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>关键约束：<strong>必须从第一个 token 开始连续匹配</strong>。中间有任何不同，后续全部无法命中：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">✓ 命中：[AAAA][BBBB][新内容]     ← 前缀 AAAABBBB 连续匹配
+</span></span><span class="line"><span class="cl">✗ 不命中：[AAAA][CCCC][BBBB]     ← 第二段不同，后面的 BBBB 即使相同也无法命中
+</span></span><span class="line"><span class="cl">✗ 不命中：[时间戳][AAAA][BBBB]   ← 第一段就不同，整个前缀缓存失效
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="为什么有最低长度要求-1024-tokens">为什么有最低长度要求（≥ 1024 tokens）
+</h3><p>缓存 KV 矩阵需要占用 GPU 显存：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">单个 token 的 KV Cache 大小 ≈ 2 × num_layers × hidden_dim × sizeof(float16)
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">举例（70B 参数模型）：
+</span></span><span class="line"><span class="cl">  2 × 80 layers × 8192 dim × 2 bytes ≈ 2.6 MB / token
+</span></span><span class="line"><span class="cl">  1024 tokens ≈ 2.6 GB 的 KV Cache 数据
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">如果对所有短 prompt 都缓存 → GPU 显存很快耗尽
+</span></span><span class="line"><span class="cl">→ 设最低门槛，只缓存”够长的、值得缓存的”前缀
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="为什么有-ttl约-5-分钟过期">为什么有 TTL（约 5 分钟过期）
+</h3><p>GPU 显存有限，不可能永久保存所有用户的 KV Cache：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">厂商的淘汰策略：
+</span></span><span class="line"><span class="cl">  LRU（最近最少使用）淘汰 + TTL 过期
+</span></span><span class="line"><span class="cl">  → 高频访问的前缀：常驻缓存（每次访问都续期）
+</span></span><span class="line"><span class="cl">  → 低频访问的前缀：5 分钟无访问后被淘汰，腾出显存
+</span></span><span class="line"><span class="cl">  → 流量大时 TTL 可能更长（频繁访问不断续期）
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="原理小结">原理小结
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Prompt Cache 的本质：
+</span></span><span class="line"><span class="cl">  Transformer 推理 = 对每个 token 逐层计算 KV 矩阵 + 注意力
+</span></span><span class="line"><span class="cl">  相同前缀的 KV 矩阵每次都一样（确定性计算）
+</span></span><span class="line"><span class="cl">  → 算一次，存起来，后续直接加载
+</span></span><span class="line"><span class="cl">  → 省的是 GPU 计算时间，体现为 token 费用折扣
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="anthropic-prompt-caching-实践">Anthropic Prompt Caching 实践
+</h3><p><strong>自动缓存</strong>（推荐，最简单）：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_anthropic</span> <span class="kn">import</span> <span class="n">ChatAnthropic</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_core.messages</span> <span class="kn">import</span> <span class="n">SystemMessage</span><span class="p">,</span> <span class="n">HumanMessage</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">llm</span> <span class="o">=</span> <span class="n">ChatAnthropic</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="err">”</span><span class="n">claude</span><span class="o">-</span><span class="n">sonnet</span><span class="o">-</span><span class="mi">4</span><span class="o">-</span><span class="mi">6</span><span class="err">”</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># Anthropic 自动对 system prompt 做缓存</span>
+</span></span><span class="line"><span class="cl"><span class="n">messages</span> <span class="o">=</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="n">SystemMessage</span><span class="p">(</span><span class="n">content</span><span class="o">=</span><span class="n">LONG_SYSTEM_PROMPT</span><span class="p">),</span>  <span class="c1"># ≥1024 tokens 时自动缓存</span>
+</span></span><span class="line"><span class="cl">    <span class="n">HumanMessage</span><span class="p">(</span><span class="n">content</span><span class="o">=</span><span class="err">”</span><span class="n">查一下订单</span> <span class="n">A1024</span><span class="err">”</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl"><span class="p">]</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">response</span> <span class="o">=</span> <span class="n">llm</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">messages</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">usage_metadata</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 首次调用：</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># {&#39;input_tokens&#39;: 3550, &#39;output_tokens&#39;: 50,</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  &#39;cache_creation_input_tokens&#39;: 3500, &#39;cache_read_input_tokens&#39;: 0}</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 后续调用（5分钟内，相同前缀）：</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># {&#39;input_tokens&#39;: 50, &#39;output_tokens&#39;: 45,</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  &#39;cache_creation_input_tokens&#39;: 0, &#39;cache_read_input_tokens&#39;: 3500}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>显式标记缓存断点</strong>（精细控制）：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_core.messages</span> <span class="kn">import</span> <span class="n">SystemMessage</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 通过 cache_control 标记哪些内容要缓存</span>
+</span></span><span class="line"><span class="cl"><span class="n">messages</span> <span class="o">=</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="n">SystemMessage</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">        <span class="n">content</span><span class="o">=</span><span class="n">LONG_SYSTEM_PROMPT</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="n">additional_kwargs</span><span class="o">=</span><span class="p">{</span><span class="err">“</span><span class="n">cache_control</span><span class="err">”</span><span class="p">:</span> <span class="p">{</span><span class="err">“</span><span class="nb">type</span><span class="err">”</span><span class="p">:</span> <span class="err">“</span><span class="n">ephemeral</span><span class="err">”</span><span class="p">}}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">),</span>
+</span></span><span class="line"><span class="cl">    <span class="n">HumanMessage</span><span class="p">(</span><span class="n">content</span><span class="o">=</span><span class="err">”</span><span class="n">用户问题</span><span class="err">”</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl"><span class="p">]</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>Anthropic 缓存命中条件</strong>：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>条件</th>
+          <th>要求</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>前缀完全相同</td>
+          <td>从第一个 token 开始完全匹配，直到缓存断点</td>
+      </tr>
+      <tr>
+          <td>最低长度</td>
+          <td>≥ 1024 tokens（短 prompt 不会被缓存）</td>
+      </tr>
+      <tr>
+          <td>TTL</td>
+          <td>5 分钟内（超过 5 分钟缓存失效）</td>
+      </tr>
+      <tr>
+          <td>同一组织</td>
+          <td>同 organization 下的请求共享缓存</td>
+      </tr>
+  </tbody>
+</table></div>
+<p><strong>Anthropic 缓存定价</strong>：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>token 类型</th>
+          <th>相对基础价格</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>正常 input tokens</td>
+          <td>1x</td>
+      </tr>
+      <tr>
+          <td>cache_creation_input_tokens</td>
+          <td>1.25x（首次写入缓存，略贵）</td>
+      </tr>
+      <tr>
+          <td>cache_read_input_tokens</td>
+          <td>0.1x（命中缓存，便宜 90%）</td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="openai-prompt-caching">OpenAI Prompt Caching
+</h3><p><strong>完全自动，无需任何配置</strong>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_openai</span> <span class="kn">import</span> <span class="n">ChatOpenAI</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">llm</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="err">”</span><span class="n">gpt</span><span class="o">-</span><span class="mf">4.1</span><span class="o">-</span><span class="n">mini</span><span class="err">”</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># OpenAI 自动识别相同前缀并缓存</span>
+</span></span><span class="line"><span class="cl"><span class="n">messages</span> <span class="o">=</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="p">{</span><span class="err">“</span><span class="n">role</span><span class="err">”</span><span class="p">:</span> <span class="err">“</span><span class="n">system</span><span class="err">”</span><span class="p">,</span> <span class="err">“</span><span class="n">content</span><span class="err">”</span><span class="p">:</span> <span class="n">LONG_SYSTEM_PROMPT</span><span class="p">},</span>
+</span></span><span class="line"><span class="cl">    <span class="p">{</span><span class="err">“</span><span class="n">role</span><span class="err">”</span><span class="p">:</span> <span class="err">“</span><span class="n">user</span><span class="err">”</span><span class="p">,</span> <span class="err">“</span><span class="n">content</span><span class="err">”</span><span class="p">:</span> <span class="err">“</span><span class="n">查订单</span><span class="err">”</span><span class="p">},</span>
+</span></span><span class="line"><span class="cl"><span class="p">]</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">response</span> <span class="o">=</span> <span class="n">llm</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">messages</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">usage_metadata</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 缓存命中时：</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># {&#39;input_tokens&#39;: 50, &#39;input_token_details&#39;: {&#39;cached_tokens&#39;: 3500}, ...}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>OpenAI 缓存命中条件</strong>：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>条件</th>
+          <th>要求</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>前缀完全相同</td>
+          <td>messages 列表从头开始完全匹配</td>
+      </tr>
+      <tr>
+          <td>最低长度</td>
+          <td>≥ 1024 tokens</td>
+      </tr>
+      <tr>
+          <td>粒度</td>
+          <td>以 128 token 为单位缓存（前缀按 128 对齐）</td>
+      </tr>
+      <tr>
+          <td>TTL</td>
+          <td>约 5-10 分钟（官方未公布精确值，流量大时更长）</td>
+      </tr>
+  </tbody>
+</table></div>
+<p><strong>OpenAI 缓存定价</strong>：cached tokens 享受 50% 折扣（Anthropic 是 90% 折扣）。</p>
+<h3 id="agent-中如何最大化-prompt-cache-命中率">Agent 中如何最大化 Prompt Cache 命中率
+</h3><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
 </span><span class="lnt"> 2
@@ -3021,35 +3800,97 @@
 </span><span class="lnt">16
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_anthropic</span> <span class="kn">import</span> <span class="n">ChatAnthropic</span>
-</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_core.messages</span> <span class="kn">import</span> <span class="n">HumanMessage</span><span class="p">,</span> <span class="n">SystemMessage</span>
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># 关键原则：让每次请求的前缀尽可能相同且尽可能长</span>
 </span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="n">llm</span> <span class="o">=</span> <span class="n">ChatAnthropic</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="err">”</span><span class="n">claude</span><span class="o">-</span><span class="n">sonnet</span><span class="o">-</span><span class="mi">4</span><span class="o">-</span><span class="mi">6</span><span class="err">”</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># Anthropic 自动对 system prompt 做缓存</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 也可以通过 cache_control 显式标记缓存断点</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✓ 好的做法：固定前缀，变化部分放最后</span>
 </span></span><span class="line"><span class="cl"><span class="n">messages</span> <span class="o">=</span> <span class="p">[</span>
-</span></span><span class="line"><span class="cl">    <span class="n">SystemMessage</span><span class="p">(</span><span class="n">content</span><span class="o">=</span><span class="n">LONG_SYSTEM_PROMPT</span><span class="p">),</span>  <span class="c1"># 这部分会被缓存</span>
-</span></span><span class="line"><span class="cl">    <span class="n">HumanMessage</span><span class="p">(</span><span class="n">content</span><span class="o">=</span><span class="err">”</span><span class="n">查一下订单</span> <span class="n">A1024</span><span class="err">”</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">    <span class="n">system_prompt</span><span class="p">,</span>          <span class="c1"># 固定 → 被缓存</span>
+</span></span><span class="line"><span class="cl">    <span class="n">tool_definitions</span><span class="p">,</span>       <span class="c1"># 固定 → 被缓存</span>
+</span></span><span class="line"><span class="cl">    <span class="n">few_shot_examples</span><span class="p">,</span>      <span class="c1"># 固定 → 被缓存</span>
+</span></span><span class="line"><span class="cl">    <span class="o">*</span><span class="n">conversation_history</span><span class="p">,</span>  <span class="c1"># 半固定（逐轮增长）→ 部分被缓存</span>
+</span></span><span class="line"><span class="cl">    <span class="n">user_new_message</span><span class="p">,</span>       <span class="c1"># 每次不同 → 不缓存</span>
 </span></span><span class="line"><span class="cl"><span class="p">]</span>
 </span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="n">response</span> <span class="o">=</span> <span class="n">llm</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">messages</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 查看缓存命中情况</span>
-</span></span><span class="line"><span class="cl"><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">usage_metadata</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 缓存命中时 cache_read_input_tokens &gt; 0，成本降低 90%</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✗ 坏的做法：每次随机改变前缀</span>
+</span></span><span class="line"><span class="cl"><span class="n">messages</span> <span class="o">=</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="n">system_prompt_with_random_timestamp</span><span class="p">,</span>  <span class="c1"># 每次不同 → 缓存全部失效</span>
+</span></span><span class="line"><span class="cl">    <span class="o">...</span>
+</span></span><span class="line"><span class="cl"><span class="p">]</span>
 </span></span></code></pre></td></tr></table>
 </div>
-</div><p><strong>OpenAI prompt caching</strong>：</p>
-<p>OpenAI 自动对请求前缀做缓存（无需显式配置），相同前缀的后续请求自动享受 50% 输入 token 折扣。</p>
-<p>缓存生效条件：</p>
+</div><p>工程实践建议：</p>
 <ul>
-<li>请求前缀完全相同（system prompt + 工具定义 + 早期消息）</li>
-<li>前缀长度达到最低要求（通常 1024+ tokens）</li>
-<li>短时间内有重复请求</li>
+<li>System prompt 中不要包含时间戳、随机 ID 等每次变化的内容</li>
+<li>工具定义顺序保持一致</li>
+<li>Few-shot 示例放在 system prompt 中而不是每次动态拼装</li>
+<li>对话历史追加到消息列表末尾而不是重组</li>
 </ul>
-<h2 id="123-语义缓存">12.3 语义缓存
-</h2><p>对于相同或相似问题的重复调用，可以在应用层做语义缓存：</p>
-<div class="highlight"><div class="chroma">
+<h2 id="125-语义缓存">12.5 语义缓存
+</h2><h3 id="精确缓存-vs-语义缓存">精确缓存 vs 语义缓存
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th></th>
+          <th>精确缓存</th>
+          <th>语义缓存</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>匹配方式</td>
+          <td>输入完全一致</td>
+          <td>输入语义相似（向量距离 &lt; 阈值）</td>
+      </tr>
+      <tr>
+          <td>命中率</td>
+          <td>低（多一个字都不命中）</td>
+          <td>高（相似问法可以命中）</td>
+      </tr>
+      <tr>
+          <td>准确率</td>
+          <td>100%（一定是对的）</td>
+          <td>有风险（相似 ≠ 相同意图）</td>
+      </tr>
+      <tr>
+          <td>适合场景</td>
+          <td>temperature=0 的固定任务</td>
+          <td>FAQ、知识问答</td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="语义缓存实现原理">语义缓存实现原理
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户提问：”Agent 是什么东西？”
+</span></span><span class="line"><span class="cl">  │
+</span></span><span class="line"><span class="cl">  ├── 1. 用 Embedding 模型将问题转为向量
+</span></span><span class="line"><span class="cl">  │     → [0.12, -0.34, 0.56, ...]
+</span></span><span class="line"><span class="cl">  │
+</span></span><span class="line"><span class="cl">  ├── 2. 在向量数据库中搜索最相似的已缓存问题
+</span></span><span class="line"><span class="cl">  │     → 找到：”什么是 AI Agent？” 相似度 0.95
+</span></span><span class="line"><span class="cl">  │
+</span></span><span class="line"><span class="cl">  ├── 3. 判断相似度是否超过阈值（如 0.90）
+</span></span><span class="line"><span class="cl">  │     → 0.95 &gt; 0.90，命中
+</span></span><span class="line"><span class="cl">  │
+</span></span><span class="line"><span class="cl">  └── 4. 返回缓存的回答
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="langchain-语义缓存实现">LangChain 语义缓存实现
+</h3><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
 </span><span class="lnt"> 2
@@ -3064,25 +3905,143 @@
 </span><span class="lnt">11
 </span><span class="lnt">12
 </span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">hashlib</span>
-</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">functools</span> <span class="kn">import</span> <span class="n">lru_cache</span>
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_community.cache</span> <span class="kn">import</span> <span class="n">RedisSemanticCache</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_openai</span> <span class="kn">import</span> <span class="n">OpenAIEmbeddings</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_core.globals</span> <span class="kn">import</span> <span class="n">set_llm_cache</span>
 </span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 精确缓存：相同输入直接返回缓存结果</span>
-</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">exact_cache</span><span class="p">(</span><span class="n">messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span></span><span class="line"><span class="cl">    <span class="n">key</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">md5</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">messages</span><span class="p">)</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
-</span></span><span class="line"><span class="cl">    <span class="c1"># 查询 Redis / 本地缓存</span>
-</span></span><span class="line"><span class="cl">    <span class="n">cached</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">f</span><span class="err">”</span><span class="n">llm_cache</span><span class="p">:{</span><span class="n">key</span><span class="p">}</span><span class="err">”</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="n">cached</span><span class="p">:</span>
-</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="n">cached</span>
-</span></span><span class="line"><span class="cl">    <span class="n">result</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">messages</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="n">redis</span><span class="o">.</span><span class="n">setex</span><span class="p">(</span><span class="n">f</span><span class="err">”</span><span class="n">llm_cache</span><span class="p">:{</span><span class="n">key</span><span class="p">}</span><span class="err">”</span><span class="p">,</span> <span class="mi">3600</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">result</span><span class="o">.</span><span class="n">content</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 需要一个 Embedding 模型做相似度计算</span>
+</span></span><span class="line"><span class="cl"><span class="n">embeddings</span> <span class="o">=</span> <span class="n">OpenAIEmbeddings</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="err">”</span><span class="n">text</span><span class="o">-</span><span class="n">embedding</span><span class="o">-</span><span class="mi">3</span><span class="o">-</span><span class="n">small</span><span class="err">”</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">set_llm_cache</span><span class="p">(</span><span class="n">RedisSemanticCache</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">redis_url</span><span class="o">=</span><span class="err">”</span><span class="n">redis</span><span class="p">:</span><span class="o">//</span><span class="n">localhost</span><span class="p">:</span><span class="mi">6379</span><span class="err">”</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">embedding</span><span class="o">=</span><span class="n">embeddings</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">score_threshold</span><span class="o">=</span><span class="mf">0.90</span><span class="p">,</span>  <span class="c1"># 相似度阈值</span>
+</span></span><span class="line"><span class="cl"><span class="p">))</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">model</span> <span class="o">=</span> <span class="n">init_chat_model</span><span class="p">(</span><span class="err">“</span><span class="n">openai</span><span class="p">:</span><span class="n">gpt</span><span class="o">-</span><span class="mf">4.1</span><span class="o">-</span><span class="n">mini</span><span class="err">”</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 第一次调用</span>
+</span></span><span class="line"><span class="cl"><span class="n">r1</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="err">“</span><span class="n">什么是</span> <span class="n">AI</span> <span class="n">Agent</span><span class="err">？”</span><span class="p">)</span>    <span class="c1"># API 调用 + 缓存</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 第二次相似问法：语义匹配命中</span>
+</span></span><span class="line"><span class="cl"><span class="n">r2</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="err">“</span><span class="n">Agent</span> <span class="n">是什么东西</span><span class="err">？”</span><span class="p">)</span>   <span class="c1"># 命中缓存，不调 API</span>
+</span></span><span class="line"><span class="cl"><span class="n">r3</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="err">“</span><span class="n">给我介绍一下Agent</span><span class="err">”</span><span class="p">)</span>   <span class="c1"># 命中缓存，不调 API</span>
 </span></span></code></pre></td></tr></table>
 </div>
-</div><p>语义缓存（向量相似度匹配）适用于 FAQ 类场景，但要注意缓存失效策略——Agent 的上下文不同，相似问题可能需要不同答案。</p>
-<h2 id="124-多模型成本优化">12.4 多模型成本优化
+</div><h3 id="语义缓存的风险和使用边界">语义缓存的风险和使用边界
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># 危险场景：Agent 中上下文不同，相似问题需要不同答案</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 用户A（VIP）：”查我的订单” → 应该查 VIP 订单列表</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 用户B（普通）：”查我的订单” → 应该查普通订单列表</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 如果语义缓存命中，用户B 可能看到用户A 的结果！</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>语义缓存适用规则：</p>
+<ul>
+<li><strong>适合</strong>：无上下文依赖的通用问答（FAQ、知识百科、概念解释）</li>
+<li><strong>不适合</strong>：Agent 多轮对话、依赖用户身份的查询、实时数据查询</li>
+<li><strong>必须</strong>：缓存 key 中包含用户/会话隔离标识</li>
+</ul>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># 安全的做法：加入用户隔离</span>
+</span></span><span class="line"><span class="cl"><span class="n">cache_key_prefix</span> <span class="o">=</span> <span class="n">f</span><span class="err">”</span><span class="n">user</span><span class="p">:{</span><span class="n">user_id</span><span class="p">}:</span><span class="err">”</span>  <span class="c1"># 不同用户的缓存隔离</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="126-三种缓存的对比和选择">12.6 三种缓存的对比和选择
+</h2><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th></th>
+          <th>应用层精确缓存</th>
+          <th>Provider Prompt Cache</th>
+          <th>语义缓存</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>实现位置</td>
+          <td>你的代码</td>
+          <td>厂商服务端</td>
+          <td>你的代码 + 向量库</td>
+      </tr>
+      <tr>
+          <td>是否跳过 API 调用</td>
+          <td>是</td>
+          <td>否（只是更便宜）</td>
+          <td>是</td>
+      </tr>
+      <tr>
+          <td>命中条件</td>
+          <td>输入完全相同</td>
+          <td>前缀完全相同</td>
+          <td>语义相似度 &gt; 阈值</td>
+      </tr>
+      <tr>
+          <td>典型省钱幅度</td>
+          <td>100%（不花钱）</td>
+          <td>50-90%</td>
+          <td>100%（不花钱）</td>
+      </tr>
+      <tr>
+          <td>适合场景</td>
+          <td>固定 prompt 批处理</td>
+          <td>Agent 多轮（前缀稳定）</td>
+          <td>FAQ / 知识问答</td>
+      </tr>
+      <tr>
+          <td>Agent 适用度</td>
+          <td>低（多轮几乎不命中）</td>
+          <td>高（核心优化手段）</td>
+          <td>中（需谨慎）</td>
+      </tr>
+  </tbody>
+</table></div>
+<p><strong>Agent 开发推荐组合</strong>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1. 始终启用 Provider Prompt Cache（零成本，自动生效）
+</span></span><span class="line"><span class="cl">   → 稳定 system prompt + 工具定义，最大化前缀命中
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">2. 对固定任务启用应用层精确缓存（如意图分类的固定 prompt）
+</span></span><span class="line"><span class="cl">   → set_llm_cache(InMemoryCache()) 或 Redis
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">3. 对 FAQ 类场景可选语义缓存
+</span></span><span class="line"><span class="cl">   → 注意用户隔离和缓存失效策略
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="127-多模型成本优化">12.7 多模型成本优化
 </h2><p>Agent 中不是每一步都需要最强模型：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
@@ -3135,7 +4094,7 @@
 </span></span><span class="line"><span class="cl"><span class="n">answer</span> <span class="o">=</span> <span class="n">responder_model</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">answer_prompt</span><span class="p">)</span>
 </span></span></code></pre></td></tr></table>
 </div>
-</div><h2 id="125-成本监控">12.5 成本监控
+</div><h2 id="128-成本监控">12.8 成本监控
 </h2><p>生产环境必须监控每次调用的 token 用量：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
