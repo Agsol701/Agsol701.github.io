@@ -251,7 +251,11 @@
   <ol>
     <li><a href="#21-k8-上安装并启用-ssh">2.1 K8 上安装并启用 SSH</a></li>
     <li><a href="#22-macbook-配置-ssh-免密登录">2.2 MacBook 配置 SSH 免密登录</a></li>
-    <li><a href="#23-配置-ssh-别名">2.3 配置 SSH 别名</a></li>
+    <li><a href="#23-配置-ssh-别名">2.3 配置 SSH 别名</a>
+      <ol>
+        <li><a href="#常见问题配好了还是要输密码">常见问题：配好了还是要输密码</a></li>
+      </ol>
+    </li>
     <li><a href="#24-k8-上-ssh-安全加固可选">2.4 K8 上 SSH 安全加固（可选）</a></li>
   </ol>
 
@@ -791,13 +795,24 @@
 </span></span><span class="line"><span class="cl">ssh-keygen -t ed25519 -C <span class="s2">&#34;your_email@example.com&#34;</span>
 </span></span><span class="line"><span class="cl">
 </span></span><span class="line"><span class="cl"><span class="c1"># 复制公钥到 K8</span>
-</span></span><span class="line"><span class="cl">ssh-copy-id your_username@192.168.1.100
+</span></span><span class="line"><span class="cl">ssh-copy-id your_username@K8的IP
 </span></span><span class="line"><span class="cl">
 </span></span><span class="line"><span class="cl"><span class="c1"># 测试连接</span>
-</span></span><span class="line"><span class="cl">ssh your_username@192.168.1.100
+</span></span><span class="line"><span class="cl">ssh your_username@K8的IP
 </span></span></code></pre></td></tr></table>
 </div>
-</div><h2 id="23-配置-ssh-别名">2.3 配置 SSH 别名
+</div><blockquote>
+<p>注意：<code>ssh-copy-id</code> 时使用的密钥必须和后面 config 中 <code>IdentityFile</code> 指定的一致。如果你有多个密钥（如 <code>id_rsa</code>、<code>id_ed25519</code>），用 <code>-i</code> 指定：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ssh-copy-id -i ~/.ssh/id_ed25519.pub your_username@K8的IP
+</span></span></code></pre></td></tr></table>
+</div>
+</div></blockquote>
+<h2 id="23-配置-ssh-别名">2.3 配置 SSH 别名
 </h2><p>编辑 <code>~/.ssh/config</code>（MacBook 上）：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
@@ -808,20 +823,135 @@
 </span><span class="lnt">5
 </span><span class="lnt">6
 </span><span class="lnt">7
-</span><span class="lnt">8
 </span></code></pre></td>
 <td class="lntd">
 <pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">Host k8
-</span></span><span class="line"><span class="cl">    HostName 192.168.1.100
+</span></span><span class="line"><span class="cl">    HostName 10.147.20.xx
 </span></span><span class="line"><span class="cl">    User your_username
 </span></span><span class="line"><span class="cl">    Port 22
 </span></span><span class="line"><span class="cl">    IdentityFile ~/.ssh/id_ed25519
-</span></span><span class="line"><span class="cl">    # 保持连接活跃，防止断开
 </span></span><span class="line"><span class="cl">    ServerAliveInterval 60
 </span></span><span class="line"><span class="cl">    ServerAliveCountMax 3
 </span></span></code></pre></td></tr></table>
 </div>
-</div><p>之后直接 <code>ssh k8</code> 即可连接。</p>
+</div><p>各字段说明：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>字段</th>
+          <th>含义</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>Host k8</code></td>
+          <td>自定义别名，之后 <code>ssh k8</code> 即可连接</td>
+      </tr>
+      <tr>
+          <td><code>HostName</code></td>
+          <td>K8 的实际 IP（ZeroTier 分配的 IP）</td>
+      </tr>
+      <tr>
+          <td><code>User</code></td>
+          <td>K8 上的登录用户名</td>
+      </tr>
+      <tr>
+          <td><code>Port</code></td>
+          <td>SSH 端口，默认 22</td>
+      </tr>
+      <tr>
+          <td><code>IdentityFile</code></td>
+          <td>MacBook 本机的私钥路径，用于免密认证</td>
+      </tr>
+      <tr>
+          <td><code>ServerAliveInterval</code></td>
+          <td>每 60 秒发心跳包，防止空闲断连</td>
+      </tr>
+      <tr>
+          <td><code>ServerAliveCountMax</code></td>
+          <td>连续 3 次心跳无响应才断开</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>配置保存后，<code>ssh k8</code> 等价于：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ssh -i ~/.ssh/id_ed25519 -p <span class="m">22</span> your_username@10.147.20.xx
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="常见问题配好了还是要输密码">常见问题：配好了还是要输密码
+</h3><p><strong>原因 1：IdentityFile 路径不对</strong></p>
+<p>config 中指定的私钥文件必须实际存在：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 查看本机有哪些密钥</span>
+</span></span><span class="line"><span class="cl">ls ~/.ssh/id_*
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 确认 config 中写的路径和实际文件一致</span>
+</span></span><span class="line"><span class="cl">grep IdentityFile ~/.ssh/config
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果密钥文件名不是默认的（如 <code>id_rsa.myname</code>），config 中必须写完整路径。</p>
+<p><strong>原因 2：公钥没传到 K8</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 重新传一次，用 -i 指定和 config 中一致的公钥</span>
+</span></span><span class="line"><span class="cl">ssh-copy-id -i ~/.ssh/id_ed25519.pub your_username@K8的IP
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>原因 3：K8 上权限不对</strong></p>
+<p>SSH 对文件权限要求严格，在 K8 上执行：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">chmod <span class="m">700</span> ~/.ssh
+</span></span><span class="line"><span class="cl">chmod <span class="m">600</span> ~/.ssh/authorized_keys
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>原因 4：IDE 频繁弹密码框</strong></p>
+<p>IDE（VS Code / Comate / Gateway）会开多条 SSH 连接，每条都要认证。添加多路复用可解决：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">Host k8
+</span></span><span class="line"><span class="cl">    # ... 前面的配置 ...
+</span></span><span class="line"><span class="cl">    ControlMaster auto
+</span></span><span class="line"><span class="cl">    ControlPath ~/.ssh/sockets/%r@%h-%p
+</span></span><span class="line"><span class="cl">    ControlPersist 600
+</span></span></code></pre></td></tr></table>
+</div>
+</div><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">mkdir -p ~/.ssh/sockets
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>首次连接后，10 分钟内的后续连接复用同一通道，不再重复认证。</p>
 <h2 id="24-k8-上-ssh-安全加固可选">2.4 K8 上 SSH 安全加固（可选）
 </h2><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
