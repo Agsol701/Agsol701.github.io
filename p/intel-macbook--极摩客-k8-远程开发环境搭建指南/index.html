@@ -1,0 +1,1727 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="架构概览 1 2 3 4 ┌─────────────────┐ LAN / Tailnet ┌─────────────────────┐ │ Intel MacBook │ ◄──── SSH / VS Code Remote ────► │ 极摩客 K8 (Ubuntu) │ │ (使用机/终端) │ │ (开发机/编译运行) │ └─────────────────┘ └─────────────────────┘ MacBook：编辑代码、浏览网页、日常使用 K8 迷你主机：编译、运行服务、容器、GPU 计算 一、迷你主机网络配置 1.1 有线网络（推荐） K8 和 MacBook 接入同一路由器/交换机，走有线获得最低延迟：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 # 在 K8 上查看网口名称 ip link show # 确认已获取 IP ip addr show enp1s0 # 网口名称可能不同 # 设置静态 IP（避免 DHCP 变动） sudo nmcli connection modify &#34;Wired connection 1&#34; \\ ipv4.method manual \\ ipv4.addresses 192.168.1.100/24 \\ ipv4.gateway 192.168.1.1 \\ ipv4.dns &#34;223.5.5.5,8.8.8.8&#34; sudo nmcli connection up &#34;Wired connection 1&#34; 将 192.168.1.100 替换为你局域网中的可用 IP，网关和网段根据你的路由器调整。\n">
+<title>Intel MacBook &#43; 极摩客 K8 远程开发环境搭建指南</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/intel-macbook--%E6%9E%81%E6%91%A9%E5%AE%A2-k8-%E8%BF%9C%E7%A8%8B%E5%BC%80%E5%8F%91%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA%E6%8C%87%E5%8D%97/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="Intel MacBook + 极摩客 K8 远程开发环境搭建指南">
+<meta property='og:description' content="架构概览 1 2 3 4 ┌─────────────────┐ LAN / Tailnet ┌─────────────────────┐ │ Intel MacBook │ ◄──── SSH / VS Code Remote ────► │ 极摩客 K8 (Ubuntu) │ │ (使用机/终端) │ │ (开发机/编译运行) │ └─────────────────┘ └─────────────────────┘ MacBook：编辑代码、浏览网页、日常使用 K8 迷你主机：编译、运行服务、容器、GPU 计算 一、迷你主机网络配置 1.1 有线网络（推荐） K8 和 MacBook 接入同一路由器/交换机，走有线获得最低延迟：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 # 在 K8 上查看网口名称 ip link show # 确认已获取 IP ip addr show enp1s0 # 网口名称可能不同 # 设置静态 IP（避免 DHCP 变动） sudo nmcli connection modify &#34;Wired connection 1&#34; \\ ipv4.method manual \\ ipv4.addresses 192.168.1.100/24 \\ ipv4.gateway 192.168.1.1 \\ ipv4.dns &#34;223.5.5.5,8.8.8.8&#34; sudo nmcli connection up &#34;Wired connection 1&#34; 将 192.168.1.100 替换为你局域网中的可用 IP，网关和网段根据你的路由器调整。\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/intel-macbook--%E6%9E%81%E6%91%A9%E5%AE%A2-k8-%E8%BF%9C%E7%A8%8B%E5%BC%80%E5%8F%91%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA%E6%8C%87%E5%8D%97/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='linux' /><meta property='article:tag' content='ubuntu' /><meta property='article:tag' content='remote-dev' /><meta property='article:tag' content='ssh' /><meta property='article:tag' content='mini-pc' /><meta property='article:published_time' content='2026-05-20T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-20T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="Intel MacBook + 极摩客 K8 远程开发环境搭建指南">
+<meta name="twitter:description" content="架构概览 1 2 3 4 ┌─────────────────┐ LAN / Tailnet ┌─────────────────────┐ │ Intel MacBook │ ◄──── SSH / VS Code Remote ────► │ 极摩客 K8 (Ubuntu) │ │ (使用机/终端) │ │ (开发机/编译运行) │ └─────────────────┘ └─────────────────────┘ MacBook：编辑代码、浏览网页、日常使用 K8 迷你主机：编译、运行服务、容器、GPU 计算 一、迷你主机网络配置 1.1 有线网络（推荐） K8 和 MacBook 接入同一路由器/交换机，走有线获得最低延迟：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 # 在 K8 上查看网口名称 ip link show # 确认已获取 IP ip addr show enp1s0 # 网口名称可能不同 # 设置静态 IP（避免 DHCP 变动） sudo nmcli connection modify &#34;Wired connection 1&#34; \\ ipv4.method manual \\ ipv4.addresses 192.168.1.100/24 \\ ipv4.gateway 192.168.1.1 \\ ipv4.dns &#34;223.5.5.5,8.8.8.8&#34; sudo nmcli connection up &#34;Wired connection 1&#34; 将 192.168.1.100 替换为你局域网中的可用 IP，网关和网段根据你的路由器调整。\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ol>
+    <li><a href="#11-有线网络推荐">1.1 有线网络（推荐）</a></li>
+    <li><a href="#12-查看与验证-ip">1.2 查看与验证 IP</a></li>
+    <li><a href="#13-zerotier-组网跨网段不同-vlan-互通推荐">1.3 ZeroTier 组网（跨网段/不同 VLAN 互通，推荐）</a>
+      <ol>
+        <li><a href="#第一步创建-zerotier-网络">第一步：创建 ZeroTier 网络</a></li>
+        <li><a href="#第二步k8-上安装并加入">第二步：K8 上安装并加入</a></li>
+        <li><a href="#第三步macbook-上安装并加入">第三步：MacBook 上安装并加入</a></li>
+        <li><a href="#第四步授权设备重要">第四步：授权设备（重要）</a></li>
+        <li><a href="#第五步验证连接">第五步：验证连接</a></li>
+        <li><a href="#zerotier-常用命令">ZeroTier 常用命令</a></li>
+        <li><a href="#zerotier-管理面板说明">ZeroTier 管理面板说明</a></li>
+        <li><a href="#注意事项与常见问题">注意事项与常见问题</a></li>
+      </ol>
+    </li>
+    <li><a href="#14-可选tailscale-组网替代方案">1.4 可选：Tailscale 组网（替代方案）</a>
+      <ol>
+        <li><a href="#zerotier-vs-tailscale">ZeroTier vs Tailscale</a></li>
+      </ol>
+    </li>
+  </ol>
+
+  <ol>
+    <li><a href="#21-k8-上安装并启用-ssh">2.1 K8 上安装并启用 SSH</a></li>
+    <li><a href="#22-macbook-配置-ssh-免密登录">2.2 MacBook 配置 SSH 免密登录</a></li>
+    <li><a href="#23-配置-ssh-别名">2.3 配置 SSH 别名</a></li>
+    <li><a href="#24-k8-上-ssh-安全加固可选">2.4 K8 上 SSH 安全加固（可选）</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#31-基础开发工具">3.1 基础开发工具</a></li>
+    <li><a href="#32-git-配置">3.2 Git 配置</a></li>
+    <li><a href="#33-python-环境">3.3 Python 环境</a>
+      <ol>
+        <li><a href="#项目虚拟环境管理">项目虚拟环境管理</a></li>
+        <li><a href="#python-远程调试要点">Python 远程调试要点</a></li>
+      </ol>
+    </li>
+    <li><a href="#34-go-环境">3.4 Go 环境</a>
+      <ol>
+        <li><a href="#go-开发工具链">Go 开发工具链</a></li>
+        <li><a href="#go-项目初始化">Go 项目初始化</a></li>
+        <li><a href="#go-代理配置国内加速">Go 代理配置（国内加速）</a></li>
+      </ol>
+    </li>
+    <li><a href="#35-nodejs-环境">3.5 Node.js 环境</a></li>
+    <li><a href="#35-docker">3.5 Docker</a></li>
+    <li><a href="#36-数据库按需">3.6 数据库（按需）</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#41-vs-code-remote-ssh">4.1 VS Code Remote-SSH</a>
+      <ol>
+        <li><a href="#安装与配置">安装与配置</a></li>
+        <li><a href="#连接步骤">连接步骤</a></li>
+        <li><a href="#配置-python-开发">配置 Python 开发</a></li>
+        <li><a href="#配置-go-开发">配置 Go 开发</a></li>
+        <li><a href="#推荐远程扩展">推荐远程扩展</a></li>
+        <li><a href="#端口转发">端口转发</a></li>
+      </ol>
+    </li>
+    <li><a href="#42-pycharm-remotejetbrains-gateway">4.2 PyCharm Remote（JetBrains Gateway）</a>
+      <ol>
+        <li><a href="#方式-ajetbrains-gateway推荐">方式 A：JetBrains Gateway（推荐）</a></li>
+        <li><a href="#gateway-中配置-python-解释器">Gateway 中配置 Python 解释器</a></li>
+        <li><a href="#gateway-中配置-go-sdk">Gateway 中配置 Go SDK</a></li>
+        <li><a href="#方式-bpycharm-deployment--remote-interpreter">方式 B：PyCharm Deployment + Remote Interpreter</a></li>
+      </ol>
+    </li>
+    <li><a href="#43-终端直连--tmux">4.3 终端直连 + tmux</a></li>
+    <li><a href="#44-文件同步如果不用-remote-ssh">4.4 文件同步（如果不用 Remote-SSH）</a></li>
+    <li><a href="#45-ide-选择建议">4.5 IDE 选择建议</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#51-ssh-端口转发">5.1 SSH 端口转发</a></li>
+    <li><a href="#52-持久化端口转发可选">5.2 持久化端口转发（可选）</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#71-ssh-连接加速">7.1 SSH 连接加速</a></li>
+    <li><a href="#72-k8-性能调优">7.2 K8 性能调优</a></li>
+    <li><a href="#73-自动唤醒休眠">7.3 自动唤醒/休眠</a></li>
+  </ol>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/linux/" >
+                Linux
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/intel-macbook--%E6%9E%81%E6%91%A9%E5%AE%A2-k8-%E8%BF%9C%E7%A8%8B%E5%BC%80%E5%8F%91%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA%E6%8C%87%E5%8D%97/">Intel MacBook &#43; 极摩客 K8 远程开发环境搭建指南</a>
+        </h2>
+    
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">May 20, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h1 id="架构概览">架构概览
+</h1><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────┐          LAN / Tailnet          ┌─────────────────────┐
+</span></span><span class="line"><span class="cl">│  Intel MacBook  │ ◄──── SSH / VS Code Remote ────► │  极摩客 K8 (Ubuntu) │
+</span></span><span class="line"><span class="cl">│  (使用机/终端)   │                                   │  (开发机/编译运行)   │
+</span></span><span class="line"><span class="cl">└─────────────────┘                                   └─────────────────────┘
+</span></span></code></pre></td></tr></table>
+</div>
+</div><ul>
+<li><strong>MacBook</strong>：编辑代码、浏览网页、日常使用</li>
+<li><strong>K8 迷你主机</strong>：编译、运行服务、容器、GPU 计算</li>
+</ul>
+<h1 id="一迷你主机网络配置">一、迷你主机网络配置
+</h1><h2 id="11-有线网络推荐">1.1 有线网络（推荐）
+</h2><p>K8 和 MacBook 接入同一路由器/交换机，走有线获得最低延迟：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 在 K8 上查看网口名称</span>
+</span></span><span class="line"><span class="cl">ip link show
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 确认已获取 IP</span>
+</span></span><span class="line"><span class="cl">ip addr show enp1s0   <span class="c1"># 网口名称可能不同</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 设置静态 IP（避免 DHCP 变动）</span>
+</span></span><span class="line"><span class="cl">sudo nmcli connection modify <span class="s2">&#34;Wired connection 1&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  ipv4.method manual <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  ipv4.addresses 192.168.1.100/24 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  ipv4.gateway 192.168.1.1 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  ipv4.dns <span class="s2">&#34;223.5.5.5,8.8.8.8&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sudo nmcli connection up <span class="s2">&#34;Wired connection 1&#34;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><blockquote>
+<p>将 <code>192.168.1.100</code> 替换为你局域网中的可用 IP，网关和网段根据你的路由器调整。</p></blockquote>
+<h2 id="12-查看与验证-ip">1.2 查看与验证 IP
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 在 K8 上</span>
+</span></span><span class="line"><span class="cl">hostname -I
+</span></span><span class="line"><span class="cl"><span class="c1"># 输出类似：192.168.1.100</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 在 MacBook 上 ping 测试</span>
+</span></span><span class="line"><span class="cl">ping 192.168.1.100
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="13-zerotier-组网跨网段不同-vlan-互通推荐">1.3 ZeroTier 组网（跨网段/不同 VLAN 互通，推荐）
+</h2><p>公司内网中 MacBook 和 K8 可能分配在不同子网/VLAN（如 MacBook 在 <code>10.0.1.x</code>，K8 在 <code>10.0.2.x</code>），直接 ping 不通。使用 ZeroTier 建立虚拟局域网可绕过网段限制。</p>
+<h3 id="第一步创建-zerotier-网络">第一步：创建 ZeroTier 网络
+</h3><ol>
+<li>浏览器访问 <a class="link" href="https://my.zerotier.com"  target="_blank" rel="noopener"
+    >https://my.zerotier.com</a></li>
+<li>注册/登录账号（支持 Google/GitHub 登录）</li>
+<li>点击「Create A Network」</li>
+<li>记下生成的 <strong>16 位 Network ID</strong>（如 <code>a1b2c3d4e5f6g7h8</code>）</li>
+</ol>
+<h3 id="第二步k8-上安装并加入">第二步：K8 上安装并加入
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">curl -s https://install.zerotier.com <span class="p">|</span> sudo bash
+</span></span><span class="line"><span class="cl">sudo zerotier-cli join 你的NetworkID
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 设置开机自启</span>
+</span></span><span class="line"><span class="cl">sudo systemctl <span class="nb">enable</span> zerotier-one
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="第三步macbook-上安装并加入">第三步：MacBook 上安装并加入
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">brew install --cask zerotier-one
+</span></span><span class="line"><span class="cl">sudo zerotier-cli join 你的NetworkID
+</span></span></code></pre></td></tr></table>
+</div>
+</div><blockquote>
+<p>安装后 macOS 菜单栏会出现 ZeroTier 图标，也可以通过图标加入网络。</p></blockquote>
+<h3 id="第四步授权设备重要">第四步：授权设备（重要）
+</h3><p>设备 join 后<strong>不会自动获得 IP</strong>，必须在管理面板手动授权：</p>
+<ol>
+<li>回到 <a class="link" href="https://my.zerotier.com"  target="_blank" rel="noopener"
+    >https://my.zerotier.com</a> → 点击你的网络</li>
+<li>下方 <strong>Members</strong> 列表中会出现两台设备（显示为 Member ID）</li>
+<li>勾选每台设备前面的 <strong>Auth</strong> 复选框</li>
+<li>授权后几秒内设备会自动获得 IP 地址（显示在 Managed IPs 列）</li>
+<li>建议在 <strong>Name/Description</strong> 列填写备注（如 &ldquo;MacBook&rdquo;、&ldquo;K8&rdquo;）方便区分</li>
+</ol>
+<blockquote>
+<p>注意：如果不勾选 Auth，设备虽然 join 了但无法通信，这是最常见的&quot;连不上&quot;原因。</p></blockquote>
+<h3 id="第五步验证连接">第五步：验证连接
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 两台设备上分别查看 ZeroTier 分配的 IP</span>
+</span></span><span class="line"><span class="cl">sudo zerotier-cli listnetworks
+</span></span><span class="line"><span class="cl"><span class="c1"># 输出类似：200 listnetworks &lt;nwid&gt; &lt;name&gt; &lt;mac&gt; &lt;status&gt; &lt;type&gt; &lt;dev&gt; &lt;ips&gt;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 关注 status 应为 OK，ips 列显示分配的 IP（如 10.147.20.x）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># MacBook 上 ping K8 的 ZeroTier IP</span>
+</span></span><span class="line"><span class="cl">ping 10.147.20.xx
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>之后所有 SSH、scp 等操作使用 ZeroTier 分配的 IP（<code>10.x.x.x</code>）即可。只要两台设备能上公网，无论在哪个网络都可以互通。</p>
+<h3 id="zerotier-常用命令">ZeroTier 常用命令
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 查看本机 ZeroTier 状态和 Member ID</span>
+</span></span><span class="line"><span class="cl">sudo zerotier-cli info
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查看已加入的网络及 IP</span>
+</span></span><span class="line"><span class="cl">sudo zerotier-cli listnetworks
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查看当前连接的节点（peers）</span>
+</span></span><span class="line"><span class="cl">sudo zerotier-cli listpeers
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 加入网络</span>
+</span></span><span class="line"><span class="cl">sudo zerotier-cli join &lt;NetworkID&gt;
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 离开网络</span>
+</span></span><span class="line"><span class="cl">sudo zerotier-cli leave &lt;NetworkID&gt;
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查看服务状态（Linux）</span>
+</span></span><span class="line"><span class="cl">sudo systemctl status zerotier-one
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="zerotier-管理面板说明">ZeroTier 管理面板说明
+</h3><p>在 <a class="link" href="https://my.zerotier.com"  target="_blank" rel="noopener"
+    >https://my.zerotier.com</a> 的网络设置页面中：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>区域</th>
+          <th>说明</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><strong>Settings → Name</strong></td>
+          <td>给网络起个名字（如 &ldquo;my-dev-net&rdquo;）</td>
+      </tr>
+      <tr>
+          <td><strong>Settings → Access Control</strong></td>
+          <td>Private（需手动 Auth）/ Public（自动授权，不推荐）</td>
+      </tr>
+      <tr>
+          <td><strong>Settings → IPv4 Auto-Assign</strong></td>
+          <td>选择虚拟网段范围（默认 10.147.x.x/16，一般不用改）</td>
+      </tr>
+      <tr>
+          <td><strong>Members</strong></td>
+          <td>设备列表，Auth 授权、查看 IP、填备注</td>
+      </tr>
+      <tr>
+          <td><strong>Flow Rules</strong></td>
+          <td>网络流量规则（默认允许所有，一般不用改）</td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="注意事项与常见问题">注意事项与常见问题
+</h3><p><strong>1. 设备 join 后 status 显示 ACCESS_DENIED</strong></p>
+<p>没有在管理面板勾选 Auth。去 Members 列表授权即可。</p>
+<p><strong>2. status 显示 REQUESTING_CONFIGURATION</strong></p>
+<p>网络 ID 输错了，或者网络已被删除。确认 Network ID 正确。</p>
+<p><strong>3. 两台设备 ping 不通</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 检查 ZeroTier 虚拟网卡是否 UP</span>
+</span></span><span class="line"><span class="cl">ip link show <span class="p">|</span> grep zt
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 检查防火墙是否拦截了 ZeroTier 网段</span>
+</span></span><span class="line"><span class="cl">sudo ufw status
+</span></span><span class="line"><span class="cl"><span class="c1"># 如果 ufw 开着，放行 ZeroTier 网段</span>
+</span></span><span class="line"><span class="cl">sudo ufw allow in on zt+
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>4. 连接走中继（relay）导致延迟高</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 查看 peers，RELAY 表示走了中继，DIRECT 表示直连</span>
+</span></span><span class="line"><span class="cl">sudo zerotier-cli listpeers
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果一直是 RELAY，说明两台设备之间无法打洞（公司防火墙限制 UDP）。解决方案：</p>
+<ul>
+<li>确保两端防火墙允许 UDP 9993 端口出站</li>
+<li>或自建 Moon 节点做中转（见下方）</li>
+</ul>
+<p><strong>5. 自建 Moon 节点加速（可选）</strong></p>
+<p>国内访问 ZeroTier 官方 Planet 节点较慢时，可在有公网 IP 的服务器上搭建 Moon：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 在公网服务器上安装 ZeroTier</span>
+</span></span><span class="line"><span class="cl">curl -s https://install.zerotier.com <span class="p">|</span> sudo bash
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 生成 moon 配置</span>
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> /var/lib/zerotier-one
+</span></span><span class="line"><span class="cl">sudo zerotier-idtool initmoon identity.public &gt; moon.json
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 编辑 moon.json，在 stableEndpoints 中填入公网 IP</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># &#34;stableEndpoints&#34;: [&#34;公网IP/9993&#34;]</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sudo zerotier-idtool genmoon moon.json
+</span></span><span class="line"><span class="cl">sudo mkdir -p moons.d
+</span></span><span class="line"><span class="cl">sudo mv 000000*.moon moons.d/
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sudo systemctl restart zerotier-one
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>其他设备加入 Moon：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 将 moon 文件复制到其他设备的 /var/lib/zerotier-one/moons.d/</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 或使用命令 orbit</span>
+</span></span><span class="line"><span class="cl">sudo zerotier-cli orbit &lt;moon-id&gt; &lt;moon-id&gt;
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>6. 安全建议</strong></p>
+<ul>
+<li>网络 Access Control 保持 <strong>Private</strong>（默认），避免陌生设备自动接入</li>
+<li>定期检查 Members 列表，移除不认识的设备</li>
+<li>ZeroTier 免费版最多 25 个设备，个人使用足够</li>
+<li>如果离开公司网络后不需要连接，可以 <code>sudo zerotier-cli leave &lt;NetworkID&gt;</code></li>
+</ul>
+<h2 id="14-可选tailscale-组网替代方案">1.4 可选：Tailscale 组网（替代方案）
+</h2><p>如果不想用 ZeroTier，Tailscale 是类似的替代品：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># K8 上安装 Tailscale</span>
+</span></span><span class="line"><span class="cl">curl -fsSL https://tailscale.com/install.sh <span class="p">|</span> sh
+</span></span><span class="line"><span class="cl">sudo tailscale up
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># MacBook 上安装</span>
+</span></span><span class="line"><span class="cl">brew install tailscale
+</span></span><span class="line"><span class="cl">tailscale up
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>之后用 Tailscale 分配的 IP（100.x.x.x）连接。</p>
+<h3 id="zerotier-vs-tailscale">ZeroTier vs Tailscale
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th></th>
+          <th>ZeroTier</th>
+          <th>Tailscale</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>免费节点数</td>
+          <td>25</td>
+          <td>100</td>
+      </tr>
+      <tr>
+          <td>自建控制器</td>
+          <td>支持</td>
+          <td>不支持（商业版可）</td>
+      </tr>
+      <tr>
+          <td>国内连通性</td>
+          <td>一般，可配 moon 中转</td>
+          <td>类似，可配 DERP</td>
+      </tr>
+      <tr>
+          <td>配置复杂度</td>
+          <td>稍高</td>
+          <td>更简单</td>
+      </tr>
+  </tbody>
+</table></div>
+<h1 id="二ssh-连接配置">二、SSH 连接配置
+</h1><h2 id="21-k8-上安装并启用-ssh">2.1 K8 上安装并启用 SSH
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo apt install -y openssh-server
+</span></span><span class="line"><span class="cl">sudo systemctl <span class="nb">enable</span> ssh
+</span></span><span class="line"><span class="cl">sudo systemctl start ssh
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 确认服务运行</span>
+</span></span><span class="line"><span class="cl">sudo systemctl status ssh
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="22-macbook-配置-ssh-免密登录">2.2 MacBook 配置 SSH 免密登录
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 生成密钥（如果还没有）</span>
+</span></span><span class="line"><span class="cl">ssh-keygen -t ed25519 -C <span class="s2">&#34;your_email@example.com&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 复制公钥到 K8</span>
+</span></span><span class="line"><span class="cl">ssh-copy-id your_username@192.168.1.100
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 测试连接</span>
+</span></span><span class="line"><span class="cl">ssh your_username@192.168.1.100
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="23-配置-ssh-别名">2.3 配置 SSH 别名
+</h2><p>编辑 <code>~/.ssh/config</code>（MacBook 上）：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">Host k8
+</span></span><span class="line"><span class="cl">    HostName 192.168.1.100
+</span></span><span class="line"><span class="cl">    User your_username
+</span></span><span class="line"><span class="cl">    Port 22
+</span></span><span class="line"><span class="cl">    IdentityFile ~/.ssh/id_ed25519
+</span></span><span class="line"><span class="cl">    # 保持连接活跃，防止断开
+</span></span><span class="line"><span class="cl">    ServerAliveInterval 60
+</span></span><span class="line"><span class="cl">    ServerAliveCountMax 3
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>之后直接 <code>ssh k8</code> 即可连接。</p>
+<h2 id="24-k8-上-ssh-安全加固可选">2.4 K8 上 SSH 安全加固（可选）
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo vim /etc/ssh/sshd_config
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>建议修改：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">PermitRootLogin no
+</span></span><span class="line"><span class="cl">PasswordAuthentication no   # 仅允许密钥登录
+</span></span><span class="line"><span class="cl">MaxAuthTries 3
+</span></span></code></pre></td></tr></table>
+</div>
+</div><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo systemctl restart ssh
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h1 id="三开发工具搭建k8-上">三、开发工具搭建（K8 上）
+</h1><h2 id="31-基础开发工具">3.1 基础开发工具
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo apt update <span class="o">&amp;&amp;</span> sudo apt upgrade -y
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 编译工具链</span>
+</span></span><span class="line"><span class="cl">sudo apt install -y build-essential cmake pkg-config
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 版本管理</span>
+</span></span><span class="line"><span class="cl">sudo apt install -y git
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 常用工具</span>
+</span></span><span class="line"><span class="cl">sudo apt install -y curl wget unzip htop tmux tree jq ripgrep fd-find
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="32-git-配置">3.2 Git 配置
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">git config --global user.name <span class="s2">&#34;Your Name&#34;</span>
+</span></span><span class="line"><span class="cl">git config --global user.email <span class="s2">&#34;your_email@example.com&#34;</span>
+</span></span><span class="line"><span class="cl">git config --global core.editor vim
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="33-python-环境">3.3 Python 环境
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 系统 Python + venv</span>
+</span></span><span class="line"><span class="cl">sudo apt install -y python3-pip python3-venv python3-dev
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 或使用 pyenv 管理多版本</span>
+</span></span><span class="line"><span class="cl">curl https://pyenv.run <span class="p">|</span> bash
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 添加到 ~/.bashrc</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;export PYENV_ROOT=&#34;$HOME/.pyenv&#34;&#39;</span> &gt;&gt; ~/.bashrc
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;command -v pyenv &gt;/dev/null || export PATH=&#34;$PYENV_ROOT/bin:$PATH&#34;&#39;</span> &gt;&gt; ~/.bashrc
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;eval &#34;$(pyenv init -)&#34;&#39;</span> &gt;&gt; ~/.bashrc
+</span></span><span class="line"><span class="cl"><span class="nb">source</span> ~/.bashrc
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 安装指定版本</span>
+</span></span><span class="line"><span class="cl">pyenv install 3.12.4
+</span></span><span class="line"><span class="cl">pyenv global 3.12.4
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="项目虚拟环境管理">项目虚拟环境管理
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 进入项目目录后创建 venv</span>
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> ~/projects/my_project
+</span></span><span class="line"><span class="cl">python -m venv .venv
+</span></span><span class="line"><span class="cl"><span class="nb">source</span> .venv/bin/activate
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 安装依赖</span>
+</span></span><span class="line"><span class="cl">pip install -r requirements.txt
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 常用开发工具</span>
+</span></span><span class="line"><span class="cl">pip install ipython pytest black ruff mypy
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="python-远程调试要点">Python 远程调试要点
+</h3><ul>
+<li>VS Code / PyCharm 连接 K8 后，解释器路径选择项目下的 <code>.venv/bin/python</code></li>
+<li>如果使用 pyenv，路径为 <code>~/.pyenv/versions/3.12.4/bin/python</code></li>
+<li>确保 IDE 的终端也激活了正确的虚拟环境</li>
+</ul>
+<h2 id="34-go-环境">3.4 Go 环境
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 下载安装（以 1.22 为例，可替换版本号）</span>
+</span></span><span class="line"><span class="cl">wget https://go.dev/dl/go1.22.4.linux-amd64.tar.gz
+</span></span><span class="line"><span class="cl">sudo rm -rf /usr/local/go
+</span></span><span class="line"><span class="cl">sudo tar -C /usr/local -xzf go1.22.4.linux-amd64.tar.gz
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 添加到 PATH（~/.bashrc）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;export PATH=$PATH:/usr/local/go/bin&#39;</span> &gt;&gt; ~/.bashrc
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;export GOPATH=$HOME/go&#39;</span> &gt;&gt; ~/.bashrc
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;export PATH=$PATH:$GOPATH/bin&#39;</span> &gt;&gt; ~/.bashrc
+</span></span><span class="line"><span class="cl"><span class="nb">source</span> ~/.bashrc
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 验证</span>
+</span></span><span class="line"><span class="cl">go version
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="go-开发工具链">Go 开发工具链
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 安装常用工具（gopls、dlv 等 IDE 需要的）</span>
+</span></span><span class="line"><span class="cl">go install golang.org/x/tools/gopls@latest
+</span></span><span class="line"><span class="cl">go install github.com/go-delve/delve/cmd/dlv@latest
+</span></span><span class="line"><span class="cl">go install golang.org/x/tools/cmd/goimports@latest
+</span></span><span class="line"><span class="cl">go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="go-项目初始化">Go 项目初始化
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">mkdir -p ~/go/src/project_name <span class="o">&amp;&amp;</span> <span class="nb">cd</span> ~/go/src/project_name
+</span></span><span class="line"><span class="cl">go mod init project_name
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="go-代理配置国内加速">Go 代理配置（国内加速）
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">go env -w <span class="nv">GOPROXY</span><span class="o">=</span>https://goproxy.cn,direct
+</span></span><span class="line"><span class="cl">go env -w <span class="nv">GOPRIVATE</span><span class="o">=</span>your.private.repo.com
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="35-nodejs-环境">3.5 Node.js 环境
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 使用 nvm 管理</span>
+</span></span><span class="line"><span class="cl">curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh <span class="p">|</span> bash
+</span></span><span class="line"><span class="cl"><span class="nb">source</span> ~/.bashrc
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">nvm install --lts
+</span></span><span class="line"><span class="cl">nvm use --lts
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="35-docker">3.5 Docker
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 安装 Docker</span>
+</span></span><span class="line"><span class="cl">sudo apt install -y docker.io docker-compose-v2
+</span></span><span class="line"><span class="cl">sudo usermod -aG docker <span class="nv">$USER</span>
+</span></span><span class="line"><span class="cl">newgrp docker
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 验证</span>
+</span></span><span class="line"><span class="cl">docker run hello-world
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="36-数据库按需">3.6 数据库（按需）
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># PostgreSQL</span>
+</span></span><span class="line"><span class="cl">sudo apt install -y postgresql postgresql-client
+</span></span><span class="line"><span class="cl">sudo systemctl <span class="nb">enable</span> postgresql
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># Redis</span>
+</span></span><span class="line"><span class="cl">sudo apt install -y redis-server
+</span></span><span class="line"><span class="cl">sudo systemctl <span class="nb">enable</span> redis-server
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h1 id="四macbook-远程开发方式">四、MacBook 远程开发方式
+</h1><h2 id="41-vs-code-remote-ssh">4.1 VS Code Remote-SSH
+</h2><p>最无缝的远程开发体验——代码在 K8 上，编辑器 UI 在 MacBook 上。</p>
+<h3 id="安装与配置">安装与配置
+</h3><ol>
+<li>MacBook 安装 <a class="link" href="https://code.visualstudio.com/"  target="_blank" rel="noopener"
+    >VS Code</a></li>
+<li>安装扩展：<strong>Remote - SSH</strong>（<code>ms-vscode-remote.remote-ssh</code>）</li>
+<li>确保 <code>~/.ssh/config</code> 已配置好 K8 连接（见第二节）</li>
+</ol>
+<h3 id="连接步骤">连接步骤
+</h3><ol>
+<li><code>Cmd+Shift+P</code> → 输入 &ldquo;Remote-SSH: Connect to Host&rdquo;</li>
+<li>选择 <code>k8</code>（或输入 <code>agsol@K8的ZeroTier_IP</code>）</li>
+<li>首次连接会在 K8 上自动安装 VS Code Server（需等待 1-2 分钟）</li>
+<li>连接成功后，左下角显示绿色 <code>SSH: k8</code></li>
+<li><code>File</code> → <code>Open Folder</code> → 选择 K8 上的项目目录（如 <code>/home/agsol/workspace/my-project</code>）</li>
+</ol>
+<h3 id="配置-python-开发">配置 Python 开发
+</h3><ol>
+<li>在远程窗口安装扩展：<strong>Python</strong>（<code>ms-python.python</code>）</li>
+<li><code>Cmd+Shift+P</code> → &ldquo;Python: Select Interpreter&rdquo;</li>
+<li>选择项目的 <code>.venv/bin/python</code> 或 pyenv 的 Python 路径</li>
+<li>终端中运行代码、调试断点，全部在 K8 上执行</li>
+</ol>
+<h3 id="配置-go-开发">配置 Go 开发
+</h3><ol>
+<li>在远程窗口安装扩展：<strong>Go</strong>（<code>golang.go</code>）</li>
+<li>连接后 VS Code 会提示安装 Go 工具（gopls、dlv 等），点 &ldquo;Install All&rdquo;</li>
+<li><code>settings.json</code> 中确认 Go 路径：</li>
+</ol>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;go.goroot&#34;</span><span class="p">:</span> <span class="s2">&#34;/usr/local/go&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;go.gopath&#34;</span><span class="p">:</span> <span class="s2">&#34;/home/agsol/go&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><ol start="4">
+<li>F5 即可远程调试 Go 程序</li>
+</ol>
+<h3 id="推荐远程扩展">推荐远程扩展
+</h3><p>在 Remote-SSH 连接后安装（装在远程端）：</p>
+<ul>
+<li><strong>Python</strong> — Python 语言支持</li>
+<li><strong>Pylance</strong> — Python 智能补全</li>
+<li><strong>Go</strong> — Go 语言支持</li>
+<li><strong>GitLens</strong> — Git 增强</li>
+<li><strong>Error Lens</strong> — 行内错误显示</li>
+</ul>
+<h3 id="端口转发">端口转发
+</h3><p>VS Code 会自动检测 K8 上监听的端口并转发到本地。也可手动添加：</p>
+<ul>
+<li>点击底部面板 <code>PORTS</code> 标签</li>
+<li>点 <code>Forward a Port</code> → 输入端口号（如 8000）</li>
+<li>浏览器访问 <code>localhost:8000</code> 即可</li>
+</ul>
+<h2 id="42-pycharm-remotejetbrains-gateway">4.2 PyCharm Remote（JetBrains Gateway）
+</h2><h3 id="方式-ajetbrains-gateway推荐">方式 A：JetBrains Gateway（推荐）
+</h3><p>代码完全在 K8 上，本地只运行 UI 客户端：</p>
+<ol>
+<li>MacBook 下载安装 <a class="link" href="https://www.jetbrains.com/remote-development/gateway/"  target="_blank" rel="noopener"
+    >JetBrains Gateway</a></li>
+<li>打开 Gateway → 点击 <code>SSH</code> → <code>New Connection</code></li>
+<li>填写连接信息：
+<ul>
+<li>Host: K8 的 ZeroTier IP（如 <code>10.147.20.xx</code>）</li>
+<li>Port: 22</li>
+<li>Username: agsol</li>
+<li>Authentication: Key pair → 选择 <code>~/.ssh/id_ed25519</code></li>
+</ul>
+</li>
+<li>点 <code>Check Connection and Continue</code></li>
+<li>选择 IDE：
+<ul>
+<li>Python 项目选 <strong>PyCharm Professional</strong></li>
+<li>Go 项目选 <strong>GoLand</strong></li>
+</ul>
+</li>
+<li>设置项目目录：<code>/home/agsol/workspace/my-project</code></li>
+<li>点 <code>Download and Start IDE</code>
+<ul>
+<li>Gateway 会在 K8 上下载并安装 IDE 后端（首次约 5-10 分钟）</li>
+<li>后续连接几秒内打开</li>
+</ul>
+</li>
+</ol>
+<h3 id="gateway-中配置-python-解释器">Gateway 中配置 Python 解释器
+</h3><ol>
+<li>IDE 打开后 → <code>File</code> → <code>Settings</code> → <code>Project</code> → <code>Python Interpreter</code></li>
+<li>点齿轮 → <code>Add Interpreter</code> → <code>Add Local Interpreter</code>（这里的&quot;本地&quot;指 K8）</li>
+<li>选择 <code>Virtualenv Environment</code> → <code>Existing</code> → 路径填 <code>/home/agsol/项目/.venv/bin/python</code></li>
+</ol>
+<h3 id="gateway-中配置-go-sdk">Gateway 中配置 Go SDK
+</h3><ol>
+<li><code>File</code> → <code>Settings</code> → <code>Go</code> → <code>GOROOT</code></li>
+<li>设置为 <code>/usr/local/go</code></li>
+<li><code>GOPATH</code> 设置为 <code>/home/agsol/go</code></li>
+</ol>
+<h3 id="方式-bpycharm-deployment--remote-interpreter">方式 B：PyCharm Deployment + Remote Interpreter
+</h3><p>适合习惯本地保留代码副本的工作流：</p>
+<ol>
+<li>
+<p><strong>配置 SSH</strong></p>
+<ul>
+<li><code>File</code> → <code>Settings</code> → <code>Tools</code> → <code>SSH Configurations</code></li>
+<li>点 <code>+</code>：Host 填 K8 IP，Port 22，Username agsol，Auth type 选 Key pair</li>
+<li><code>Test Connection</code> 验证</li>
+</ul>
+</li>
+<li>
+<p><strong>配置 Deployment（自动同步）</strong></p>
+<ul>
+<li><code>File</code> → <code>Settings</code> → <code>Build, Execution, Deployment</code> → <code>Deployment</code></li>
+<li>点 <code>+</code> → 类型选 <code>SFTP</code> → 选择刚才的 SSH 配置</li>
+<li><code>Root path</code>：<code>/home/agsol/workspace/my-project</code></li>
+<li><code>Mappings</code> 标签：Local path ↔ Deployment path 映射</li>
+<li><code>Options</code>：勾选 <code>Upload changed files automatically to the default server</code> → 选 <code>On explicit save action (Ctrl+S)</code></li>
+</ul>
+</li>
+<li>
+<p><strong>配置远程解释器</strong></p>
+<ul>
+<li><code>File</code> → <code>Settings</code> → <code>Project</code> → <code>Python Interpreter</code></li>
+<li>点齿轮 → <code>Add</code> → <code>On SSH</code></li>
+<li>选择 SSH 配置 → Interpreter path：<code>/home/agsol/项目/.venv/bin/python</code></li>
+<li>同步文件夹映射确认后完成</li>
+</ul>
+</li>
+<li>
+<p><strong>运行/调试</strong></p>
+<ul>
+<li>运行配置会自动使用远程解释器</li>
+<li>调试断点、变量查看全部在 K8 上执行</li>
+</ul>
+</li>
+</ol>
+<h2 id="43-终端直连--tmux">4.3 终端直连 + tmux
+</h2><p>适合纯命令行工作流：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 连接到 K8</span>
+</span></span><span class="line"><span class="cl">ssh k8
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 使用 tmux 保持会话</span>
+</span></span><span class="line"><span class="cl">tmux new -s dev
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 断开后重新连接</span>
+</span></span><span class="line"><span class="cl">tmux attach -t dev
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>推荐 tmux 配置（K8 上 <code>~/.tmux.conf</code>）：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">set -g mouse on
+</span></span><span class="line"><span class="cl">set -g history-limit 50000
+</span></span><span class="line"><span class="cl">set -g default-terminal &#34;screen-256color&#34;
+</span></span><span class="line"><span class="cl">set -s escape-time 0
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="44-文件同步如果不用-remote-ssh">4.4 文件同步（如果不用 Remote-SSH）
+</h2><p>如果偶尔需要在本地编辑再同步到 K8：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># rsync 同步</span>
+</span></span><span class="line"><span class="cl">rsync -avz --exclude<span class="o">=</span><span class="s1">&#39;.venv&#39;</span> --exclude<span class="o">=</span><span class="s1">&#39;node_modules&#39;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  ~/projects/my_app/ k8:~/projects/my_app/
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 或使用 mutagen 实时双向同步</span>
+</span></span><span class="line"><span class="cl">brew install mutagen-io/mutagen/mutagen
+</span></span><span class="line"><span class="cl">mutagen sync create ~/projects/my_app k8:~/projects/my_app <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --ignore<span class="o">=</span><span class="s2">&#34;.venv,node_modules,.git&#34;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="45-ide-选择建议">4.5 IDE 选择建议
+</h2><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>场景</th>
+          <th>推荐方案</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Python 日常开发</td>
+          <td>VS Code Remote-SSH 或 Gateway + PyCharm</td>
+      </tr>
+      <tr>
+          <td>Go 开发</td>
+          <td>VS Code Remote-SSH（Go 扩展）或 Gateway + GoLand</td>
+      </tr>
+      <tr>
+          <td>快速查看/小修改</td>
+          <td>SSH + vim/nano</td>
+      </tr>
+      <tr>
+          <td>长时间运行任务</td>
+          <td>tmux 会话</td>
+      </tr>
+      <tr>
+          <td>调试复杂项目</td>
+          <td>Gateway（IDE 级调试体验更好）</td>
+      </tr>
+  </tbody>
+</table></div>
+<h1 id="五端口转发与服务访问">五、端口转发与服务访问
+</h1><h2 id="51-ssh-端口转发">5.1 SSH 端口转发
+</h2><p>在 K8 上运行的 Web 服务，通过 SSH 隧道在 MacBook 浏览器访问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 转发 K8 的 8000 端口到本地 8000</span>
+</span></span><span class="line"><span class="cl">ssh -L 8000:localhost:8000 k8
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 多端口转发</span>
+</span></span><span class="line"><span class="cl">ssh -L 8000:localhost:8000 -L 5432:localhost:5432 -L 3000:localhost:3000 k8
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>VS Code Remote-SSH 会自动检测并转发端口，无需手动配置。</p>
+<h2 id="52-持久化端口转发可选">5.2 持久化端口转发（可选）
+</h2><p>在 <code>~/.ssh/config</code> 中添加：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">Host k8
+</span></span><span class="line"><span class="cl">    # ... 前面的配置 ...
+</span></span><span class="line"><span class="cl">    LocalForward 8000 localhost:8000
+</span></span><span class="line"><span class="cl">    LocalForward 3000 localhost:3000
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h1 id="六开发工作流示例">六、开发工作流示例
+</h1><p>一个典型的日常开发流程：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">1. MacBook 打开 VS Code
+</span></span><span class="line"><span class="cl">2. Cmd+Shift+P → Remote-SSH → 连接 k8
+</span></span><span class="line"><span class="cl">3. 打开 K8 上的项目目录
+</span></span><span class="line"><span class="cl">4. 在 VS Code 终端中启动开发服务器
+</span></span><span class="line"><span class="cl">5. 浏览器访问 localhost:8000（自动端口转发）
+</span></span><span class="line"><span class="cl">6. 正常编辑、调试、git 操作，一切都在 K8 上执行
+</span></span><span class="line"><span class="cl">7. 关闭 VS Code 即断开，K8 上的 tmux 会话仍可保留运行中的服务
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h1 id="七性能与体验优化">七、性能与体验优化
+</h1><h2 id="71-ssh-连接加速">7.1 SSH 连接加速
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># MacBook ~/.ssh/config 添加多路复用</span>
+</span></span><span class="line"><span class="cl">Host k8
+</span></span><span class="line"><span class="cl">    <span class="c1"># ... 前面的配置 ...</span>
+</span></span><span class="line"><span class="cl">    ControlMaster auto
+</span></span><span class="line"><span class="cl">    ControlPath ~/.ssh/sockets/%r@%h-%p
+</span></span><span class="line"><span class="cl">    ControlPersist <span class="m">600</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">mkdir -p ~/.ssh/sockets
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>首次连接后，后续连接几乎瞬间建立。</p>
+<h2 id="72-k8-性能调优">7.2 K8 性能调优
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 关闭不需要的桌面环境（如果不接显示器）</span>
+</span></span><span class="line"><span class="cl">sudo systemctl set-default multi-user.target
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 需要恢复桌面时</span>
+</span></span><span class="line"><span class="cl">sudo systemctl set-default graphical.target
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>无桌面环境可节省约 500MB-1GB 内存给开发使用。</p>
+<h2 id="73-自动唤醒休眠">7.3 自动唤醒/休眠
+</h2><p>如果 K8 不 24 小时开机，可配合 Wake-on-LAN：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># K8 上启用 WOL</span>
+</span></span><span class="line"><span class="cl">sudo ethtool -s enp1s0 wol g
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># MacBook 上唤醒（需安装 wakeonlan）</span>
+</span></span><span class="line"><span class="cl">brew install wakeonlan
+</span></span><span class="line"><span class="cl">wakeonlan AA:BB:CC:DD:EE:FF  <span class="c1"># K8 网卡 MAC 地址</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h1 id="八安全建议">八、安全建议
+</h1><ul>
+<li><strong>防火墙</strong>：启用 ufw，只开放必要端口</li>
+</ul>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo ufw <span class="nb">enable</span>
+</span></span><span class="line"><span class="cl">sudo ufw allow ssh
+</span></span><span class="line"><span class="cl">sudo ufw allow from 192.168.1.0/24  <span class="c1"># 仅允许局域网访问</span>
+</span></span><span class="line"><span class="cl">sudo ufw status
+</span></span></code></pre></td></tr></table>
+</div>
+</div><ul>
+<li><strong>自动更新安全补丁</strong>：</li>
+</ul>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo apt install -y unattended-upgrades
+</span></span><span class="line"><span class="cl">sudo dpkg-reconfigure -plow unattended-upgrades
+</span></span></code></pre></td></tr></table>
+</div>
+</div><ul>
+<li><strong>SSH 密钥</strong>：不要在 K8 上存放 GitHub/GitLab 私钥，使用 SSH Agent Forwarding：</li>
+</ul>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># MacBook ~/.ssh/config</span>
+</span></span><span class="line"><span class="cl">Host k8
+</span></span><span class="line"><span class="cl">    ForwardAgent yes
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样在 K8 上 <code>git push</code> 时会使用 MacBook 上的密钥，无需在远程机器存私钥。</p>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/linux/">Linux</a>
+        
+            <a href="/tags/ubuntu/">Ubuntu</a>
+        
+            <a href="/tags/remote-dev/">Remote-Dev</a>
+        
+            <a href="/tags/ssh/">Ssh</a>
+        
+            <a href="/tags/mini-pc/">Mini-Pc</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/%E5%9C%A8%E6%9E%81%E6%91%A9%E5%AE%A2-k8-%E8%BF%B7%E4%BD%A0%E4%B8%BB%E6%9C%BA%E4%B8%8A%E5%AE%89%E8%A3%85-ubuntu-%E5%AE%8C%E6%95%B4%E6%8C%87%E5%8D%97/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">在极摩客 K8 迷你主机上安装 Ubuntu 完整指南</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>
