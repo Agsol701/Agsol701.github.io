@@ -248,9 +248,9 @@
   </ol>
 
   <ol>
-    <li><a href="#31-核心数据结构">3.1 核心数据结构</a></li>
-    <li><a href="#32-agentexecutor-循环机制">3.2 AgentExecutor 循环机制</a></li>
-    <li><a href="#33-langgraph-react-agent现代实现">3.3 LangGraph ReAct Agent（现代实现）</a></li>
+    <li><a href="#31-核心数据结构langchain-10">3.1 核心数据结构（langchain 1.0+）</a></li>
+    <li><a href="#32-create_agent-循环机制langchain-10">3.2 create_agent 循环机制（langchain 1.0+）</a></li>
+    <li><a href="#33-历史参考旧版-agentexecutor已在-langchain-10-中移除">3.3 历史参考：旧版 AgentExecutor（已在 langchain 1.0 中移除）</a></li>
     <li><a href="#34-toolnode-源码解析">3.4 ToolNode 源码解析</a></li>
     <li><a href="#35-消息流转全景图">3.5 消息流转全景图</a></li>
   </ol>
@@ -292,7 +292,7 @@
   </ol>
 
   <ol>
-    <li><a href="#91-使用-langchain-实现-tool-calling-agent">9.1 使用 LangChain 实现 Tool Calling Agent</a></li>
+    <li><a href="#91-使用-langchain-10-实现-tool-calling-agent">9.1 使用 langchain 1.0+ 实现 Tool Calling Agent</a></li>
     <li><a href="#92-自定义工具类带完整校验">9.2 自定义工具类（带完整校验）</a></li>
   </ol>
 
@@ -1008,8 +1008,9 @@
   </tbody>
 </table></div>
 <h1 id="三agent-执行循环深度解析">三、Agent 执行循环深度解析
-</h1><h2 id="31-核心数据结构">3.1 核心数据结构
-</h2><div class="highlight"><div class="chroma">
+</h1><h2 id="31-核心数据结构langchain-10">3.1 核心数据结构（langchain 1.0+）
+</h2><p>在当前版本中，Agent 不再使用 <code>AgentAction</code>/<code>AgentFinish</code>，而是通过<strong>消息类型</strong>驱动循环：</p>
+<div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
 </span><span class="lnt"> 2
@@ -1027,28 +1028,207 @@
 </span><span class="lnt">14
 </span><span class="lnt">15
 </span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># 源码位置：langchain_core/agents.py</span>
-</span></span><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">AgentAction</span><span class="p">:</span>
-</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;表示一次工具调用动作&#34;&#34;&#34;</span>
-</span></span><span class="line"><span class="cl">    <span class="n">tool</span><span class="p">:</span> <span class="nb">str</span>              <span class="c1"># 工具名</span>
-</span></span><span class="line"><span class="cl">    <span class="n">tool_input</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]</span>  <span class="c1"># 工具参数</span>
-</span></span><span class="line"><span class="cl">    <span class="n">log</span><span class="p">:</span> <span class="nb">str</span>               <span class="c1"># LLM 原始输出（用于调试）</span>
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_core.messages</span> <span class="kn">import</span> <span class="n">AIMessage</span><span class="p">,</span> <span class="n">ToolMessage</span><span class="p">,</span> <span class="n">HumanMessage</span>
 </span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">AgentFinish</span><span class="p">:</span>
-</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;表示 Agent 完成任务&#34;&#34;&#34;</span>
-</span></span><span class="line"><span class="cl">    <span class="n">return_values</span><span class="p">:</span> <span class="nb">dict</span>    <span class="c1"># 最终返回值</span>
-</span></span><span class="line"><span class="cl">    <span class="n">log</span><span class="p">:</span> <span class="nb">str</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># LLM 决定调用工具时，输出包含 tool_calls 的 AIMessage</span>
+</span></span><span class="line"><span class="cl"><span class="n">ai_msg</span> <span class="o">=</span> <span class="n">AIMessage</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">content</span><span class="o">=</span><span class="s2">&#34;&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">tool_calls</span><span class="o">=</span><span class="p">[{</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;name&#34;</span><span class="p">:</span> <span class="s2">&#34;get_weather&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;args&#34;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&#34;city&#34;</span><span class="p">:</span> <span class="s2">&#34;北京&#34;</span><span class="p">},</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;id&#34;</span><span class="p">:</span> <span class="s2">&#34;call_abc123&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}]</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
 </span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">AgentStep</span><span class="p">:</span>
-</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;一次完整的 动作+观察&#34;&#34;&#34;</span>
-</span></span><span class="line"><span class="cl">    <span class="n">action</span><span class="p">:</span> <span class="n">AgentAction</span>
-</span></span><span class="line"><span class="cl">    <span class="n">observation</span><span class="p">:</span> <span class="nb">str</span>       <span class="c1"># 工具执行结果</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 工具执行结果通过 ToolMessage 回填，tool_call_id 关联对应请求</span>
+</span></span><span class="line"><span class="cl"><span class="n">tool_msg</span> <span class="o">=</span> <span class="n">ToolMessage</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">content</span><span class="o">=</span><span class="s1">&#39;{&#34;temp&#34;: 28, &#34;condition&#34;: &#34;晴&#34;}&#39;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">tool_call_id</span><span class="o">=</span><span class="s2">&#34;call_abc123&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">name</span><span class="o">=</span><span class="s2">&#34;get_weather&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># LLM 认为信息充足时，输出不含 tool_calls 的 AIMessage → 循环结束</span>
+</span></span><span class="line"><span class="cl"><span class="n">final_msg</span> <span class="o">=</span> <span class="n">AIMessage</span><span class="p">(</span><span class="n">content</span><span class="o">=</span><span class="s2">&#34;北京今天晴朗，气温28°C。&#34;</span><span class="p">)</span>
 </span></span></code></pre></td></tr></table>
 </div>
-</div><h2 id="32-agentexecutor-循环机制">3.2 AgentExecutor 循环机制
+</div><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>消息类型</th>
+          <th>角色</th>
+          <th>循环中的含义</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>AIMessage(tool_calls=[...])</code></td>
+          <td>LLM 输出</td>
+          <td>请求调用工具，循环继续</td>
+      </tr>
+      <tr>
+          <td><code>ToolMessage(content, tool_call_id)</code></td>
+          <td>工具返回</td>
+          <td>工具执行结果，回填给 LLM</td>
+      </tr>
+      <tr>
+          <td><code>AIMessage(content=&quot;...&quot;)</code></td>
+          <td>LLM 输出</td>
+          <td>最终回答，循环结束</td>
+      </tr>
+  </tbody>
+</table></div>
+<h2 id="32-create_agent-循环机制langchain-10">3.2 create_agent 循环机制（langchain 1.0+）
 </h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain.agents</span> <span class="kn">import</span> <span class="n">create_agent</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain.agents.middleware</span> <span class="kn">import</span> <span class="n">ModelCallLimitMiddleware</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">agent</span> <span class="o">=</span> <span class="n">create_agent</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">model</span><span class="o">=</span><span class="s2">&#34;openai:gpt-4o&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">tools</span><span class="o">=</span><span class="p">[</span><span class="n">search_knowledge_base</span><span class="p">,</span> <span class="n">create_ticket</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">    <span class="n">system_prompt</span><span class="o">=</span><span class="s2">&#34;你是企业内部助手&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">middleware</span><span class="o">=</span><span class="p">[</span>
+</span></span><span class="line"><span class="cl">        <span class="n">ModelCallLimitMiddleware</span><span class="p">(</span><span class="n">run_limit</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span> <span class="n">exit_behavior</span><span class="o">=</span><span class="s2">&#34;end&#34;</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">    <span class="p">],</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span><span class="s2">&#34;messages&#34;</span><span class="p">:</span> <span class="p">[(</span><span class="s2">&#34;human&#34;</span><span class="p">,</span> <span class="s2">&#34;帮我查一下差旅报销制度&#34;</span><span class="p">)]})</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>内部由 LangGraph 状态图驱动：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">create_agent 内部状态图:
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">         ┌──────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">         │            AgentState                     │
+</span></span><span class="line"><span class="cl">         │  { messages: list[AnyMessage] }           │
+</span></span><span class="line"><span class="cl">         └──────────────────────────────────────────┘
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">                    ┌─────────┐
+</span></span><span class="line"><span class="cl">         ┌────────▶│  agent  │◀────────┐
+</span></span><span class="line"><span class="cl">         │         │  (LLM)  │         │
+</span></span><span class="line"><span class="cl">         │         └────┬────┘         │
+</span></span><span class="line"><span class="cl">         │              │              │
+</span></span><span class="line"><span class="cl">         │     has tool_calls?         │
+</span></span><span class="line"><span class="cl">         │        │          │         │
+</span></span><span class="line"><span class="cl">         │       Yes         No        │
+</span></span><span class="line"><span class="cl">         │        │          │         │
+</span></span><span class="line"><span class="cl">         │        ▼          ▼         │
+</span></span><span class="line"><span class="cl">         │   ┌────────┐  ┌──────┐     │
+</span></span><span class="line"><span class="cl">         └───│ tools  │  │ END  │     │
+</span></span><span class="line"><span class="cl">             │(execute)│  └──────┘     │
+</span></span><span class="line"><span class="cl">             └────┬────┘               │
+</span></span><span class="line"><span class="cl">                  │  ToolMessage        │
+</span></span><span class="line"><span class="cl">                  └────────────────────┘
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>路由逻辑（<code>tools_condition</code>）：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># 源码位置：langgraph/prebuilt/tool_node.py</span>
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">tools_condition</span><span class="p">(</span><span class="n">state</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&#34;tools&#34;</span><span class="p">,</span> <span class="s2">&#34;__end__&#34;</span><span class="p">]:</span>
+</span></span><span class="line"><span class="cl">    <span class="n">last_message</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&#34;messages&#34;</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">last_message</span><span class="p">,</span> <span class="s2">&#34;tool_calls&#34;</span><span class="p">)</span> <span class="ow">and</span> <span class="n">last_message</span><span class="o">.</span><span class="n">tool_calls</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="s2">&#34;tools&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="s2">&#34;__end__&#34;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">循环图解:
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    ┌─────────────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">    │                                                     │
+</span></span><span class="line"><span class="cl">    ▼                                                     │
+</span></span><span class="line"><span class="cl">┌────────┐  AIMessage(tool_calls)  ┌──────────┐ result ┌─┴──────┐
+</span></span><span class="line"><span class="cl">│ Agent  │────────────────────────▶│  Tools   │───────▶│Observe │
+</span></span><span class="line"><span class="cl">│ (LLM)  │                        │(ToolNode)│        │&amp; Append│
+</span></span><span class="line"><span class="cl">└────┬───┘                        └──────────┘        └────────┘
+</span></span><span class="line"><span class="cl">     │
+</span></span><span class="line"><span class="cl">     │ AIMessage(content=&#34;最终答案&#34;)
+</span></span><span class="line"><span class="cl">     ▼
+</span></span><span class="line"><span class="cl">┌──────────┐
+</span></span><span class="line"><span class="cl">│   END    │
+</span></span><span class="line"><span class="cl">└──────────┘
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="33-历史参考旧版-agentexecutor已在-langchain-10-中移除">3.3 历史参考：旧版 AgentExecutor（已在 langchain 1.0 中移除）
+</h2><blockquote>
+<p>以下代码展示旧版实现原理，帮助理解循环的底层逻辑。当前版本应使用 <code>create_agent()</code>。</p></blockquote>
+<div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
 </span><span class="lnt"> 2
@@ -1079,193 +1259,37 @@
 </span><span class="lnt">27
 </span><span class="lnt">28
 </span><span class="lnt">29
-</span><span class="lnt">30
-</span><span class="lnt">31
-</span><span class="lnt">32
-</span><span class="lnt">33
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># 源码位置：langchain/agents/agent.py（简化版）</span>
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># 旧版数据结构（已移除）</span>
+</span></span><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">AgentAction</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="n">tool</span><span class="p">:</span> <span class="nb">str</span>
+</span></span><span class="line"><span class="cl">    <span class="n">tool_input</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">log</span><span class="p">:</span> <span class="nb">str</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">AgentFinish</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="n">return_values</span><span class="p">:</span> <span class="nb">dict</span>
+</span></span><span class="line"><span class="cl">    <span class="n">log</span><span class="p">:</span> <span class="nb">str</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 旧版循环引擎（已移除）</span>
 </span></span><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">AgentExecutor</span><span class="p">(</span><span class="n">Chain</span><span class="p">):</span>
-</span></span><span class="line"><span class="cl">    <span class="n">agent</span><span class="p">:</span> <span class="n">Runnable</span>          <span class="c1"># LLM + prompt + output_parser</span>
+</span></span><span class="line"><span class="cl">    <span class="n">agent</span><span class="p">:</span> <span class="n">Runnable</span>
 </span></span><span class="line"><span class="cl">    <span class="n">tools</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">BaseTool</span><span class="p">]</span>
 </span></span><span class="line"><span class="cl">    <span class="n">max_iterations</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">15</span>
-</span></span><span class="line"><span class="cl">    <span class="n">handle_parsing_errors</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
 </span></span><span class="line"><span class="cl">
 </span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">_call</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">inputs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
 </span></span><span class="line"><span class="cl">        <span class="n">intermediate_steps</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">AgentStep</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
 </span></span><span class="line"><span class="cl">        <span class="n">iterations</span> <span class="o">=</span> <span class="mi">0</span>
-</span></span><span class="line"><span class="cl">
 </span></span><span class="line"><span class="cl">        <span class="k">while</span> <span class="bp">self</span><span class="o">.</span><span class="n">_should_continue</span><span class="p">(</span><span class="n">iterations</span><span class="p">):</span>
-</span></span><span class="line"><span class="cl">            <span class="c1"># ① Plan：让 LLM 决定下一步</span>
-</span></span><span class="line"><span class="cl">            <span class="n">output</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">agent</span><span class="o">.</span><span class="n">plan</span><span class="p">(</span>
-</span></span><span class="line"><span class="cl">                <span class="n">intermediate_steps</span><span class="o">=</span><span class="n">intermediate_steps</span><span class="p">,</span>
-</span></span><span class="line"><span class="cl">                <span class="o">**</span><span class="n">inputs</span>
-</span></span><span class="line"><span class="cl">            <span class="p">)</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">            <span class="c1"># ② 判断是否结束</span>
+</span></span><span class="line"><span class="cl">            <span class="n">output</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">agent</span><span class="o">.</span><span class="n">plan</span><span class="p">(</span><span class="n">intermediate_steps</span><span class="o">=</span><span class="n">intermediate_steps</span><span class="p">,</span> <span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
 </span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">AgentFinish</span><span class="p">):</span>
 </span></span><span class="line"><span class="cl">                <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_return</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">intermediate_steps</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">            <span class="c1"># ③ Act：执行工具</span>
-</span></span><span class="line"><span class="cl">            <span class="n">actions</span> <span class="o">=</span> <span class="p">[</span><span class="n">output</span><span class="p">]</span> <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span> <span class="k">else</span> <span class="n">output</span>
-</span></span><span class="line"><span class="cl">            <span class="k">for</span> <span class="n">action</span> <span class="ow">in</span> <span class="n">actions</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">            <span class="k">for</span> <span class="n">action</span> <span class="ow">in</span> <span class="p">[</span><span class="n">output</span><span class="p">]:</span>
 </span></span><span class="line"><span class="cl">                <span class="n">tool</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_tool</span><span class="p">(</span><span class="n">action</span><span class="o">.</span><span class="n">tool</span><span class="p">)</span>
 </span></span><span class="line"><span class="cl">                <span class="n">observation</span> <span class="o">=</span> <span class="n">tool</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">action</span><span class="o">.</span><span class="n">tool_input</span><span class="p">)</span>
 </span></span><span class="line"><span class="cl">                <span class="n">intermediate_steps</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">AgentStep</span><span class="p">(</span><span class="n">action</span><span class="p">,</span> <span class="n">observation</span><span class="p">))</span>
-</span></span><span class="line"><span class="cl">
 </span></span><span class="line"><span class="cl">            <span class="n">iterations</span> <span class="o">+=</span> <span class="mi">1</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">        <span class="c1"># 达到最大迭代次数</span>
 </span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_handle_early_stopping</span><span class="p">()</span>
-</span></span></code></pre></td></tr></table>
-</div>
-</div><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">AgentExecutor 循环图解:
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">    ┌─────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">    │                                                     │
-</span></span><span class="line"><span class="cl">    ▼                                                     │
-</span></span><span class="line"><span class="cl">┌────────┐    AgentAction    ┌──────────┐   result   ┌───┴────┐
-</span></span><span class="line"><span class="cl">│  Plan  │─────────────────▶│ Execute  │────────────▶│Observe │
-</span></span><span class="line"><span class="cl">│ (LLM)  │                  │  (Tool)  │             │&amp; Append│
-</span></span><span class="line"><span class="cl">└────┬───┘                  └──────────┘             └────────┘
-</span></span><span class="line"><span class="cl">     │
-</span></span><span class="line"><span class="cl">     │ AgentFinish
-</span></span><span class="line"><span class="cl">     ▼
-</span></span><span class="line"><span class="cl">┌──────────┐
-</span></span><span class="line"><span class="cl">│  Return  │
-</span></span><span class="line"><span class="cl">│  Answer  │
-</span></span><span class="line"><span class="cl">└──────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h2 id="33-langgraph-react-agent现代实现">3.3 LangGraph ReAct Agent（现代实现）
-</h2><p>LangGraph 是 LangChain 团队推出的新一代 Agent 框架，用状态图（StateGraph）替代了传统的 while 循环：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># 源码位置：langgraph/prebuilt/chat_agent_executor.py</span>
-</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">create_react_agent</span><span class="p">(</span>
-</span></span><span class="line"><span class="cl">    <span class="n">model</span><span class="p">:</span> <span class="n">BaseChatModel</span><span class="p">,</span>
-</span></span><span class="line"><span class="cl">    <span class="n">tools</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">BaseTool</span><span class="p">],</span>
-</span></span><span class="line"><span class="cl">    <span class="n">checkpointer</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">BaseCheckpointSaver</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span></span><span class="line"><span class="cl"><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">CompiledGraph</span><span class="p">:</span>
-</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;创建一个基于状态图的 ReAct Agent&#34;&#34;&#34;</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">    <span class="c1"># 构建状态图</span>
-</span></span><span class="line"><span class="cl">    <span class="n">workflow</span> <span class="o">=</span> <span class="n">StateGraph</span><span class="p">(</span><span class="n">AgentState</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">    <span class="c1"># 添加节点</span>
-</span></span><span class="line"><span class="cl">    <span class="n">workflow</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="s2">&#34;agent&#34;</span><span class="p">,</span> <span class="n">call_model</span><span class="p">)</span>   <span class="c1"># LLM 决策节点</span>
-</span></span><span class="line"><span class="cl">    <span class="n">workflow</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="s2">&#34;tools&#34;</span><span class="p">,</span> <span class="n">ToolNode</span><span class="p">(</span><span class="n">tools</span><span class="p">))</span>  <span class="c1"># 工具执行节点</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">    <span class="c1"># 添加边</span>
-</span></span><span class="line"><span class="cl">    <span class="n">workflow</span><span class="o">.</span><span class="n">set_entry_point</span><span class="p">(</span><span class="s2">&#34;agent&#34;</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="n">workflow</span><span class="o">.</span><span class="n">add_conditional_edges</span><span class="p">(</span>
-</span></span><span class="line"><span class="cl">        <span class="s2">&#34;agent&#34;</span><span class="p">,</span>
-</span></span><span class="line"><span class="cl">        <span class="n">should_continue</span><span class="p">,</span>  <span class="c1"># 判断是否有 tool_calls</span>
-</span></span><span class="line"><span class="cl">        <span class="p">{</span><span class="s2">&#34;continue&#34;</span><span class="p">:</span> <span class="s2">&#34;tools&#34;</span><span class="p">,</span> <span class="s2">&#34;end&#34;</span><span class="p">:</span> <span class="n">END</span><span class="p">}</span>
-</span></span><span class="line"><span class="cl">    <span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="n">workflow</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="s2">&#34;tools&#34;</span><span class="p">,</span> <span class="s2">&#34;agent&#34;</span><span class="p">)</span>  <span class="c1"># 工具结果回到 LLM</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">workflow</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">checkpointer</span><span class="o">=</span><span class="n">checkpointer</span><span class="p">)</span>
-</span></span></code></pre></td></tr></table>
-</div>
-</div><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">LangGraph ReAct 状态图:
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">         ┌──────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">         │            AgentState                     │
-</span></span><span class="line"><span class="cl">         │  { messages: List[BaseMessage] }          │
-</span></span><span class="line"><span class="cl">         └──────────────────────────────────────────┘
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">                    ┌─────────┐
-</span></span><span class="line"><span class="cl">         ┌────────▶│  agent  │◀────────┐
-</span></span><span class="line"><span class="cl">         │         │  (LLM)  │         │
-</span></span><span class="line"><span class="cl">         │         └────┬────┘         │
-</span></span><span class="line"><span class="cl">         │              │              │
-</span></span><span class="line"><span class="cl">         │     has tool_calls?         │
-</span></span><span class="line"><span class="cl">         │        │          │         │
-</span></span><span class="line"><span class="cl">         │       Yes         No        │
-</span></span><span class="line"><span class="cl">         │        │          │         │
-</span></span><span class="line"><span class="cl">         │        ▼          ▼         │
-</span></span><span class="line"><span class="cl">         │   ┌────────┐  ┌──────┐     │
-</span></span><span class="line"><span class="cl">         └───│ tools  │  │ END  │     │
-</span></span><span class="line"><span class="cl">             │(execute)│  └──────┘     │
-</span></span><span class="line"><span class="cl">             └────┬────┘               │
-</span></span><span class="line"><span class="cl">                  │  ToolMessage        │
-</span></span><span class="line"><span class="cl">                  └────────────────────┘
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h2 id="34-toolnode-源码解析">3.4 ToolNode 源码解析
@@ -2006,8 +2030,8 @@
 <pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">终止条件（满足任一即停止）：
 </span></span><span class="line"><span class="cl">
 </span></span><span class="line"><span class="cl">1. LLM 不再输出 tool_calls → 它认为信息够了，直接生成文本回答
-</span></span><span class="line"><span class="cl">2. 达到 max_iterations 上限 → 强制停止，防止无限循环
-</span></span><span class="line"><span class="cl">3. 达到 max_execution_time → 超时保护
+</span></span><span class="line"><span class="cl">2. ModelCallLimitMiddleware 达到 run_limit → 强制停止，防止无限循环
+</span></span><span class="line"><span class="cl">3. ToolCallLimitMiddleware 达到限制 → 阻止超限工具调用
 </span></span><span class="line"><span class="cl">4. 工具返回终止信号 → 如 return_direct=True 的工具，结果直接返回用户
 </span></span></code></pre></td></tr></table>
 </div>
@@ -2030,8 +2054,8 @@
 </span></span><span class="line"><span class="cl">原因：工具返回的错误信息不够明确，LLM 不知道该放弃
 </span></span><span class="line"><span class="cl">
 </span></span><span class="line"><span class="cl">防御：
-</span></span><span class="line"><span class="cl">  ├── max_iterations = 10（硬上限）
-</span></span><span class="line"><span class="cl">  ├── 检测连续相同工具调用 → 主动中断
+</span></span><span class="line"><span class="cl">  ├── ModelCallLimitMiddleware(run_limit=10)（硬上限）
+</span></span><span class="line"><span class="cl">  ├── ToolCallLimitMiddleware 针对特定工具设限
 </span></span><span class="line"><span class="cl">  └── 错误信息要明确告诉 LLM &#34;此操作不可行，请换个方案&#34;
 </span></span></code></pre></td></tr></table>
 </div>
@@ -2280,22 +2304,30 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h2 id="82-human-in-the-loop-实现">8.2 Human-in-the-Loop 实现
-</h2><p>LangGraph 通过 <code>interrupt_before</code> 实现工具执行前的人工确认：</p>
+</h2><p>langchain 1.0+ 通过 <code>HumanInTheLoopMiddleware</code> 实现工具执行前的人工确认：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># 在高风险工具执行前中断，等待用户确认</span>
-</span></span><span class="line"><span class="cl"><span class="n">graph</span> <span class="o">=</span> <span class="n">create_react_agent</span><span class="p">(</span>
-</span></span><span class="line"><span class="cl">    <span class="n">model</span><span class="p">,</span>
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain.agents</span> <span class="kn">import</span> <span class="n">create_agent</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain.agents.middleware</span> <span class="kn">import</span> <span class="n">HumanInTheLoopMiddleware</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">agent</span> <span class="o">=</span> <span class="n">create_agent</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">model</span><span class="o">=</span><span class="s2">&#34;openai:gpt-4o&#34;</span><span class="p">,</span>
 </span></span><span class="line"><span class="cl">    <span class="n">tools</span><span class="o">=</span><span class="p">[</span><span class="n">search_docs</span><span class="p">,</span> <span class="n">send_email</span><span class="p">,</span> <span class="n">delete_record</span><span class="p">],</span>
-</span></span><span class="line"><span class="cl">    <span class="n">interrupt_before</span><span class="o">=</span><span class="p">[</span><span class="s2">&#34;send_email&#34;</span><span class="p">,</span> <span class="s2">&#34;delete_record&#34;</span><span class="p">]</span>  <span class="c1"># 这些工具执行前暂停</span>
+</span></span><span class="line"><span class="cl">    <span class="n">middleware</span><span class="o">=</span><span class="p">[</span>
+</span></span><span class="line"><span class="cl">        <span class="n">HumanInTheLoopMiddleware</span><span class="p">(</span><span class="n">tools</span><span class="o">=</span><span class="p">[</span><span class="s2">&#34;send_email&#34;</span><span class="p">,</span> <span class="s2">&#34;delete_record&#34;</span><span class="p">]),</span>
+</span></span><span class="line"><span class="cl">    <span class="p">],</span>
 </span></span><span class="line"><span class="cl"><span class="p">)</span>
 </span></span></code></pre></td></tr></table>
 </div>
@@ -2354,7 +2386,7 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h1 id="九完整代码示例">九、完整代码示例
-</h1><h2 id="91-使用-langchain-实现-tool-calling-agent">9.1 使用 LangChain 实现 Tool Calling Agent
+</h1><h2 id="91-使用-langchain-10-实现-tool-calling-agent">9.1 使用 langchain 1.0+ 实现 Tool Calling Agent
 </h2><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -2384,11 +2416,24 @@
 </span><span class="lnt">25
 </span><span class="lnt">26
 </span><span class="lnt">27
+</span><span class="lnt">28
+</span><span class="lnt">29
+</span><span class="lnt">30
+</span><span class="lnt">31
+</span><span class="lnt">32
+</span><span class="lnt">33
+</span><span class="lnt">34
+</span><span class="lnt">35
+</span><span class="lnt">36
+</span><span class="lnt">37
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_core.tools</span> <span class="kn">import</span> <span class="n">tool</span>
-</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_openai</span> <span class="kn">import</span> <span class="n">ChatOpenAI</span>
-</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langgraph.prebuilt</span> <span class="kn">import</span> <span class="n">create_react_agent</span>
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain.agents</span> <span class="kn">import</span> <span class="n">create_agent</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain.agents.middleware</span> <span class="kn">import</span> <span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">ModelCallLimitMiddleware</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">HumanInTheLoopMiddleware</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_core.tools</span> <span class="kn">import</span> <span class="n">tool</span>
 </span></span><span class="line"><span class="cl">
 </span></span><span class="line"><span class="cl"><span class="c1"># 1. 定义工具</span>
 </span></span><span class="line"><span class="cl"><span class="nd">@tool</span>
@@ -2406,12 +2451,19 @@
 </span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s2">&#34;ticket_id&#34;</span><span class="p">:</span> <span class="n">ticket</span><span class="o">.</span><span class="n">id</span><span class="p">,</span> <span class="s2">&#34;status&#34;</span><span class="p">:</span> <span class="s2">&#34;created&#34;</span><span class="p">})</span>
 </span></span><span class="line"><span class="cl">
 </span></span><span class="line"><span class="cl"><span class="c1"># 2. 创建 Agent</span>
-</span></span><span class="line"><span class="cl"><span class="n">llm</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&#34;gpt-4o&#34;</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl"><span class="n">agent</span> <span class="o">=</span> <span class="n">create_react_agent</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">tools</span><span class="o">=</span><span class="p">[</span><span class="n">search_knowledge_base</span><span class="p">,</span> <span class="n">create_ticket</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="n">agent</span> <span class="o">=</span> <span class="n">create_agent</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">model</span><span class="o">=</span><span class="s2">&#34;openai:gpt-4o&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">tools</span><span class="o">=</span><span class="p">[</span><span class="n">search_knowledge_base</span><span class="p">,</span> <span class="n">create_ticket</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">    <span class="n">system_prompt</span><span class="o">=</span><span class="s2">&#34;你是企业内部助手，帮助员工查询制度和处理工单。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">middleware</span><span class="o">=</span><span class="p">[</span>
+</span></span><span class="line"><span class="cl">        <span class="n">ModelCallLimitMiddleware</span><span class="p">(</span><span class="n">run_limit</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span> <span class="n">exit_behavior</span><span class="o">=</span><span class="s2">&#34;end&#34;</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">        <span class="n">HumanInTheLoopMiddleware</span><span class="p">(</span><span class="n">tools</span><span class="o">=</span><span class="p">[</span><span class="s2">&#34;create_ticket&#34;</span><span class="p">]),</span>
+</span></span><span class="line"><span class="cl">    <span class="p">],</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
 </span></span><span class="line"><span class="cl">
 </span></span><span class="line"><span class="cl"><span class="c1"># 3. 执行</span>
 </span></span><span class="line"><span class="cl"><span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span>
-</span></span><span class="line"><span class="cl">    <span class="s2">&#34;messages&#34;</span><span class="p">:</span> <span class="p">[{</span><span class="s2">&#34;role&#34;</span><span class="p">:</span> <span class="s2">&#34;user&#34;</span><span class="p">,</span> <span class="s2">&#34;content&#34;</span><span class="p">:</span> <span class="s2">&#34;帮我查一下差旅报销制度&#34;</span><span class="p">}]</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;messages&#34;</span><span class="p">:</span> <span class="p">[(</span><span class="s2">&#34;human&#34;</span><span class="p">,</span> <span class="s2">&#34;帮我查一下差旅报销制度&#34;</span><span class="p">)]</span>
 </span></span><span class="line"><span class="cl"><span class="p">})</span>
 </span></span></code></pre></td></tr></table>
 </div>
@@ -2559,7 +2611,7 @@
 </span></span><span class="line"><span class="cl">ReAct（思维框架，不是通信机制）:
 </span></span><span class="line"><span class="cl">  本质：让模型交替执行 Thought → Action → Observation 循环
 </span></span><span class="line"><span class="cl">  早期用 Prompt-based 实现（因为当时模型不支持 function calling）
-</span></span><span class="line"><span class="cl">  现在用 Native Function Calling 实现（LangGraph 的 create_react_agent）
+</span></span><span class="line"><span class="cl">  现在用 Native Function Calling 实现（langchain 1.0+ 的 create_agent）
 </span></span><span class="line"><span class="cl">  ReAct 关注的是&#34;怎么思考&#34;，不是&#34;怎么传递调用意图&#34;
 </span></span></code></pre></td></tr></table>
 </div>
@@ -2731,15 +2783,19 @@
           <td><code>langchain-core/langchain_core/messages/</code></td>
       </tr>
       <tr>
-          <td>AgentExecutor</td>
-          <td><code>langchain/langchain/agents/agent.py</code></td>
+          <td>create_agent</td>
+          <td><code>langchain/langchain/agents/factory.py</code></td>
       </tr>
       <tr>
-          <td>create_react_agent</td>
-          <td><code>langgraph/langgraph/prebuilt/chat_agent_executor.py</code></td>
+          <td>AgentState</td>
+          <td><code>langchain/langchain/agents/middleware/types.py</code></td>
       </tr>
       <tr>
-          <td>ToolNode</td>
+          <td>Middleware 系统</td>
+          <td><code>langchain/langchain/agents/middleware/</code></td>
+      </tr>
+      <tr>
+          <td>ToolNode / tools_condition</td>
           <td><code>langgraph/langgraph/prebuilt/tool_node.py</code></td>
       </tr>
   </tbody>

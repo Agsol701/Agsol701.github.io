@@ -237,7 +237,7 @@
     <li><a href="#21-常见层级">2.1 常见层级</a></li>
     <li><a href="#22-示例结构">2.2 示例结构</a></li>
     <li><a href="#23-langchain-源码chatprompttemplate-的分层实现">2.3 LangChain 源码：ChatPromptTemplate 的分层实现</a></li>
-    <li><a href="#24-agent-prompt-的实际分层create_react_agent-源码">2.4 Agent Prompt 的实际分层：create_react_agent 源码</a></li>
+    <li><a href="#24-prompt-分层在-create_agent-中的体现">2.4 Prompt 分层在 create_agent 中的体现</a></li>
   </ol>
 
   <ol>
@@ -250,14 +250,14 @@
   <ol>
     <li><a href="#41-什么时候需要拆解">4.1 什么时候需要拆解</a></li>
     <li><a href="#42-拆解输出示例">4.2 拆解输出示例</a></li>
-    <li><a href="#43-langchain-源码plan-and-execute-agent-的-prompt-设计">4.3 LangChain 源码：Plan-and-Execute Agent 的 Prompt 设计</a></li>
+    <li><a href="#43-plan-and-execute-模式的-prompt-设计">4.3 Plan-and-Execute 模式的 Prompt 设计</a></li>
   </ol>
 
   <ol>
     <li><a href="#51-让模型承认不知道">5.1 让模型承认不知道</a></li>
     <li><a href="#52-要求证据绑定">5.2 要求证据绑定</a></li>
     <li><a href="#53-工具结果优先">5.3 工具结果优先</a></li>
-    <li><a href="#54-langchain-源码agent-scratchpad-与证据链">5.4 LangChain 源码：Agent Scratchpad 与证据链</a></li>
+    <li><a href="#54-langchain-10messages-作为证据链">5.4 langchain 1.0+：Messages 作为证据链</a></li>
   </ol>
 
   <ol>
@@ -272,7 +272,7 @@
     <li><a href="#74-为什么-prompt-需要版本管理">7.4 为什么 Prompt 需要版本管理？</a></li>
     <li><a href="#75-few-shot-示例什么时候有用">7.5 Few-shot 示例什么时候有用？</a></li>
     <li><a href="#76-langchain-中-chatprompttemplate-和-prompttemplate-有什么区别">7.6 LangChain 中 ChatPromptTemplate 和 PromptTemplate 有什么区别？</a></li>
-    <li><a href="#77-messagesplaceholder-在-agent-中起什么作用">7.7 MessagesPlaceholder 在 Agent 中起什么作用？</a></li>
+    <li><a href="#77-messages-列表在-agent-中起什么作用">7.7 messages 列表在 Agent 中起什么作用？</a></li>
     <li><a href="#78-如何在-prompt-中注入输出格式约束">7.8 如何在 Prompt 中注入输出格式约束？</a></li>
   </ol>
 </nav>
@@ -596,7 +596,28 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h2 id="23-langchain-源码chatprompttemplate-的分层实现">2.3 LangChain 源码：ChatPromptTemplate 的分层实现
-</h2><p>LangChain 通过 <code>ChatPromptTemplate.from_messages()</code> 实现指令分层——每条消息对应一个层级：</p>
+</h2><p>LangChain 1.0+ 中，<code>create_agent()</code> 的 prompt 结构更加简洁——工具描述和历史消息由框架自动管理：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain.agents</span> <span class="kn">import</span> <span class="n">create_agent</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">agent</span> <span class="o">=</span> <span class="n">create_agent</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">model</span><span class="o">=</span><span class="s2">&#34;openai:gpt-4o&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">tools</span><span class="o">=</span><span class="p">[</span><span class="n">search_docs</span><span class="p">,</span> <span class="n">create_ticket</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">    <span class="n">system_prompt</span><span class="o">=</span><span class="s2">&#34;你是一个企业知识库 Agent。不可编造内容，涉及隐私时拒答。&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>框架内部自动组装的消息结构：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -610,24 +631,55 @@
 </span><span class="lnt"> 9
 </span><span class="lnt">10
 </span><span class="lnt">11
-</span><span class="lnt">12
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain_core.prompts</span> <span class="kn">import</span> <span class="n">ChatPromptTemplate</span><span class="p">,</span> <span class="n">MessagesPlaceholder</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="n">prompt</span> <span class="o">=</span> <span class="n">ChatPromptTemplate</span><span class="o">.</span><span class="n">from_messages</span><span class="p">([</span>
-</span></span><span class="line"><span class="cl">    <span class="c1"># 第一层：全局规则（SystemMessage）</span>
-</span></span><span class="line"><span class="cl">    <span class="p">(</span><span class="s2">&#34;system&#34;</span><span class="p">,</span> <span class="s2">&#34;你是一个企业知识库 Agent。不可编造内容，涉及隐私时拒答。&#34;</span><span class="p">),</span>
-</span></span><span class="line"><span class="cl">    <span class="c1"># 第二层：历史对话（动态注入）</span>
-</span></span><span class="line"><span class="cl">    <span class="n">MessagesPlaceholder</span><span class="p">(</span><span class="s2">&#34;chat_history&#34;</span><span class="p">,</span> <span class="n">optional</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
-</span></span><span class="line"><span class="cl">    <span class="c1"># 第三层：用户输入</span>
-</span></span><span class="line"><span class="cl">    <span class="p">(</span><span class="s2">&#34;human&#34;</span><span class="p">,</span> <span class="s2">&#34;</span><span class="si">{input}</span><span class="s2">&#34;</span><span class="p">),</span>
-</span></span><span class="line"><span class="cl">    <span class="c1"># 第四层：Agent 中间推理过程（工具调用记录）</span>
-</span></span><span class="line"><span class="cl">    <span class="n">MessagesPlaceholder</span><span class="p">(</span><span class="s2">&#34;agent_scratchpad&#34;</span><span class="p">),</span>
-</span></span><span class="line"><span class="cl"><span class="p">])</span>
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">实际发给 LLM 的消息列表:
+</span></span><span class="line"><span class="cl">┌──────────────────────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│ SystemMessage: system_prompt 内容                              │
+</span></span><span class="line"><span class="cl">│   &#34;你是一个企业知识库 Agent。不可编造内容，涉及隐私时拒答。&#34;     │
+</span></span><span class="line"><span class="cl">├──────────────────────────────────────────────────────────────┤
+</span></span><span class="line"><span class="cl">│ 历史消息: messages 列表中的所有历史消息                         │
+</span></span><span class="line"><span class="cl">│   HumanMessage / AIMessage / ToolMessage 按时序排列            │
+</span></span><span class="line"><span class="cl">├──────────────────────────────────────────────────────────────┤
+</span></span><span class="line"><span class="cl">│ 工具定义: 通过 bind_tools() 自动注入到 API 请求中              │
+</span></span><span class="line"><span class="cl">│   tools=[{name, description, parameters}, ...]               │
+</span></span><span class="line"><span class="cl">└──────────────────────────────────────────────────────────────┘
 </span></span></code></pre></td></tr></table>
 </div>
-</div><p>渲染管线的完整流程：</p>
+</div><p>与旧版的对比：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>维度</th>
+          <th>旧版（ChatPromptTemplate + agent_scratchpad）</th>
+          <th>当前版本（create_agent）</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>工具描述</td>
+          <td>手动渲染为文本，partial 填入 prompt</td>
+          <td>框架自动通过 bind_tools 注入</td>
+      </tr>
+      <tr>
+          <td>历史状态</td>
+          <td><code>intermediate_steps</code> → <code>agent_scratchpad</code> 文本</td>
+          <td><code>messages</code> 列表直接传入</td>
+      </tr>
+      <tr>
+          <td>用户输入</td>
+          <td><code>{input}</code> 变量替换</td>
+          <td><code>HumanMessage</code> 消息</td>
+      </tr>
+      <tr>
+          <td>Prompt 模板</td>
+          <td>需要手动定义 ChatPromptTemplate</td>
+          <td>只需提供 <code>system_prompt</code> 字符串</td>
+      </tr>
+  </tbody>
+</table></div>
+<h2 id="24-prompt-分层在-create_agent-中的体现">2.4 Prompt 分层在 create_agent 中的体现
+</h2><p>在 langchain 1.0+ 中，指令分层通过 <code>system_prompt</code> + 消息时序天然实现：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -646,42 +698,27 @@
 </span><span class="lnt">14
 </span><span class="lnt">15
 </span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">输入变量: input, chat_history, agent_scratchpad
-</span></span><span class="line"><span class="cl">                        │
-</span></span><span class="line"><span class="cl">                        ▼
-</span></span><span class="line"><span class="cl">         ChatPromptTemplate.format_messages()
-</span></span><span class="line"><span class="cl">                        │
-</span></span><span class="line"><span class="cl">                        ▼
-</span></span><span class="line"><span class="cl">              ┌─── 遍历 messages 模板 ───┐
-</span></span><span class="line"><span class="cl">              │         │         │        │
-</span></span><span class="line"><span class="cl">              ▼         ▼         ▼        ▼
-</span></span><span class="line"><span class="cl">         SystemMessage  Messages  Human   Messages
-</span></span><span class="line"><span class="cl">         PromptTemplate Placeholder Message Placeholder
-</span></span><span class="line"><span class="cl">         (渲染系统指令) (展开历史  (渲染用户 (展开工具
-</span></span><span class="line"><span class="cl">                        对话列表)  输入)    调用记录)
-</span></span><span class="line"><span class="cl">              │         │         │        │
-</span></span><span class="line"><span class="cl">              └────┬────┘────┬────┘────┬───┘
-</span></span><span class="line"><span class="cl">                   ▼         ▼         ▼
-</span></span><span class="line"><span class="cl">              List[BaseMessage] (有序消息列表)
-</span></span><span class="line"><span class="cl">                        │
-</span></span><span class="line"><span class="cl">                        ▼
-</span></span><span class="line"><span class="cl">                    发送给 LLM
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain.agents</span> <span class="kn">import</span> <span class="n">create_agent</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain.agents.middleware</span> <span class="kn">import</span> <span class="n">ModelCallLimitMiddleware</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">agent</span> <span class="o">=</span> <span class="n">create_agent</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">model</span><span class="o">=</span><span class="s2">&#34;openai:gpt-4o&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">tools</span><span class="o">=</span><span class="p">[</span><span class="n">search_docs</span><span class="p">,</span> <span class="n">create_ticket</span><span class="p">,</span> <span class="n">query_order</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">    <span class="c1"># 第一层：全局规则</span>
+</span></span><span class="line"><span class="cl">    <span class="n">system_prompt</span><span class="o">=</span><span class="s2">&#34;&#34;&#34;你是企业内部助手。遵守以下规则：
+</span></span></span><span class="line"><span class="cl"><span class="s2">1. 不可编造内容，必须基于工具返回的结果回答
+</span></span></span><span class="line"><span class="cl"><span class="s2">2. 涉及隐私数据时拒绝回答
+</span></span></span><span class="line"><span class="cl"><span class="s2">3. 不确定时说明原因，不要猜测
+</span></span></span><span class="line"><span class="cl"><span class="s2">4. 使用中文回答，先结论后解释&#34;&#34;&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">middleware</span><span class="o">=</span><span class="p">[</span>
+</span></span><span class="line"><span class="cl">        <span class="n">ModelCallLimitMiddleware</span><span class="p">(</span><span class="n">run_limit</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span> <span class="n">exit_behavior</span><span class="o">=</span><span class="s2">&#34;end&#34;</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">    <span class="p">],</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
 </span></span></code></pre></td></tr></table>
 </div>
-</div><p>这个设计保证了：</p>
-<ul>
-<li>系统指令始终在最前面，不会被用户输入覆盖</li>
-<li>动态内容（历史、scratchpad）通过 placeholder 注入，模板本身保持稳定</li>
-<li>每一层的修改互不影响</li>
-</ul>
-<h2 id="24-agent-prompt-的实际分层create_react_agent-源码">2.4 Agent Prompt 的实际分层：create_react_agent 源码
-</h2><p>LangChain 的 <code>create_react_agent</code> 是经典 ReAct 模式的实现。它的 prompt 组装逻辑（<code>langchain/agents/react/agent.py</code>）：</p>
+</div><p>运行时消息结构自动包含完整的推理链路：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -694,55 +731,26 @@
 </span><span class="lnt"> 8
 </span><span class="lnt"> 9
 </span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">create_react_agent</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">tools</span><span class="p">,</span> <span class="n">prompt</span><span class="p">):</span>
-</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;
-</span></span></span><span class="line"><span class="cl"><span class="s2">    prompt 必须包含以下变量：
-</span></span></span><span class="line"><span class="cl"><span class="s2">    - tools: 工具描述列表
-</span></span></span><span class="line"><span class="cl"><span class="s2">    - tool_names: 可用工具名称
-</span></span></span><span class="line"><span class="cl"><span class="s2">    - agent_scratchpad: 中间推理步骤
-</span></span></span><span class="line"><span class="cl"><span class="s2">    - input: 用户输入
-</span></span></span><span class="line"><span class="cl"><span class="s2">    &#34;&#34;&#34;</span>
-</span></span><span class="line"><span class="cl">    <span class="c1"># 将工具列表渲染为文本描述</span>
-</span></span><span class="line"><span class="cl">    <span class="n">tool_strings</span> <span class="o">=</span> <span class="s2">&#34;</span><span class="se">\n</span><span class="s2">&#34;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
-</span></span><span class="line"><span class="cl">        <span class="p">[</span><span class="sa">f</span><span class="s2">&#34;</span><span class="si">{</span><span class="n">tool</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">tool</span><span class="o">.</span><span class="n">description</span><span class="si">}</span><span class="s2">&#34;</span> <span class="k">for</span> <span class="n">tool</span> <span class="ow">in</span> <span class="n">tools</span><span class="p">]</span>
-</span></span><span class="line"><span class="cl">    <span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="n">tool_names</span> <span class="o">=</span> <span class="s2">&#34;, &#34;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="n">tool</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">tool</span> <span class="ow">in</span> <span class="n">tools</span><span class="p">])</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">    <span class="c1"># 用 partial 预填充工具信息，剩余变量在运行时填充</span>
-</span></span><span class="line"><span class="cl">    <span class="n">prompt</span> <span class="o">=</span> <span class="n">prompt</span><span class="o">.</span><span class="n">partial</span><span class="p">(</span><span class="n">tools</span><span class="o">=</span><span class="n">tool_strings</span><span class="p">,</span> <span class="n">tool_names</span><span class="o">=</span><span class="n">tool_names</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">    <span class="c1"># 构建 Agent chain: prompt | llm | output_parser</span>
-</span></span><span class="line"><span class="cl">    <span class="n">agent</span> <span class="o">=</span> <span class="p">(</span>
-</span></span><span class="line"><span class="cl">        <span class="n">RunnablePassthrough</span><span class="o">.</span><span class="n">assign</span><span class="p">(</span><span class="n">agent_scratchpad</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">format_log_to_str</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="s2">&#34;intermediate_steps&#34;</span><span class="p">]))</span>
-</span></span><span class="line"><span class="cl">        <span class="o">|</span> <span class="n">prompt</span>
-</span></span><span class="line"><span class="cl">        <span class="o">|</span> <span class="n">llm</span>
-</span></span><span class="line"><span class="cl">        <span class="o">|</span> <span class="n">ReActSingleInputOutputParser</span><span class="p">()</span>
-</span></span><span class="line"><span class="cl">    <span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">agent</span>
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">messages 列表（自动累积，无需手动管理）:
+</span></span><span class="line"><span class="cl">[
+</span></span><span class="line"><span class="cl">  SystemMessage(&#34;你是企业内部助手...&#34;),          ← 全局规则（始终在最前）
+</span></span><span class="line"><span class="cl">  HumanMessage(&#34;帮我查订单A1024的物流&#34;),         ← 用户输入
+</span></span><span class="line"><span class="cl">  AIMessage(tool_calls=[{query_logistics}]),     ← LLM 决策
+</span></span><span class="line"><span class="cl">  ToolMessage(&#34;已签收，5月20日&#34;),                 ← 工具结果（真实证据）
+</span></span><span class="line"><span class="cl">  AIMessage(tool_calls=[{apply_invoice}]),       ← 基于证据的下一步决策
+</span></span><span class="line"><span class="cl">  ToolMessage(&#34;发票已申请，INV-9876&#34;),            ← 更多证据
+</span></span><span class="line"><span class="cl">  AIMessage(&#34;订单已签收，发票已开...&#34;)            ← 最终回答
+</span></span><span class="line"><span class="cl">]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>关键设计：</p>
 <ul>
-<li><code>partial()</code> 机制：工具描述在 Agent 初始化时就填入，不需要每次调用时重复传递</li>
-<li><code>agent_scratchpad</code> 由运行时的 <code>intermediate_steps</code>（历史推理步骤）动态生成</li>
-<li>输出通过 <code>ReActSingleInputOutputParser</code> 解析成 Action 或 Final Answer</li>
+<li><code>system_prompt</code> 对应全局规则层，始终在消息列表最前面</li>
+<li>工具定义通过 <code>bind_tools()</code> 注入 API 请求，不占用消息空间</li>
+<li>历史推理链路就是 messages 本身，不需要额外的 <code>agent_scratchpad</code> 格式转换</li>
+<li>每一步 AIMessage + ToolMessage 配对形成证据链</li>
 </ul>
 <h1 id="三输出约束">三、输出约束
 </h1><h2 id="31-自然语言输出">3.1 自然语言输出
@@ -957,9 +965,8 @@
 </span></span><span class="line"><span class="cl"><span class="p">}</span>
 </span></span></code></pre></td></tr></table>
 </div>
-</div><h2 id="43-langchain-源码plan-and-execute-agent-的-prompt-设计">4.3 LangChain 源码：Plan-and-Execute Agent 的 Prompt 设计
-</h2><p>LangChain 的 <code>PlanAndExecute</code> agent 将 Agent 拆为两阶段：先由 Planner 生成步骤列表，再由 Executor 逐步执行。</p>
-<p>Planner 的 prompt 结构（<code>langchain_experimental/plan_and_execute/planners/chat_planner.py</code>）：</p>
+</div><h2 id="43-plan-and-execute-模式的-prompt-设计">4.3 Plan-and-Execute 模式的 Prompt 设计
+</h2><p>Plan-and-Execute 将 Agent 拆为两阶段：先由 Planner 生成步骤列表，再由 Executor 逐步执行。在 langchain 1.0+ 中，这种模式可通过 <code>system_prompt</code> 引导 Agent 先规划再执行：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -977,51 +984,59 @@
 </span><span class="lnt">13
 </span><span class="lnt">14
 </span><span class="lnt">15
+</span><span class="lnt">16
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="n">SYSTEM_PROMPT</span> <span class="o">=</span> <span class="s2">&#34;&#34;&#34;让我们先理解问题，然后列出解决问题的步骤计划。
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">langchain.agents</span> <span class="kn">import</span> <span class="n">create_agent</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">planner_agent</span> <span class="o">=</span> <span class="n">create_agent</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">model</span><span class="o">=</span><span class="s2">&#34;openai:gpt-4o&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">tools</span><span class="o">=</span><span class="p">[],</span>  <span class="c1"># Planner 不需要工具，只负责规划</span>
+</span></span><span class="line"><span class="cl">    <span class="n">system_prompt</span><span class="o">=</span><span class="s2">&#34;&#34;&#34;让我们先理解问题，然后列出解决问题的步骤计划。
 </span></span></span><span class="line"><span class="cl"><span class="s2">请不要跳步，不要在计划中添加多余的步骤。
 </span></span></span><span class="line"><span class="cl"><span class="s2">
 </span></span></span><span class="line"><span class="cl"><span class="s2">输出格式必须是：
 </span></span></span><span class="line"><span class="cl"><span class="s2">1. 步骤一
 </span></span></span><span class="line"><span class="cl"><span class="s2">2. 步骤二
 </span></span></span><span class="line"><span class="cl"><span class="s2">...
-</span></span></span><span class="line"><span class="cl"><span class="s2">N. Given the above steps taken, respond to the user&#39;s original question.
+</span></span></span><span class="line"><span class="cl"><span class="s2">N. 根据前面步骤的结果回答用户问题。
 </span></span></span><span class="line"><span class="cl"><span class="s2">
-</span></span></span><span class="line"><span class="cl"><span class="s2">最后一步必须是根据前面步骤的结果回答用户问题。&#34;&#34;&#34;</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="n">planner_prompt</span> <span class="o">=</span> <span class="n">ChatPromptTemplate</span><span class="o">.</span><span class="n">from_messages</span><span class="p">([</span>
-</span></span><span class="line"><span class="cl">    <span class="p">(</span><span class="s2">&#34;system&#34;</span><span class="p">,</span> <span class="n">SYSTEM_PROMPT</span><span class="p">),</span>
-</span></span><span class="line"><span class="cl">    <span class="p">(</span><span class="s2">&#34;human&#34;</span><span class="p">,</span> <span class="s2">&#34;</span><span class="si">{input}</span><span class="s2">&#34;</span><span class="p">),</span>
-</span></span><span class="line"><span class="cl"><span class="p">])</span>
+</span></span></span><span class="line"><span class="cl"><span class="s2">最后一步必须是根据前面步骤的结果回答用户问题。&#34;&#34;&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
 </span></span></code></pre></td></tr></table>
 </div>
-</div><p>对应的输出解析：</p>
+</div><p>或者直接在单个 Agent 的 system_prompt 中融入规划指令：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">PlanOutputParser</span><span class="p">(</span><span class="n">BaseOutputParser</span><span class="p">):</span>
-</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">parse</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Plan</span><span class="p">:</span>
-</span></span><span class="line"><span class="cl">        <span class="n">steps</span> <span class="o">=</span> <span class="p">[]</span>
-</span></span><span class="line"><span class="cl">        <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">text</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&#34;</span><span class="se">\n</span><span class="s2">&#34;</span><span class="p">):</span>
-</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="n">re</span><span class="o">.</span><span class="k">match</span><span class="p">(</span><span class="sa">r</span><span class="s2">&#34;\d+\.\s&#34;</span><span class="p">,</span> <span class="n">line</span><span class="p">):</span>
-</span></span><span class="line"><span class="cl">                <span class="n">steps</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">Step</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()))</span>
-</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="n">Plan</span><span class="p">(</span><span class="n">steps</span><span class="o">=</span><span class="n">steps</span><span class="p">)</span>
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="n">agent</span> <span class="o">=</span> <span class="n">create_agent</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">model</span><span class="o">=</span><span class="s2">&#34;openai:gpt-4o&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">tools</span><span class="o">=</span><span class="p">[</span><span class="n">search_docs</span><span class="p">,</span> <span class="n">query_db</span><span class="p">,</span> <span class="n">create_ticket</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">    <span class="n">system_prompt</span><span class="o">=</span><span class="s2">&#34;&#34;&#34;你是企业内部助手。处理复杂任务时，请遵循以下流程：
+</span></span></span><span class="line"><span class="cl"><span class="s2">1. 先分析用户需求，拆解为具体步骤
+</span></span></span><span class="line"><span class="cl"><span class="s2">2. 按步骤逐个调用工具获取信息
+</span></span></span><span class="line"><span class="cl"><span class="s2">3. 综合所有工具结果生成最终回答
+</span></span></span><span class="line"><span class="cl"><span class="s2">
+</span></span></span><span class="line"><span class="cl"><span class="s2">不要跳步，不要在没有工具结果支撑时给出结论。&#34;&#34;&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>设计要点：</p>
 <ul>
-<li>Planner prompt 强调&quot;不要跳步&quot;、&ldquo;不要多余步骤&rdquo;——这是对模型行为的边界约束</li>
-<li>最后一步固定为&quot;综合前面结果回答用户&quot;——确保最终有收敛</li>
-<li>输出格式用简单的编号列表而非 JSON——因为 planner 的任务是规划而非结构化决策</li>
+<li>规划指令强调&quot;不要跳步&quot;、&ldquo;不要多余步骤&rdquo;——这是对模型行为的边界约束</li>
+<li>要求最终回答基于工具结果——确保有收敛且有证据支撑</li>
+<li>可以将 Planner 和 Executor 分为两个 Agent，也可以在单个 Agent 的 prompt 中融入规划思维</li>
 </ul>
 <h1 id="五反幻觉设计">五、反幻觉设计
 </h1><h2 id="51-让模型承认不知道">5.1 让模型承认不知道
@@ -1060,8 +1075,8 @@
 </table></div>
 <h2 id="53-工具结果优先">5.3 工具结果优先
 </h2><p>如果工具结果和模型常识冲突，应该优先相信工具结果，除非工具结果明显错误或过期。</p>
-<h2 id="54-langchain-源码agent-scratchpad-与证据链">5.4 LangChain 源码：Agent Scratchpad 与证据链
-</h2><p><code>MessagesPlaceholder(&quot;agent_scratchpad&quot;)</code> 是 LangChain Agent 反幻觉的核心机制。它把每一轮工具调用的输入和输出都保留在 prompt 中，让模型基于实际证据推理而非凭空生成。</p>
+<h2 id="54-langchain-10messages-作为证据链">5.4 langchain 1.0+：Messages 作为证据链
+</h2><p>在当前版本中，不再需要单独的 <code>agent_scratchpad</code> 格式转换机制。Agent 的推理历史就是 <code>messages</code> 列表本身——每一轮工具调用的 AIMessage 和 ToolMessage 配对自动形成证据链：</p>
 <p>Scratchpad 的累积过程：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
@@ -1080,9 +1095,9 @@
 <td class="lntd">
 <pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">┌─────────── 第1轮 ───────────┐    ┌─────────── 第2轮 ───────────┐    ┌──── 第3轮(如需要) ────┐
 </span></span><span class="line"><span class="cl">│                              │    │                              │    │                        │
-</span></span><span class="line"><span class="cl">│  用户问题                     │    │  scratchpad:                 │    │  scratchpad 继续累积   │
+</span></span><span class="line"><span class="cl">│  用户问题                     │    │  messages 已包含:            │    │  messages 继续累积     │
 </span></span><span class="line"><span class="cl">│     │                        │    │    AI调用 search_docs        │    │     │                  │
-</span></span><span class="line"><span class="cl">│     ▼                        │    │    + 工具返回结果             │    │     ▼                  │
+</span></span><span class="line"><span class="cl">│     ▼                        │    │    + ToolMessage 结果        │    │     ▼                  │
 </span></span><span class="line"><span class="cl">│  LLM 决定调用 search_docs    │───&gt;│     │                        │    │  LLM 综合所有证据     │
 </span></span><span class="line"><span class="cl">│     │                        │    │     ▼                        │───&gt;│  生成最终回答          │
 </span></span><span class="line"><span class="cl">│     ▼                        │    │  LLM 基于结果               │    │                        │
@@ -1091,7 +1106,7 @@
 </span></span><span class="line"><span class="cl">└──────────────────────────────┘    └──────────────────────────────┘    └────────────────────────┘
 </span></span></code></pre></td></tr></table>
 </div>
-</div><p>Agent 运行时，scratchpad 的构建逻辑（<code>langchain/agents/format_scratchpad/</code>）：</p>
+</div><p>messages 列表的实际结构：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -1114,37 +1129,36 @@
 </span><span class="lnt">18
 </span><span class="lnt">19
 </span><span class="lnt">20
-</span><span class="lnt">21
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">format_to_openai_tool_messages</span><span class="p">(</span><span class="n">intermediate_steps</span><span class="p">):</span>
-</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;将中间步骤转为消息列表，注入 scratchpad&#34;&#34;&#34;</span>
-</span></span><span class="line"><span class="cl">    <span class="n">messages</span> <span class="o">=</span> <span class="p">[]</span>
-</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="n">agent_action</span><span class="p">,</span> <span class="n">observation</span> <span class="ow">in</span> <span class="n">intermediate_steps</span><span class="p">:</span>
-</span></span><span class="line"><span class="cl">        <span class="c1"># AI 的工具调用决策</span>
-</span></span><span class="line"><span class="cl">        <span class="n">messages</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">AIMessage</span><span class="p">(</span>
-</span></span><span class="line"><span class="cl">            <span class="n">content</span><span class="o">=</span><span class="s2">&#34;&#34;</span><span class="p">,</span>
-</span></span><span class="line"><span class="cl">            <span class="n">tool_calls</span><span class="o">=</span><span class="p">[{</span>
-</span></span><span class="line"><span class="cl">                <span class="s2">&#34;id&#34;</span><span class="p">:</span> <span class="n">agent_action</span><span class="o">.</span><span class="n">tool_call_id</span><span class="p">,</span>
-</span></span><span class="line"><span class="cl">                <span class="s2">&#34;function&#34;</span><span class="p">:</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">                    <span class="s2">&#34;name&#34;</span><span class="p">:</span> <span class="n">agent_action</span><span class="o">.</span><span class="n">tool</span><span class="p">,</span>
-</span></span><span class="line"><span class="cl">                    <span class="s2">&#34;arguments&#34;</span><span class="p">:</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">agent_action</span><span class="o">.</span><span class="n">tool_input</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">                <span class="p">}</span>
-</span></span><span class="line"><span class="cl">            <span class="p">}]</span>
-</span></span><span class="line"><span class="cl">        <span class="p">))</span>
-</span></span><span class="line"><span class="cl">        <span class="c1"># 工具的实际返回结果</span>
-</span></span><span class="line"><span class="cl">        <span class="n">messages</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ToolMessage</span><span class="p">(</span>
-</span></span><span class="line"><span class="cl">            <span class="n">content</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">observation</span><span class="p">),</span>
-</span></span><span class="line"><span class="cl">            <span class="n">tool_call_id</span><span class="o">=</span><span class="n">agent_action</span><span class="o">.</span><span class="n">tool_call_id</span>
-</span></span><span class="line"><span class="cl">        <span class="p">))</span>
-</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">messages</span>
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># 每轮循环后 messages 自动累积</span>
+</span></span><span class="line"><span class="cl"><span class="n">messages</span> <span class="o">=</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="n">SystemMessage</span><span class="p">(</span><span class="s2">&#34;你是企业知识库 Agent...&#34;</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">    <span class="n">HumanMessage</span><span class="p">(</span><span class="s2">&#34;差旅报销有什么限制？&#34;</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># 第1轮：LLM 决定调用工具</span>
+</span></span><span class="line"><span class="cl">    <span class="n">AIMessage</span><span class="p">(</span><span class="n">content</span><span class="o">=</span><span class="s2">&#34;&#34;</span><span class="p">,</span> <span class="n">tool_calls</span><span class="o">=</span><span class="p">[{</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;name&#34;</span><span class="p">:</span> <span class="s2">&#34;search_docs&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;args&#34;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&#34;query&#34;</span><span class="p">:</span> <span class="s2">&#34;差旅报销限制&#34;</span><span class="p">},</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;id&#34;</span><span class="p">:</span> <span class="s2">&#34;call_001&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}]),</span>
+</span></span><span class="line"><span class="cl">    <span class="c1"># 第1轮：工具真实返回结果</span>
+</span></span><span class="line"><span class="cl">    <span class="n">ToolMessage</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">        <span class="n">content</span><span class="o">=</span><span class="s1">&#39;{&#34;snippet&#34;: &#34;单次报销上限5000元，需提供发票&#34;}&#39;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="n">tool_call_id</span><span class="o">=</span><span class="s2">&#34;call_001&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">),</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># 第2轮：LLM 基于真实证据生成回答</span>
+</span></span><span class="line"><span class="cl">    <span class="n">AIMessage</span><span class="p">(</span><span class="n">content</span><span class="o">=</span><span class="s2">&#34;根据公司制度，差旅报销单次上限5000元，需要提供有效发票。&#34;</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl"><span class="p">]</span>
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>为什么这能降低幻觉：</p>
 <ul>
-<li>模型看到的是<strong>真实的工具返回结果</strong>，而非自己编造的中间答案</li>
-<li>每一步推理都有对应的证据（ToolMessage），形成可追溯的证据链</li>
-<li>如果工具没返回某个信息，模型在 scratchpad 中找不到依据，更倾向于说&quot;无法确认&quot;</li>
+<li>模型看到的是<strong>真实的工具返回结果</strong>（ToolMessage），而非自己编造的中间答案</li>
+<li>每一步推理都有对应的证据（AIMessage.tool_calls + ToolMessage 配对），形成可追溯的证据链</li>
+<li>如果工具没返回某个信息，模型在 messages 中找不到依据，更倾向于说&quot;无法确认&quot;</li>
+<li>不再需要 <code>format_to_openai_tool_messages()</code> 等格式转换函数，messages 天然就是证据链</li>
 </ul>
 <h1 id="六prompt-版本管理">六、Prompt 版本管理
 </h1><h2 id="61-为什么要版本管理">6.1 为什么要版本管理
@@ -1165,19 +1179,20 @@
 <h2 id="72-为什么要做指令分层">7.2 为什么要做指令分层？
 </h2><p>指令分层可以区分全局安全规则、任务规则、工具规则和用户输入，减少用户输入覆盖系统约束的风险。在 LangChain 中，<code>ChatPromptTemplate.from_messages()</code> 将每一层映射为不同类型的消息（SystemMessage、HumanMessage、MessagesPlaceholder），物理上保证了层级隔离。</p>
 <h2 id="73-如何降低-agent-幻觉">7.3 如何降低 Agent 幻觉？
-</h2><p>可以通过证据绑定、工具结果优先、不确定时拒答、结构化输出、检索日志和评估集来降低幻觉。LangChain 的 agent_scratchpad 机制通过将工具调用结果显式注入上下文，让模型基于真实证据推理。</p>
+</h2><p>可以通过证据绑定、工具结果优先、不确定时拒答、结构化输出、检索日志和评估集来降低幻觉。langchain 1.0+ 中，messages 列表本身就是证据链——每一轮 AIMessage(tool_calls) + ToolMessage 配对将工具调用结果显式保留在上下文中，让模型基于真实证据推理。</p>
 <h2 id="74-为什么-prompt-需要版本管理">7.4 为什么 Prompt 需要版本管理？
 </h2><p>Prompt 改动会改变 Agent 行为。版本管理可以支持回归测试、灰度发布和问题回溯。</p>
 <h2 id="75-few-shot-示例什么时候有用">7.5 Few-shot 示例什么时候有用？
 </h2><p>当任务格式复杂、边界不易描述或输出风格要求稳定时，few-shot 示例很有用。</p>
 <h2 id="76-langchain-中-chatprompttemplate-和-prompttemplate-有什么区别">7.6 LangChain 中 ChatPromptTemplate 和 PromptTemplate 有什么区别？
 </h2><p><code>PromptTemplate</code> 输出单个字符串，适用于补全类模型。<code>ChatPromptTemplate</code> 输出消息列表（<code>List[BaseMessage]</code>），适用于对话类模型。Agent 场景几乎只用 <code>ChatPromptTemplate</code>，因为它能天然支持 system/human/ai 的角色分层和 MessagesPlaceholder 的动态注入。</p>
-<h2 id="77-messagesplaceholder-在-agent-中起什么作用">7.7 MessagesPlaceholder 在 Agent 中起什么作用？
-</h2><p><code>MessagesPlaceholder</code> 是 prompt 模板中的&quot;动态插槽&quot;。Agent 用它注入两类内容：</p>
+<h2 id="77-messages-列表在-agent-中起什么作用">7.7 messages 列表在 Agent 中起什么作用？
+</h2><p>在 langchain 1.0+ 中，<code>AgentState.messages: list[AnyMessage]</code> 是 Agent 的核心状态。它同时承载两类内容：</p>
 <ol>
-<li><code>chat_history</code>：多轮对话记忆</li>
-<li><code>agent_scratchpad</code>：中间推理步骤（工具调用和结果）</li>
+<li><code>chat_history</code>：多轮对话记忆（HumanMessage / AIMessage 交替）</li>
+<li>推理证据链：工具调用历史（AIMessage.tool_calls + ToolMessage 配对）</li>
 </ol>
+<p>不再需要旧版中单独的 <code>agent_scratchpad</code> 和 <code>chat_history</code> 分离设计。</p>
 <p>它让模板结构保持稳定，而运行时内容可以动态变化。</p>
 <h2 id="78-如何在-prompt-中注入输出格式约束">7.8 如何在 Prompt 中注入输出格式约束？
 </h2><p>LangChain 的做法是通过 <code>OutputParser.get_format_instructions()</code> 自动生成格式描述文本，用 <code>partial_variables</code> 注入到 prompt 模板中。好处是格式约束从数据模型（如 Pydantic class）自动派生，不需要手动维护 prompt 中的 JSON schema 描述。</p>
