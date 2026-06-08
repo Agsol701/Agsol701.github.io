@@ -312,6 +312,16 @@
             <li><a href="#bin-log归档日志">Bin Log（归档日志）</a></li>
           </ol>
         </li>
+        <li><a href="#七高可用与多副本复制">七、高可用与多副本复制</a>
+          <ol>
+            <li><a href="#主从复制基础">主从复制基础</a></li>
+            <li><a href="#复制模式">复制模式</a></li>
+            <li><a href="#读写分离与复制延迟">读写分离与复制延迟</a></li>
+            <li><a href="#故障切换">故障切换</a></li>
+            <li><a href="#常见高可用方案">常见高可用方案</a></li>
+            <li><a href="#分布式场景补充">分布式场景补充</a></li>
+          </ol>
+        </li>
       </ol>
     </li>
     <li><a href="#三高频面试题精讲">三、高频面试题精讲</a>
@@ -3584,7 +3594,7 @@
           <td>❌ 避免</td>
           <td>❌ 避免</td>
           <td>✅ 可能</td>
-          <td>MVCC + 间隙锁</td>
+          <td>快照读 MVCC，当前读 Next-Key Lock</td>
           <td>中等</td>
       </tr>
       <tr>
@@ -3598,7 +3608,7 @@
   </tbody>
 </table></div>
 <blockquote>
-<p>注：MySQL InnoDB的RR级别通过间隙锁在一定程度上避免了幻读</p></blockquote>
+<p>注：MySQL InnoDB 的 RR 级别中，普通快照读靠 MVCC 保证一致性；当前读通过 Next-Key Lock 防止幻读</p></blockquote>
 <hr>
 <h5 id="三各隔离级别实现原理">三、各隔离级别实现原理
 </h5><p><strong>1. 读未提交（READ UNCOMMITTED）</strong></p>
@@ -4119,7 +4129,7 @@
 <p><strong>A</strong>: 不是完全解决，而是部分解决：</p>
 <ul>
 <li><strong>快照读</strong>：通过MVCC避免幻读</li>
-<li><strong>当前读</strong>：通过间隙锁避免幻读</li>
+<li><strong>当前读</strong>：通过 Next-Key Lock 防止幻读</li>
 <li><strong>例外情况</strong>：
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
@@ -4311,6 +4321,21 @@
 </ul>
 </li>
 </ul>
+<p><strong>哪些操作会写入 Binlog</strong>：</p>
+<p>Binlog 记录的是<strong>已提交、会改变数据库状态</strong>的操作。</p>
+<p>会写入 Binlog：</p>
+<ul>
+<li><strong>DDL</strong>：<code>CREATE TABLE</code>、<code>ALTER TABLE</code>、<code>DROP TABLE</code></li>
+<li><strong>DML</strong>：<code>INSERT</code>、<code>UPDATE</code>、<code>DELETE</code></li>
+<li><strong>DCL</strong>：<code>GRANT</code>、<code>REVOKE</code>、<code>CREATE USER</code> 等权限或用户变更</li>
+<li><strong>带写入效果的查询</strong>：<code>CREATE TABLE ... AS SELECT</code>、<code>INSERT ... SELECT</code></li>
+</ul>
+<p>不会写入 Binlog：</p>
+<ul>
+<li><strong>普通 DQL</strong>：<code>SELECT * FROM users</code>，只查询数据，不改变数据库状态</li>
+<li><strong>回滚事务中的变更</strong>：事务最终 <code>ROLLBACK</code>，不会作为有效变更同步</li>
+</ul>
+<p>TCL 本身不是核心变更，关键看事务是否提交：事务中有写操作并 <code>COMMIT</code>，写操作会进入 Binlog；如果 <code>ROLLBACK</code>，则不会记录为有效变更。</p>
 <p><strong>两阶段提交</strong>：保证Redo Log和Bin Log一致性</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
@@ -4324,7 +4349,225 @@
 </span></span><span class="line"><span class="cl">3. 提交事务，Redo Log改为commit状态
 </span></span></code></pre></td></tr></table>
 </div>
-</div><hr>
+</div><h3 id="七高可用与多副本复制">七、高可用与多副本复制
+</h3><p>MySQL 高可用的目标是：当主库故障时，业务能够尽快切换到可用节点，同时尽量减少数据丢失和服务不可用时间。</p>
+<h4 id="主从复制基础">主从复制基础
+</h4><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Master                           Slave
+</span></span><span class="line"><span class="cl">  │                               │
+</span></span><span class="line"><span class="cl">  ├─ Binlog                       │
+</span></span><span class="line"><span class="cl">  │                               │
+</span></span><span class="line"><span class="cl">  │  ──────── 复制 ────────→      ├─ Relay Log
+</span></span><span class="line"><span class="cl">  │                               │
+</span></span><span class="line"><span class="cl">  │                               ├─ SQL Thread 重放
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>核心流程：</p>
+<ol>
+<li>主库事务提交后写入 <code>binlog</code></li>
+<li>从库 I/O 线程拉取主库 <code>binlog</code>，写入本地 <code>relay log</code></li>
+<li>从库 SQL 线程重放 <code>relay log</code>，完成数据同步</li>
+</ol>
+<h4 id="复制模式">复制模式
+</h4><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>模式</th>
+          <th>特点</th>
+          <th>优点</th>
+          <th>风险</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>异步复制</td>
+          <td>主库不等待从库确认</td>
+          <td>性能最好</td>
+          <td>主库宕机可能丢失未同步数据</td>
+      </tr>
+      <tr>
+          <td>半同步复制</td>
+          <td>主库等待至少一个从库确认收到日志</td>
+          <td>降低数据丢失风险</td>
+          <td>延迟比异步复制高</td>
+      </tr>
+      <tr>
+          <td>组复制 MGR</td>
+          <td>多节点协同确认事务</td>
+          <td>自动故障检测和切换</td>
+          <td>架构和运维复杂度更高</td>
+      </tr>
+  </tbody>
+</table></div>
+<p><strong>异步复制</strong>：</p>
+<p>主库提交事务后，只要自己写完 <code>binlog</code> 就返回成功，从库之后再异步拉取和重放日志。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">客户端写入 → 主库提交成功 → 返回客户端
+</span></span><span class="line"><span class="cl">                         ↓
+</span></span><span class="line"><span class="cl">                   从库异步同步
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>优点是性能最好，主库不用等待从库；风险是主库刚提交但日志还没同步到从库时宕机，从库提升为新主库后可能丢失这部分数据。</p>
+<p><strong>半同步复制</strong>：</p>
+<p>主库提交事务时，需要等待至少一个从库确认“已经收到 binlog”，然后才返回客户端成功。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">客户端写入 → 主库写 binlog → 至少一个从库收到 binlog → 返回客户端
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>注意：从库确认的是收到日志，不一定已经执行完成。半同步复制比异步复制更安全，但主库需要等待从库 ACK，延迟会更高。</p>
+<p><strong>组复制 MGR</strong>：</p>
+<p><code>MGR</code> 是 <code>MySQL Group Replication</code>，多个 MySQL 节点组成一个复制组，事务提交前需要组内多个节点参与确认。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Node1  Node2  Node3
+</span></span><span class="line"><span class="cl">  \      |     /
+</span></span><span class="line"><span class="cl">   组复制协议
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>MGR 支持单主模式和多主模式，能自动检测节点故障并进行切换，一致性比普通主从复制更强，但架构和运维复杂度也更高。</p>
+<p>简单总结：</p>
+<ul>
+<li>异步复制：最快，但主库宕机时可能丢数据</li>
+<li>半同步复制：安全性更高，但提交延迟更高</li>
+<li>MGR：一致性和自动切换能力更强，但架构更复杂</li>
+</ul>
+<h4 id="读写分离与复制延迟">读写分离与复制延迟
+</h4><p>读写分离常见做法是：写请求走主库，读请求走从库。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">写请求 → Master
+</span></span><span class="line"><span class="cl">读请求 → Slave
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>问题是主从复制通常存在延迟：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 先写主库
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">INSERT</span><span class="w"> </span><span class="k">INTO</span><span class="w"> </span><span class="n">orders</span><span class="p">(</span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">user_id</span><span class="p">,</span><span class="w"> </span><span class="n">amount</span><span class="p">)</span><span class="w"> </span><span class="k">VALUES</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span><span class="w"> </span><span class="mi">99</span><span class="p">.</span><span class="mi">00</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 立刻读从库，可能查不到刚写入的数据
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></td></tr></table>
+</div>
+</div><p>常见解决方案：</p>
+<ul>
+<li>写后短时间内强制读主库，保证“读己之写”</li>
+<li>对一致性要求高的接口直接读主库</li>
+<li>监控主从延迟，延迟过大时暂停读从库</li>
+<li>使用半同步复制降低主从数据差异风险</li>
+</ul>
+<h4 id="故障切换">故障切换
+</h4><p>主库故障后，需要从从库中选出新的主库：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Master 宕机
+</span></span><span class="line"><span class="cl">   ↓
+</span></span><span class="line"><span class="cl">选择数据最新的 Slave
+</span></span><span class="line"><span class="cl">   ↓
+</span></span><span class="line"><span class="cl">提升为新 Master
+</span></span><span class="line"><span class="cl">   ↓
+</span></span><span class="line"><span class="cl">其他 Slave 改为复制新 Master
+</span></span><span class="line"><span class="cl">   ↓
+</span></span><span class="line"><span class="cl">业务连接切换到新 Master
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>需要关注：</p>
+<ul>
+<li><strong>RTO</strong>：故障后多久恢复服务</li>
+<li><strong>RPO</strong>：最多可能丢失多少数据</li>
+<li><strong>脑裂</strong>：旧主库未真正下线，新主库又被提升，导致双主写入</li>
+<li><strong>数据一致性</strong>：切换前要确认新主库是否拥有最新日志</li>
+</ul>
+<h4 id="常见高可用方案">常见高可用方案
+</h4><ol>
+<li>
+<p><strong>主从复制 + 手动切换</strong></p>
+<ul>
+<li>简单易理解</li>
+<li>主库故障时需要人工切换，恢复时间较长</li>
+</ul>
+</li>
+<li>
+<p><strong>MHA（Master High Availability）</strong></p>
+<ul>
+<li>自动检测主库故障并提升从库</li>
+<li>可以尝试保存故障主库未同步的 <code>binlog</code></li>
+<li>常见于传统 MySQL 主从架构</li>
+</ul>
+</li>
+<li>
+<p><strong>MGR（MySQL Group Replication）</strong></p>
+<ul>
+<li>MySQL 官方组复制方案</li>
+<li>支持单主或多主模式</li>
+<li>通过组内一致性协议减少故障切换复杂度</li>
+</ul>
+</li>
+<li>
+<p><strong>MySQL InnoDB Cluster</strong></p>
+<ul>
+<li>由 <code>MGR + MySQL Router + MySQL Shell</code> 组成</li>
+<li>是 MySQL 官方推荐的高可用集群方案</li>
+</ul>
+</li>
+</ol>
+<h4 id="分布式场景补充">分布式场景补充
+</h4><p>MySQL 原生更偏向单机与主从复制，分布式能力通常依赖业务架构、中间件或云数据库产品。</p>
+<p>常见问题：</p>
+<ul>
+<li><strong>全局 ID</strong>：分库分表后自增 ID 不再天然全局唯一，可用雪花算法、号段模式、UUIDv7/ULID</li>
+<li><strong>分布式事务</strong>：跨库事务可用 XA、TCC、可靠消息、最终一致性等方案</li>
+<li><strong>数据路由</strong>：根据分片键定位库表，避免跨库 JOIN 和跨库分页</li>
+<li><strong>多副本一致性</strong>：根据业务选择强一致、最终一致或读己之写</li>
+</ul>
+<hr>
 <h2 id="三高频面试题精讲">三、高频面试题精讲
 </h2><h3 id="一为什么mysql使用b树而不是b树或hash索引">一、为什么MySQL使用B+树而不是B树或Hash索引？
 </h3><blockquote>
@@ -4413,7 +4656,7 @@
 <p><strong>答案</strong>：</p>
 <ul>
 <li><strong>幻读</strong>：一个事务两次查询，结果集数量不一致（其他事务插入/删除了数据）</li>
-<li><strong>解决方式</strong>：MVCC + 间隙锁（Gap Lock）</li>
+<li><strong>解决方式</strong>：快照读靠 MVCC，当前读靠 Next-Key Lock</li>
 </ul>
 <p><strong>示例</strong>：</p>
 <div class="highlight"><div class="chroma">
@@ -4470,40 +4713,19 @@
 <p><strong>注意</strong>：varchar(M)的M是字符数，不是字节数</p>
 <hr>
 <h3 id="六mysql主从复制原理">六、MySQL主从复制原理？
-</h3><p><strong>答案</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">Master                           Slave
-</span></span><span class="line"><span class="cl">  │                               │
-</span></span><span class="line"><span class="cl">  ├─ Bin Log                      │
-</span></span><span class="line"><span class="cl">  │                               │
-</span></span><span class="line"><span class="cl">  │  ──────── 异步复制 ────────→  ├─ Relay Log
-</span></span><span class="line"><span class="cl">  │                               │
-</span></span><span class="line"><span class="cl">  │                               ├─ SQL Thread重放
-</span></span><span class="line"><span class="cl">  │                               │
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>三个线程</strong>：</p>
+</h3><blockquote>
+<p>深入原理见 <a class="link" href="#%e4%b8%83%e9%ab%98%e5%8f%af%e7%94%a8%e4%b8%8e%e5%a4%9a%e5%89%af%e6%9c%ac%e5%a4%8d%e5%88%b6" >高可用与多副本复制</a></p></blockquote>
+<p><strong>答案</strong>：</p>
 <ol>
-<li><strong>Binlog Dump Thread</strong>（Master）：读取binlog发送给Slave</li>
-<li><strong>I/O Thread</strong>（Slave）：接收binlog写入Relay Log</li>
-<li><strong>SQL Thread</strong>（Slave）：读取Relay Log执行SQL</li>
+<li>主库提交事务后写入 <code>binlog</code></li>
+<li>从库 I/O 线程拉取 <code>binlog</code> 并写入 <code>relay log</code></li>
+<li>从库 SQL 线程重放 <code>relay log</code>，完成数据同步</li>
 </ol>
 <p><strong>复制模式</strong>：</p>
 <ul>
-<li><strong>异步复制</strong>：Master不等待Slave确认，性能好但可能丢数据</li>
-<li><strong>半同步复制</strong>：Master等待至少一个Slave确认</li>
-<li><strong>全同步复制</strong>：Master等待所有Slave确认</li>
+<li><strong>异步复制</strong>：主库不等待从库确认，性能好但可能丢数据</li>
+<li><strong>半同步复制</strong>：主库等待至少一个从库确认，降低丢数据风险</li>
+<li><strong>MGR 组复制</strong>：多节点协同确认事务，支持自动故障检测和切换</li>
 </ul>
 <hr>
 <h3 id="七如何优化慢查询">七、如何优化慢查询？
@@ -4557,7 +4779,7 @@
 <hr>
 <h3 id="八什么是mvcc解决了什么问题">八、什么是MVCC？解决了什么问题？
 </h3><blockquote>
-<p>深入原理见 <a class="link" href="#5-mvcc%e5%a4%9a%e7%89%88%e6%9c%ac%e5%b9%b6%e5%8f%91%e6%8e%a7%e5%88%b6" >MVCC（多版本并发控制）</a></p></blockquote>
+<p>深入原理见 <a class="link" href="#%e4%ba%94mvcc%e5%a4%9a%e7%89%88%e6%9c%ac%e5%b9%b6%e5%8f%91%e6%8e%a7%e5%88%b6" >MVCC（多版本并发控制）</a></p></blockquote>
 <p><strong>答案</strong>：</p>
 <ul>
 <li><strong>定义</strong>：多版本并发控制，通过数据快照实现非阻塞读</li>
@@ -4665,38 +4887,16 @@
 </div>
 </div><hr>
 <h3 id="十二什么是mysql的高可用架构">十二、什么是MySQL的高可用架构？
-</h3><p><strong>答案</strong>：</p>
-<ol>
-<li>
-<p><strong>主从复制</strong>：</p>
+</h3><blockquote>
+<p>深入原理见 <a class="link" href="#%e4%b8%83%e9%ab%98%e5%8f%af%e7%94%a8%e4%b8%8e%e5%a4%9a%e5%89%af%e6%9c%ac%e5%a4%8d%e5%88%b6" >高可用与多副本复制</a></p></blockquote>
+<p><strong>答案</strong>：</p>
 <ul>
-<li>一主多从，读写分离</li>
-<li>问题：主库单点、故障切换需手动</li>
+<li><strong>目标</strong>：主库故障时快速恢复服务，尽量降低数据丢失和不可用时间</li>
+<li><strong>核心指标</strong>：<code>RTO</code> 表示恢复时间，<code>RPO</code> 表示可接受的数据丢失量</li>
+<li><strong>基础方案</strong>：主从复制 + 读写分离，但要处理复制延迟和主库单点问题</li>
+<li><strong>自动切换</strong>：可使用 MHA、MGR、MySQL InnoDB Cluster 等方案</li>
+<li><strong>关键风险</strong>：主从延迟、故障切换丢数据、脑裂、业务连接切换</li>
 </ul>
-</li>
-<li>
-<p><strong>MHA（Master High Availability）</strong>：</p>
-<ul>
-<li>自动故障检测和切换</li>
-<li>10-30秒内完成切换</li>
-</ul>
-</li>
-<li>
-<p><strong>MGR（MySQL Group Replication）</strong>：</p>
-<ul>
-<li>基于Paxos协议</li>
-<li>单主/多主模式</li>
-<li>自动故障检测和切换</li>
-</ul>
-</li>
-<li>
-<p><strong>MySQL InnoDB Cluster</strong>：</p>
-<ul>
-<li>MGR + MySQL Router + MySQL Shell</li>
-<li>官方高可用方案</li>
-</ul>
-</li>
-</ol>
 <hr>
 <h2 id="四面试技巧总结">四、面试技巧总结
 </h2><h3 id="高频考点">高频考点
