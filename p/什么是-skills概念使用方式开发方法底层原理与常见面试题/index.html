@@ -1,0 +1,3076 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 最近在使用 Claude Code、Cursor、Ducc 这类命令行 / IDE 研发 Agent 时，&ldquo;Skills&quot;这个词出现得越来越频繁。\n很多人第一次接触 Skills，会把它和：\nPrompt 模板 System Prompt MCP（Model Context Protocol） Tools / Function Calling Agent / Subagent Slash Command Plugin 混为一谈。\n但 Skills 实际上是一个有明确边界的概念。\n如果用一句话先做总定义：\nSkills 是一种按需加载、可被模型自主发现并使用的&quot;任务方法包&rdquo;，它把&quot;做某一类任务的方法、流程、约束、参考资料&quot;封装成一组文件，让 Agent 在合适的时机自动取用。\n它解决的核心问题是：\n怎么把&quot;经验和方法&quot;喂给模型，而不是每次都靠用户在 prompt 里反复说 怎么避免一次性把所有方法塞进 system prompt，把上下文撑爆 怎么让&quot;团队最佳实践&quot;和&quot;工具能力&quot;一起被 Agent 复用 下面分十一个部分，把 Skills 从概念到落地讲清楚。本文使用 Claude Code 的 Skills 实现作为例子，因为它是目前 Skills 形态最完整、最具代表性的实现。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、SOP、MCP、IDE、CLI、YAML、MD、DSL、SDK、SP（System Prompt）。\n目录 Skills 是什么 Skills 解决了什么问题 Skills 的基本结构 Skills 怎么使用 Skills 怎么开发 Skills 的底层原理 Skills 与 MCP、Tools、Subagent 的区别 Skills 的最佳实践 Skills 常见高频面试题 附录：进一步阅读 1. Skills 是什么 1.1 一句话定义 Skills 是 Agent 用的&quot;按需加载的方法书&quot;。\n">
+<title>什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/%E4%BB%80%E4%B9%88%E6%98%AF-skills%E6%A6%82%E5%BF%B5%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F%E5%BC%80%E5%8F%91%E6%96%B9%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题">
+<meta property='og:description' content="写在前面 最近在使用 Claude Code、Cursor、Ducc 这类命令行 / IDE 研发 Agent 时，&ldquo;Skills&quot;这个词出现得越来越频繁。\n很多人第一次接触 Skills，会把它和：\nPrompt 模板 System Prompt MCP（Model Context Protocol） Tools / Function Calling Agent / Subagent Slash Command Plugin 混为一谈。\n但 Skills 实际上是一个有明确边界的概念。\n如果用一句话先做总定义：\nSkills 是一种按需加载、可被模型自主发现并使用的&quot;任务方法包&rdquo;，它把&quot;做某一类任务的方法、流程、约束、参考资料&quot;封装成一组文件，让 Agent 在合适的时机自动取用。\n它解决的核心问题是：\n怎么把&quot;经验和方法&quot;喂给模型，而不是每次都靠用户在 prompt 里反复说 怎么避免一次性把所有方法塞进 system prompt，把上下文撑爆 怎么让&quot;团队最佳实践&quot;和&quot;工具能力&quot;一起被 Agent 复用 下面分十一个部分，把 Skills 从概念到落地讲清楚。本文使用 Claude Code 的 Skills 实现作为例子，因为它是目前 Skills 形态最完整、最具代表性的实现。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、SOP、MCP、IDE、CLI、YAML、MD、DSL、SDK、SP（System Prompt）。\n目录 Skills 是什么 Skills 解决了什么问题 Skills 的基本结构 Skills 怎么使用 Skills 怎么开发 Skills 的底层原理 Skills 与 MCP、Tools、Subagent 的区别 Skills 的最佳实践 Skills 常见高频面试题 附录：进一步阅读 1. Skills 是什么 1.1 一句话定义 Skills 是 Agent 用的&quot;按需加载的方法书&quot;。\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/%E4%BB%80%E4%B9%88%E6%98%AF-skills%E6%A6%82%E5%BF%B5%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F%E5%BC%80%E5%8F%91%E6%96%B9%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='skills' /><meta property='article:tag' content='claude-code' /><meta property='article:tag' content='agent' /><meta property='article:published_time' content='2026-06-11T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-06-11T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题">
+<meta name="twitter:description" content="写在前面 最近在使用 Claude Code、Cursor、Ducc 这类命令行 / IDE 研发 Agent 时，&ldquo;Skills&quot;这个词出现得越来越频繁。\n很多人第一次接触 Skills，会把它和：\nPrompt 模板 System Prompt MCP（Model Context Protocol） Tools / Function Calling Agent / Subagent Slash Command Plugin 混为一谈。\n但 Skills 实际上是一个有明确边界的概念。\n如果用一句话先做总定义：\nSkills 是一种按需加载、可被模型自主发现并使用的&quot;任务方法包&rdquo;，它把&quot;做某一类任务的方法、流程、约束、参考资料&quot;封装成一组文件，让 Agent 在合适的时机自动取用。\n它解决的核心问题是：\n怎么把&quot;经验和方法&quot;喂给模型，而不是每次都靠用户在 prompt 里反复说 怎么避免一次性把所有方法塞进 system prompt，把上下文撑爆 怎么让&quot;团队最佳实践&quot;和&quot;工具能力&quot;一起被 Agent 复用 下面分十一个部分，把 Skills 从概念到落地讲清楚。本文使用 Claude Code 的 Skills 实现作为例子，因为它是目前 Skills 形态最完整、最具代表性的实现。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、SOP、MCP、IDE、CLI、YAML、MD、DSL、SDK、SP（System Prompt）。\n目录 Skills 是什么 Skills 解决了什么问题 Skills 的基本结构 Skills 怎么使用 Skills 怎么开发 Skills 的底层原理 Skills 与 MCP、Tools、Subagent 的区别 Skills 的最佳实践 Skills 常见高频面试题 附录：进一步阅读 1. Skills 是什么 1.1 一句话定义 Skills 是 Agent 用的&quot;按需加载的方法书&quot;。\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ol>
+    <li><a href="#目录">目录</a></li>
+    <li><a href="#1-skills-是什么">1. Skills 是什么</a>
+      <ol>
+        <li><a href="#11-一句话定义">1.1 一句话定义</a></li>
+        <li><a href="#12-它本质上是什么">1.2 它本质上是什么</a></li>
+        <li><a href="#13-它在-agent-体系里的位置">1.3 它在 Agent 体系里的位置</a></li>
+        <li><a href="#14-skills-与-claudemd-的边界">1.4 Skills 与 CLAUDE.md 的边界</a>
+          <ol>
+            <li><a href="#141-一张表看清差异">1.4.1 一张表看清差异</a></li>
+            <li><a href="#142-skills-里其实也有始终在线的部分--是元信息">1.4.2 Skills 里其实也有&quot;始终在线&quot;的部分 —— 是元信息</a></li>
+            <li><a href="#143-一个工程细节skill-命中后会粘在当前会话">1.4.3 一个工程细节：Skill 命中后会&quot;粘&quot;在当前会话</a></li>
+            <li><a href="#144-那近似全生命周期的-skill-该怎么实现">1.4.4 那&quot;近似全生命周期&quot;的 Skill 该怎么实现</a></li>
+            <li><a href="#145-一句话记住">1.4.5 一句话记住</a></li>
+          </ol>
+        </li>
+      </ol>
+    </li>
+    <li><a href="#2-skills-解决了什么问题">2. Skills 解决了什么问题</a>
+      <ol>
+        <li><a href="#21-问题一system-prompt-越塞越胖">2.1 问题一：System Prompt 越塞越胖</a></li>
+        <li><a href="#22-问题二经验难以复用">2.2 问题二：经验难以复用</a></li>
+        <li><a href="#23-问题三能力分发难">2.3 问题三：能力分发难</a></li>
+        <li><a href="#24-问题四agent-自主性与可控性的平衡">2.4 问题四：Agent 自主性与可控性的平衡</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-skills-的基本结构">3. Skills 的基本结构</a>
+      <ol>
+        <li><a href="#31-skillmd-的结构">3.1 SKILL.md 的结构</a></li>
+        <li><a href="#32-frontmatter-的关键字段">3.2 frontmatter 的关键字段</a>
+          <ol>
+            <li><a href="#必填--推荐字段">必填 / 推荐字段</a></li>
+            <li><a href="#触发与权限控制claude-code-专有">触发与权限控制（Claude Code 专有）</a></li>
+            <li><a href="#工具与运行时控制claude-code-专有">工具与运行时控制（Claude Code 专有）</a></li>
+            <li><a href="#参数与脚本控制claude-code-专有">参数与脚本控制（Claude Code 专有）</a></li>
+          </ol>
+        </li>
+        <li><a href="#33-正文的常见组织">3.3 正文的常见组织</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-skills-怎么使用">4. Skills 怎么使用</a>
+      <ol>
+        <li><a href="#41-skills-的存放位置">4.1 Skills 的存放位置</a></li>
+        <li><a href="#42-两种触发方式">4.2 两种触发方式</a></li>
+        <li><a href="#43-一个最直观的使用流程">4.3 一个最直观的使用流程</a></li>
+        <li><a href="#44-skills-之间能互相引用吗">4.4 Skills 之间能互相引用吗</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-skills-怎么开发">5. Skills 怎么开发</a>
+      <ol>
+        <li><a href="#51-第一步明确边界">5.1 第一步：明确边界</a></li>
+        <li><a href="#52-第二步写-frontmatter">5.2 第二步：写 frontmatter</a></li>
+        <li><a href="#53-第三步写正文骨架">5.3 第三步：写正文骨架</a></li>
+        <li><a href="#54-第四步补充辅助文件可选">5.4 第四步：补充辅助文件（可选）</a></li>
+        <li><a href="#55-第五步测试">5.5 第五步：测试</a></li>
+        <li><a href="#56-第六步分发">5.6 第六步：分发</a></li>
+        <li><a href="#57-在-skill-里使用代码">5.7 在 Skill 里使用代码</a>
+          <ol>
+            <li><a href="#571-三种引用代码的方式从轻到重">5.7.1 三种&quot;引用代码&quot;的方式，从轻到重</a></li>
+            <li><a href="#572-什么时候该用哪一种">5.7.2 什么时候该用哪一种</a></li>
+            <li><a href="#573-几个容易踩坑的点">5.7.3 几个容易踩坑的点</a></li>
+            <li><a href="#574-skill-脚本和-tool-的边界">5.7.4 Skill 脚本和 Tool 的边界</a></li>
+            <li><a href="#575-skill-脚本的运行环境vs-tool">5.7.5 Skill 脚本的运行环境（vs Tool）</a></li>
+            <li><a href="#576-一句话总结">5.7.6 一句话总结</a></li>
+          </ol>
+        </li>
+        <li><a href="#58-完整示例官方-pdf-processing-skill">5.8 完整示例：官方 <code>pdf-processing</code> Skill</a>
+          <ol>
+            <li><a href="#581-完整目录结构">5.8.1 完整目录结构</a></li>
+            <li><a href="#582-skillmd-全文直接可用">5.8.2 SKILL.md 全文（直接可用）</a></li>
+            <li><a href="#583-配套脚本scriptsanalyze_formpy">5.8.3 配套脚本：<code>scripts/analyze_form.py</code></a></li>
+            <li><a href="#584-配套脚本scriptsvalidatepy">5.8.4 配套脚本：<code>scripts/validate.py</code></a></li>
+            <li><a href="#585-配套脚本scriptsfill_formpy">5.8.5 配套脚本：<code>scripts/fill_form.py</code></a></li>
+            <li><a href="#586-这个示例验证了哪些最佳实践">5.8.6 这个示例验证了哪些最佳实践</a></li>
+            <li><a href="#587-怎么直接用上">5.8.7 怎么直接用上</a></li>
+          </ol>
+        </li>
+      </ol>
+    </li>
+    <li><a href="#6-skills-的底层原理">6. Skills 的底层原理</a>
+      <ol>
+        <li><a href="#61-渐进式披露progressive-disclosure">6.1 渐进式披露（Progressive Disclosure）</a></li>
+        <li><a href="#62-skills-与-system-prompt-的关系">6.2 Skills 与 system prompt 的关系</a></li>
+        <li><a href="#63-skills-与-tools-的关系">6.3 Skills 与 Tools 的关系</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-skills-与-mcptoolssubagent-的区别">7. Skills 与 MCP、Tools、Subagent 的区别</a>
+      <ol>
+        <li><a href="#71-一句话区分">7.1 一句话区分</a></li>
+        <li><a href="#72-它们各自回答的问题">7.2 它们各自回答的问题</a></li>
+        <li><a href="#73-一个综合对比表">7.3 一个综合对比表</a></li>
+        <li><a href="#74-一个综合协作场景">7.4 一个综合协作场景</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-skills-的最佳实践">8. Skills 的最佳实践</a>
+      <ol>
+        <li><a href="#81-description-是-skill-的命脉">8.1 description 是 Skill 的命脉</a></li>
+        <li><a href="#82-skillmd-不要太长">8.2 SKILL.md 不要太长</a></li>
+        <li><a href="#83-写不要做的事比写要做的事更重要">8.3 写&quot;不要做的事&quot;比写&quot;要做的事&quot;更重要</a></li>
+        <li><a href="#84-给好例子和坏例子">8.4 给好例子和坏例子</a></li>
+        <li><a href="#85-每个-skill-只解决一类问题">8.5 每个 Skill 只解决一类问题</a></li>
+        <li><a href="#86-用-skill-互引代替复制粘贴">8.6 用 Skill 互引代替复制粘贴</a></li>
+        <li><a href="#87-把-skills-当代码维护">8.7 把 Skills 当代码维护</a></li>
+        <li><a href="#88-skills-的安全模型">8.8 Skills 的安全模型</a>
+          <ol>
+            <li><a href="#881-几个真实风险">8.8.1 几个真实风险</a></li>
+            <li><a href="#882-落地实践">8.8.2 落地实践</a></li>
+            <li><a href="#883-一个具体例子为什么信任仓库不是免审">8.8.3 一个具体例子：为什么&quot;信任仓库&quot;不是免审</a></li>
+          </ol>
+        </li>
+      </ol>
+    </li>
+    <li><a href="#9-skills-常见高频面试题">9. Skills 常见高频面试题</a>
+      <ol>
+        <li><a href="#91-skills-和-system-prompt-有什么本质区别">9.1 Skills 和 system prompt 有什么本质区别？</a></li>
+        <li><a href="#92-模型怎么知道该不该加载某个-skill">9.2 模型怎么知道该不该加载某个 Skill？</a></li>
+        <li><a href="#93-skills-和-mcp-有什么区别">9.3 Skills 和 MCP 有什么区别？</a></li>
+        <li><a href="#94-skills-和-subagent-有什么区别">9.4 Skills 和 Subagent 有什么区别？</a></li>
+        <li><a href="#95-skills-会不会让模型变得机械">9.5 Skills 会不会让模型变得&quot;机械&quot;？</a></li>
+        <li><a href="#96-一个项目里-skill-多到一定程度会不会拖慢响应">9.6 一个项目里 Skill 多到一定程度，会不会拖慢响应？</a></li>
+        <li><a href="#97-skills-能调用-tools-吗能调用别的-skill-吗">9.7 Skills 能调用 Tools 吗？能调用别的 Skill 吗？</a></li>
+        <li><a href="#98-skills-和-slash-command-是不是同一个东西">9.8 Skills 和 Slash Command 是不是同一个东西？</a></li>
+        <li><a href="#99-怎么测试一个-skill-是不是写得好">9.9 怎么测试一个 Skill 是不是写得好？</a></li>
+        <li><a href="#910-skills-的未来会怎么发展">9.10 Skills 的未来会怎么发展？</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-附录进一步阅读">10. 附录：进一步阅读</a>
+      <ol>
+        <li><a href="#101-官方文档一手来源">10.1 官方文档（一手来源）</a></li>
+        <li><a href="#102-与本文相关的概念文章">10.2 与本文相关的概念文章</a></li>
+        <li><a href="#103-一个最精简的总结">10.3 一个最精简的总结</a></li>
+      </ol>
+    </li>
+  </ol>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/ai/" >
+                Ai
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-skills%E6%A6%82%E5%BF%B5%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F%E5%BC%80%E5%8F%91%E6%96%B9%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/">什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题</a>
+        </h2>
+    
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">Jun 11, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h1 id="写在前面">写在前面
+</h1><p>最近在使用 <code>Claude Code</code>、<code>Cursor</code>、<code>Ducc</code> 这类命令行 / IDE 研发 Agent 时，&ldquo;Skills&quot;这个词出现得越来越频繁。</p>
+<p>很多人第一次接触 Skills，会把它和：</p>
+<ul>
+<li><code>Prompt 模板</code></li>
+<li><code>System Prompt</code></li>
+<li><code>MCP（Model Context Protocol）</code></li>
+<li><code>Tools / Function Calling</code></li>
+<li><code>Agent / Subagent</code></li>
+<li><code>Slash Command</code></li>
+<li><code>Plugin</code></li>
+</ul>
+<p>混为一谈。</p>
+<p>但 Skills 实际上是一个有明确边界的概念。</p>
+<p>如果用一句话先做总定义：</p>
+<blockquote>
+<p><code>Skills</code> 是一种<strong>按需加载、可被模型自主发现并使用</strong>的&quot;任务方法包&rdquo;，它把&quot;做某一类任务的方法、流程、约束、参考资料&quot;封装成一组文件，让 Agent 在合适的时机自动取用。</p></blockquote>
+<p>它解决的核心问题是：</p>
+<ul>
+<li>怎么把&quot;经验和方法&quot;喂给模型，而不是每次都靠用户在 prompt 里反复说</li>
+<li>怎么避免一次性把所有方法塞进 system prompt，把上下文撑爆</li>
+<li>怎么让&quot;团队最佳实践&quot;和&quot;工具能力&quot;一起被 Agent 复用</li>
+</ul>
+<p>下面分十一个部分，把 Skills 从概念到落地讲清楚。本文使用 Claude Code 的 Skills 实现作为例子，因为它是目前 Skills 形态最完整、最具代表性的实现。</p>
+<blockquote>
+<p>文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、SOP、MCP、IDE、CLI、YAML、MD、DSL、SDK、SP（System Prompt）。</p></blockquote>
+<h2 id="目录">目录
+</h2><ol>
+<li><a class="link" href="#1-skills-%e6%98%af%e4%bb%80%e4%b9%88" >Skills 是什么</a></li>
+<li><a class="link" href="#2-skills-%e8%a7%a3%e5%86%b3%e4%ba%86%e4%bb%80%e4%b9%88%e9%97%ae%e9%a2%98" >Skills 解决了什么问题</a></li>
+<li><a class="link" href="#3-skills-%e7%9a%84%e5%9f%ba%e6%9c%ac%e7%bb%93%e6%9e%84" >Skills 的基本结构</a></li>
+<li><a class="link" href="#4-skills-%e6%80%8e%e4%b9%88%e4%bd%bf%e7%94%a8" >Skills 怎么使用</a></li>
+<li><a class="link" href="#5-skills-%e6%80%8e%e4%b9%88%e5%bc%80%e5%8f%91" >Skills 怎么开发</a></li>
+<li><a class="link" href="#6-skills-%e7%9a%84%e5%ba%95%e5%b1%82%e5%8e%9f%e7%90%86" >Skills 的底层原理</a></li>
+<li><a class="link" href="#7-skills-%e4%b8%8e-mctoolssubagent-%e7%9a%84%e5%8c%ba%e5%88%ab" >Skills 与 MCP、Tools、Subagent 的区别</a></li>
+<li><a class="link" href="#8-skills-%e7%9a%84%e6%9c%80%e4%bd%b3%e5%ae%9e%e8%b7%b5" >Skills 的最佳实践</a></li>
+<li><a class="link" href="#9-skills-%e5%b8%b8%e8%a7%81%e9%ab%98%e9%a2%91%e9%9d%a2%e8%af%95%e9%a2%98" >Skills 常见高频面试题</a></li>
+<li><a class="link" href="#10-%e9%99%84%e5%bd%95%e8%bf%9b%e4%b8%80%e6%ad%a5%e9%98%85%e8%af%bb" >附录：进一步阅读</a></li>
+</ol>
+<hr>
+<h2 id="1-skills-是什么">1. Skills 是什么
+</h2><h3 id="11-一句话定义">1.1 一句话定义
+</h3><blockquote>
+<p>Skills 是 Agent 用的&quot;按需加载的方法书&quot;。</p></blockquote>
+<p>每一个 Skill 都是一组文件（通常以一个 <code>SKILL.md</code> 为入口），里面写清楚了：</p>
+<ul>
+<li>这个 Skill 是干什么的</li>
+<li>什么时候该用它</li>
+<li>用它的时候要按什么步骤做</li>
+<li>有哪些约束和注意事项</li>
+<li>可以参考哪些脚本、模板、示例文件</li>
+</ul>
+<p>模型在执行任务时，会<strong>先读 Skill 的&quot;摘要信息&quot;</strong>，判断当前任务是否需要它；只有需要时，才会<strong>加载完整内容</strong>。这就是 Skills 最核心的设计点：<strong>渐进式披露（Progressive Disclosure）</strong>。</p>
+<h3 id="12-它本质上是什么">1.2 它本质上是什么
+</h3><p>从工程视角看，Skills 本质上是：</p>
+<blockquote>
+<p>一组<strong>结构化的、带元信息的、可被 Agent 检索和加载的 Markdown 文档（外加可选的辅助文件）</strong>。</p></blockquote>
+<p>它不是：</p>
+<ul>
+<li>一段预先固定写进 system prompt、整段会话始终在线的提示词</li>
+<li>一个注册到模型的工具</li>
+<li>一段 Python 代码</li>
+<li>一个独立运行的服务</li>
+</ul>
+<p>它更像是：</p>
+<ul>
+<li>一本&quot;工作手册&quot;</li>
+<li>一份&quot;作业指导书（SOP）&quot;</li>
+<li>一个&quot;领域 Wiki 的入口页&quot;</li>
+</ul>
+<p>只不过这本手册的读者不是人，而是 Agent。</p>
+<h3 id="13-它在-agent-体系里的位置">1.3 它在 Agent 体系里的位置
+</h3><blockquote>
+<p>重要前提：在<strong>当前的 Claude Code 实现</strong>里（截至 2026 年 6 月），&ldquo;Slash Command&rdquo; 和 &ldquo;Skill&rdquo; 已经合并为同一个概念。官方文档原文：</p>
+<blockquote>
+<p>&ldquo;Custom commands have been merged into skills. A file at <code>.claude/commands/deploy.md</code> and a skill at <code>.claude/skills/deploy/SKILL.md</code> both create <code>/deploy</code> and work the same way.&rdquo;</p></blockquote>
+<p>也就是说，它们不是不同的层 —— 同一个 Skill 既能被模型自动触发（看 <code>description</code>），也能被用户用 <code>/skill-name</code> 显式触发，还能用 <code>disable-model-invocation</code> / <code>user-invocable</code> 控制只允许其中一种。所以下面这张层次图把它们归为同一层。</p></blockquote>
+<p>一个研发 Agent 从收到用户输入到最终给出结果，中间会经过若干层。从<strong>靠近用户意图</strong>到<strong>靠近模型/系统</strong>，自上而下排列：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>层次（自上而下）</th>
+          <th>作用</th>
+          <th>例子</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>① Skills（含 Slash Command）</td>
+          <td>方法/策略层：这类任务该按什么流程做。模型自动触发或用户用 <code>/skill-name</code> 显式触发</td>
+          <td><code>write-pr-description</code>、<code>code-review</code>、<code>/deploy</code></td>
+      </tr>
+      <tr>
+          <td>② Subagent</td>
+          <td>任务调度层：是否拆出独立子上下文执行（可由 Skill 通过 <code>context: fork</code> 触发）</td>
+          <td><code>general-purpose</code>、<code>Explore</code>、<code>Plan</code></td>
+      </tr>
+      <tr>
+          <td>③ MCP</td>
+          <td>协议层：把外部能力按标准方式接进来</td>
+          <td>MCP Server / Client</td>
+      </tr>
+      <tr>
+          <td>④ Tools</td>
+          <td>能力执行层：模型实际调用的原子动作</td>
+          <td><code>Read</code>、<code>Bash</code>、<code>Edit</code></td>
+      </tr>
+      <tr>
+          <td>⑤ 模型</td>
+          <td>底层推理引擎</td>
+          <td>Claude Opus、Sonnet、Haiku</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>用户输入会大致按 ①→②→③→④→⑤ 的方向被解释和下沉，结果再反向上浮回到用户。</p>
+<p>此外有两个<strong>横切关注点</strong>，不在这条主路径上：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>横切</th>
+          <th>作用</th>
+          <th>例子</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Plugin</td>
+          <td>把上面任意几层（Skills、MCP Server、subagent、hooks 等）打包分发</td>
+          <td>一个企业内部研发插件包</td>
+      </tr>
+      <tr>
+          <td><code>CLAUDE.md</code></td>
+          <td>项目记忆：会话开始就永久加载的&quot;事实型&quot;指令（与 Skills 互补，详见 <a class="link" href="#14-skills-%e4%b8%8e-claudemd-%e7%9a%84%e8%be%b9%e7%95%8c" >1.4 节</a>）</td>
+          <td>项目架构、命名约定、强制规范</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>Skills 处在第 ① 层 —— 它<strong>比 Tools/MCP 更靠近用户意图</strong>（关心&quot;这类任务怎么做&quot;），又<strong>比模型本身更具结构</strong>（不是泛泛的提示词，而是一个有元信息、可被检索、可触发独立子上下文的实体），是夹在&quot;用户意图&quot;和&quot;执行链路&quot;之间的方法层。</p>
+<p>由此也能推出 Skills 与三个最容易混淆概念的相对关系：</p>
+<ul>
+<li>它<strong>比 Tools 更宏观</strong>：Tools 关心&quot;调一次能做什么&quot;，Skill 关心&quot;一类任务怎么完成&quot;</li>
+<li>它<strong>比 system prompt / <code>CLAUDE.md</code> 更动态</strong>：SP 和 <code>CLAUDE.md</code> 是会话开始就固定加载的，Skills 是按需注入的</li>
+<li>它<strong>和 Subagent 可以组合</strong>：Skill 通过 <code>context: fork</code> 可以让自己跑在独立 subagent 上下文里，反过来 subagent 也可以预加载若干 Skill</li>
+</ul>
+<h3 id="14-skills-与-claudemd-的边界">1.4 Skills 与 CLAUDE.md 的边界
+</h3><p>这是初学者最容易踩进去的混淆区：<strong>&ldquo;我想要一份跟随整个项目生命周期、永远生效的指令，是不是应该写成一个 always-on 的 Skill？&rdquo;</strong></p>
+<p>答案是：<strong>不应该</strong>。那个东西不是 Skill，是 <code>CLAUDE.md</code>（项目记忆）。两者是<strong>分工</strong>关系，不是同一种东西的两种模式。</p>
+<h4 id="141-一张表看清差异">1.4.1 一张表看清差异
+</h4><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>对比维度</th>
+          <th><code>CLAUDE.md</code>（项目记忆）</th>
+          <th>Skills</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>加载时机</td>
+          <td>会话开始就<strong>永久加载</strong></td>
+          <td>按需注入</td>
+      </tr>
+      <tr>
+          <td>占用上下文</td>
+          <td><strong>全程</strong>占用</td>
+          <td><strong>命中时</strong>才占用</td>
+      </tr>
+      <tr>
+          <td>关心什么</td>
+          <td>&ldquo;这个项目的固定事实和规范&rdquo;（架构、目录、命名、约束）</td>
+          <td>&ldquo;做某一类任务的方法&rdquo;（写 PR、code review）</td>
+      </tr>
+      <tr>
+          <td>写多了的代价</td>
+          <td>直接吃掉 context window</td>
+          <td>几乎零成本（仅占元信息）</td>
+      </tr>
+      <tr>
+          <td>维护粒度</td>
+          <td>一份大文件</td>
+          <td>多个独立小文件</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>判断口诀：</p>
+<blockquote>
+<p><strong>永远要遵守的 → 写进 <code>CLAUDE.md</code>；某类任务才用得上的 → 写成 Skill。</strong></p></blockquote>
+<p>举例：</p>
+<ul>
+<li>&ldquo;本项目数据库统一用 PostgreSQL，禁用 MySQL 特有语法&rdquo; → <strong><code>CLAUDE.md</code></strong>（永远成立）</li>
+<li>&ldquo;写 PR 描述时按 5 段式来&rdquo; → <strong>Skill</strong>（只在写 PR 时用）</li>
+<li>&ldquo;本项目 Python 入口都在 <code>app/main.py</code>&rdquo; → <strong><code>CLAUDE.md</code></strong></li>
+<li>&ldquo;做 SQL review 时按三维度走&rdquo; → <strong>Skill</strong></li>
+</ul>
+<h4 id="142-skills-里其实也有始终在线的部分--是元信息">1.4.2 Skills 里其实也有&quot;始终在线&quot;的部分 —— 是元信息
+</h4><p>Skills 整体是按需加载的，但<strong>每个 Skill 的 <code>name + description</code><strong>会被 Agent 启动时</strong>一次性扫进上下文</strong>，因为模型必须看得见这份&quot;目录&quot;才知道有哪些 Skill 可调。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">[永远在线]                       [按需在线]
+</span></span><span class="line"><span class="cl">┌──────────────────┐            ┌──────────────────┐
+</span></span><span class="line"><span class="cl">│  CLAUDE.md 全文   │            │  SKILL.md 正文   │
+</span></span><span class="line"><span class="cl">│  Skills 目录索引  │  ←─ 命中 ─→ │  辅助文件        │
+</span></span><span class="line"><span class="cl">│  (name+desc 摘要) │             │                  │
+</span></span><span class="line"><span class="cl">└──────────────────┘            └──────────────────┘
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这也是为什么前面反复强调 <strong><code>description</code> 写得准比正文写得多更重要</strong> —— 它是常驻在上下文里的，写得越冗余越浪费，写得越精准检索越准。</p>
+<h4 id="143-一个工程细节skill-命中后会粘在当前会话">1.4.3 一个工程细节：Skill 命中后会&quot;粘&quot;在当前会话
+</h4><p>官方文档对这件事有非常精确的定义（<code>Skill content lifecycle</code>）：</p>
+<blockquote>
+<p>&ldquo;When you or Claude invoke a skill, the rendered SKILL.md content <strong>enters the conversation as a single message and stays there for the rest of the session</strong>. Claude Code does not re-read the skill file on later turns&hellip;&rdquo;</p>
+<p>&ldquo;Auto-compaction&hellip; re-attaches the most recent invocation of each skill after the summary, <strong>keeping the first 5,000 tokens of each. Re-attached skills share a combined budget of 25,000 tokens.</strong>&rdquo;</p></blockquote>
+<p>翻译成大白话：</p>
+<ul>
+<li><strong>同一会话内</strong>：Skill 一旦被加载，它的内容就以一条消息的形式留在上下文里，直到会话结束。Claude Code <strong>不会重复读</strong> SKILL.md 文件，所以请把&quot;全程要遵守的&quot;内容写成常驻指令而不是一次性步骤。</li>
+<li><strong>上下文压缩后</strong>：当上下文被自动压缩，每个 Skill 的最近一次调用会<strong>保留前 5,000 tokens</strong>，所有 Skill 的&quot;压缩后保留&quot;共享一个 <strong>25,000 tokens 的总预算</strong>，按&quot;最近调用优先&quot;分配。如果一个会话里调用过很多 Skill，老的可能会在压缩时被整个丢掉。</li>
+<li><strong>新会话</strong>：上下文清空，Skill 又回到&quot;只有 metadata 在线、正文不在线&quot;的状态。</li>
+</ul>
+<p>所以从用户视角看，<strong>Skill 在单次会话内是&quot;半永久&quot;的，但跨会话不是</strong>。这正是 Skills 的设计意图：每次会话都是一次&quot;按当前任务现拉方法&quot;，避免历史方法污染下一次任务。</p>
+<blockquote>
+<p>工程提示：如果你发现某个 Skill 在长会话后期&quot;不起作用&quot;了，要么是被压缩时挤掉了（重新触发一次即可），要么是模型选了别的方法（这时该考虑加强 <code>description</code> 或用 <a class="link" href="https://docs.claude.com/en/hooks"  target="_blank" rel="noopener"
+    >hooks</a> 做硬约束）。</p></blockquote>
+<h4 id="144-那近似全生命周期的-skill-该怎么实现">1.4.4 那&quot;近似全生命周期&quot;的 Skill 该怎么实现
+</h4><p>如果确实有&quot;跨会话也始终在线&quot;的诉求，有几种近似做法，但严格意义上都不是 Skill 的原生形态：</p>
+<ol>
+<li>
+<p><strong>写进 <code>CLAUDE.md</code></strong>（推荐）
+把&quot;必须永远遵守&quot;的内容直接放进 <code>CLAUDE.md</code>，不要硬塞进 Skill。这就是 <code>CLAUDE.md</code> 的本职工作。</p>
+</li>
+<li>
+<p><strong>System Prompt / 平台级指令</strong>
+团队/平台层面写死，用户无法关闭。代价是吃 context。</p>
+</li>
+<li>
+<p><strong>Slash Command 强制触发</strong>
+写一个项目专属命令，进入工作流先打一下把对应 Skill 显式拉进来。这是&quot;按需的强一致&quot;，不是&quot;全生命周期&quot;。</p>
+</li>
+<li>
+<p><strong><code>disable-model-invocation: true</code> 强制手动触发</strong>
+Claude Code 支持在 frontmatter 里加 <code>disable-model-invocation: true</code>，让 Skill 只能由用户用 <code>/skill-name</code> 显式触发，不会被模型自动加载。这适合 <code>/deploy</code>、<code>/commit</code> 这种&quot;必须用户主动确认&quot;的场景，但<strong>它不是&quot;始终在线&quot;</strong>，反而是&quot;更严格的按需&quot;。</p>
+</li>
+</ol>
+<h4 id="145-一句话记住">1.4.5 一句话记住
+</h4><blockquote>
+<p><strong>Skills 故意设计成不长命</strong>。如果你想要&quot;整个项目跟随生命周期&quot;的东西，请用 <code>CLAUDE.md</code> / 项目记忆，那才是为这个目的而生的工具。把两者混用，最后一定会把 Skills 写成&quot;另一份永远在线的 system prompt&quot;，把它&quot;按需、不挤占 context&quot;的全部价值都浪费掉。</p></blockquote>
+<hr>
+<h2 id="2-skills-解决了什么问题">2. Skills 解决了什么问题
+</h2><p>为什么需要 Skills？因为 Prompt 工程发展到今天，遇到了几个绕不开的问题。</p>
+<h3 id="21-问题一system-prompt-越塞越胖">2.1 问题一：System Prompt 越塞越胖
+</h3><p>最早的做法是把所有规范、经验、流程一股脑写进 system prompt：</p>
+<ul>
+<li>项目编码规范</li>
+<li>Git 提交规则</li>
+<li>各种特殊场景的处理方法</li>
+<li>部门内部的特殊术语</li>
+</ul>
+<p>结果就是：</p>
+<ul>
+<li>system prompt 动辄几千上万 token</li>
+<li>大量内容这次任务根本用不上</li>
+<li>上下文窗口被白白占用，影响真正的任务推理</li>
+</ul>
+<p>Skills 的做法是：<strong>用不上的东西就别加载</strong>。</p>
+<h3 id="22-问题二经验难以复用">2.2 问题二：经验难以复用
+</h3><p>每个研发都有自己一套&quot;老中医经验&quot;：</p>
+<ul>
+<li>我每次写 Dockerfile 都会顺手加 <code>--no-cache-dir</code></li>
+<li>我每次改数据库迁移都会先 dry-run</li>
+<li>我团队的 PR 模板有一套固定写法</li>
+</ul>
+<p>这些经验不写下来，模型每次都重新摸索；写下来塞进 SP，又会触发问题一。</p>
+<p>Skills 的做法是：<strong>经验写一次，按需调用</strong>。</p>
+<h3 id="23-问题三能力分发难">2.3 问题三：能力分发难
+</h3><p>如果你想把&quot;写 K8s YAML 的最佳实践&quot;分享给团队 20 个人用：</p>
+<ul>
+<li>让每个人都改自己的 SP？维护成本极高</li>
+<li>做成 MCP Server？过重，纯文档型经验犯不着开服务</li>
+<li>写成 Wiki？人能看，模型不会主动查</li>
+</ul>
+<p>Skills 的做法是：<strong>做成一个目录、一个仓库，就能分发</strong>。</p>
+<h3 id="24-问题四agent-自主性与可控性的平衡">2.4 问题四：Agent 自主性与可控性的平衡
+</h3><p>我们既希望 Agent 聪明地自主决定怎么做事，又希望它在关键流程上严格按规矩来。</p>
+<ul>
+<li>全靠 Agent 自由发挥 → 不稳定</li>
+<li>全靠硬编码 workflow → 不灵活</li>
+</ul>
+<p>Skills 的做法是：<strong>该松的地方让模型自由发挥，该紧的地方写进 SKILL.md</strong>。</p>
+<hr>
+<h2 id="3-skills-的基本结构">3. Skills 的基本结构
+</h2><p>以 Claude Code 的 Skills 为例，一个 Skill 的标准结构如下。这里把它放进所属的 <strong>skills 根目录</strong> 中，可以同时看清楚&quot;上一层级&quot;和&quot;同级 Skill&quot;的关系：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span><span class="lnt">28
+</span><span class="lnt">29
+</span><span class="lnt">30
+</span><span class="lnt">31
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">.claude/                              # ← 上一层级：Claude Code 的项目/用户配置目录
+</span></span><span class="line"><span class="cl">├── settings.json                     #   配置文件（与 Skills 同级，不是 Skill）
+</span></span><span class="line"><span class="cl">└── skills/                           # ← 上一层级：所有 Skill 的根目录（自动发现）
+</span></span><span class="line"><span class="cl">    │
+</span></span><span class="line"><span class="cl">    ├── my-skill/                     # ← 当前 Skill：本节示例
+</span></span><span class="line"><span class="cl">    │   ├── SKILL.md                  #   入口文件，必需
+</span></span><span class="line"><span class="cl">    │   ├── reference.md              #   参考资料（可选）
+</span></span><span class="line"><span class="cl">    │   ├── examples/                 #   示例（可选）
+</span></span><span class="line"><span class="cl">    │   │   ├── good.md
+</span></span><span class="line"><span class="cl">    │   │   └── bad.md
+</span></span><span class="line"><span class="cl">    │   ├── templates/                #   模板文件（可选）
+</span></span><span class="line"><span class="cl">    │   │   └── pr-template.md
+</span></span><span class="line"><span class="cl">    │   └── scripts/                  #   辅助脚本（可选）
+</span></span><span class="line"><span class="cl">    │       └── check.sh
+</span></span><span class="line"><span class="cl">    │
+</span></span><span class="line"><span class="cl">    ├── code-review/                  # ← 同级 Skill：每个目录就是一个独立 Skill
+</span></span><span class="line"><span class="cl">    │   └── SKILL.md
+</span></span><span class="line"><span class="cl">    │
+</span></span><span class="line"><span class="cl">    ├── git-commit/                   # ← 同级 Skill
+</span></span><span class="line"><span class="cl">    │   ├── SKILL.md
+</span></span><span class="line"><span class="cl">    │   ├── reference/
+</span></span><span class="line"><span class="cl">    │   │   └── conventional-commits.md
+</span></span><span class="line"><span class="cl">    │   └── examples/
+</span></span><span class="line"><span class="cl">    │       ├── good.md
+</span></span><span class="line"><span class="cl">    │       └── bad.md
+</span></span><span class="line"><span class="cl">    │
+</span></span><span class="line"><span class="cl">    └── sql-review/                   # ← 同级 Skill
+</span></span><span class="line"><span class="cl">        ├── SKILL.md
+</span></span><span class="line"><span class="cl">        └── reference/
+</span></span><span class="line"><span class="cl">            ├── index-rules.md
+</span></span><span class="line"><span class="cl">            └── mysql-pitfalls.md
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>几个关键约定：</p>
+<ul>
+<li><strong><code>.claude/skills/</code> 是 Skill 的根目录</strong>：你自己创建 Skill 时主要放在两个地方 —— 项目级 <code>&lt;project&gt;/.claude/skills/</code>（随仓库走，团队共享）或用户级 <code>~/.claude/skills/</code>（仅你本机生效）。此外 Claude Code 还会自动加载<strong>内置 Skill</strong> 和<strong>已安装插件提供的 Skill</strong>，完整四级作用域见 <a class="link" href="#41-skills-%e7%9a%84%e5%ad%98%e6%94%be%e4%bd%8d%e7%bd%ae" >4.1 节</a>。</li>
+<li><strong>每个 Skill 占一个独立子目录</strong>：目录名就是 Skill 的 slug，必须与 SKILL.md 里 frontmatter 的 <code>name:</code> 字段保持一致（也就是 <code>/code-review</code>、<code>/git-commit</code> 等 Slash Command 的名字）。</li>
+<li><strong>同级 Skill 之间是平等的</strong>：没有父子继承关系，但可以在 SKILL.md 正文里用普通 markdown 链接（如 <code>[code-review](../code-review/SKILL.md)</code>）相互引用，形成方法网络。</li>
+<li><strong>Skill 内部目录无强制规范</strong>：<code>reference/</code>、<code>examples/</code>、<code>templates/</code>、<code>scripts/</code> 是官方 best-practices 推荐的&quot;渐进式披露&quot;组织方式，但 Claude Code 不会强制校验，唯一硬性要求只有 <code>SKILL.md</code> 这个入口文件。</li>
+</ul>
+<h3 id="31-skillmd-的结构">3.1 SKILL.md 的结构
+</h3><p><code>SKILL.md</code> 是 Skill 的入口，由两部分组成：</p>
+<ol>
+<li><strong>YAML frontmatter</strong>：元信息，模型用它判断是否要加载这个 Skill</li>
+<li><strong>正文</strong>：方法论本体</li>
+</ol>
+<p>一个最小可用的 SKILL.md：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-markdown" data-lang="markdown"><span class="line"><span class="cl">---
+</span></span><span class="line"><span class="cl">name: write-pr-description
+</span></span><span class="line"><span class="cl">description: 当用户要写或改 GitHub Pull Request 描述时使用。会按团队模板生成结构化、信息密度高的 PR description。
+</span></span><span class="line"><span class="cl">---
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="gh"># 写 PR 描述的方法
+</span></span></span><span class="line"><span class="cl"><span class="gh"></span>
+</span></span><span class="line"><span class="cl"><span class="gu">## 基本流程
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="k">1.</span> 先用 <span class="sb">`git diff origin/main...HEAD`</span> 看完整改动
+</span></span><span class="line"><span class="cl"><span class="k">2.</span> 按以下结构组织描述：
+</span></span><span class="line"><span class="cl">   <span class="k">-</span> **Summary**：一句话说清楚这个 PR 做了什么
+</span></span><span class="line"><span class="cl">   <span class="k">-</span> **Why**：为什么要做（关联 issue / 业务背景）
+</span></span><span class="line"><span class="cl">   <span class="k">-</span> **How**：实现思路，重点说清楚关键设计决策
+</span></span><span class="line"><span class="cl">   <span class="k">-</span> **Test**：测试覆盖了哪些场景
+</span></span><span class="line"><span class="cl">   <span class="k">-</span> **Risk**：可能的风险点
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="gu">## 不要做的事
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 不要写&#34;修复了一些 bug&#34;这种没信息量的话
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 不要把 commit message 直接复制进来
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 不要超过 200 行；超过说明 PR 应该拆分
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="32-frontmatter-的关键字段">3.2 frontmatter 的关键字段
+</h3><blockquote>
+<p>下表内容对齐 <a class="link" href="https://code.claude.com/docs/en/skills"  target="_blank" rel="noopener"
+    >Claude Code 官方 Skills 文档</a> 与 <a class="link" href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices"  target="_blank" rel="noopener"
+    >Agent Skills best practices</a>，截至 2026 年 6 月。所有未在官方文档列出的字段（如 <code>tags</code>、<code>version</code>、<code>author</code>）都不存在，写了也会被忽略。</p></blockquote>
+<h4 id="必填--推荐字段">必填 / 推荐字段
+</h4><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>字段</th>
+          <th>是否必需</th>
+          <th>说明</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>name</code></td>
+          <td>可选（默认取目录名）</td>
+          <td>Skill 的展示名。<strong>硬约束</strong>：最长 64 字符，仅小写字母 / 数字 / 连字符，不含 XML 标签，不能用保留词 <code>anthropic</code> / <code>claude</code></td>
+      </tr>
+      <tr>
+          <td><code>description</code></td>
+          <td><strong>强烈推荐</strong></td>
+          <td>一句话说明&quot;做什么 + 何时使用&quot;，模型用它决定是否自动触发。<strong>硬约束</strong>：非空、最长 1024 字符、不含 XML 标签。在 Skills 列表里 <code>description + when_to_use</code> 合计被截断到 <strong>1536 字符</strong>，关键场景写在最前</td>
+      </tr>
+  </tbody>
+</table></div>
+<h4 id="触发与权限控制claude-code-专有">触发与权限控制（Claude Code 专有）
+</h4><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>字段</th>
+          <th>说明</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>when_to_use</code></td>
+          <td>补充触发上下文，如典型用户语句。和 <code>description</code> 一起被截断到 1536 字符</td>
+      </tr>
+      <tr>
+          <td><code>disable-model-invocation</code></td>
+          <td>设为 <code>true</code> 后<strong>只能</strong>由用户用 <code>/skill-name</code> 显式触发，模型不会自动加载（适合 <code>/deploy</code> <code>/commit</code> 这种有副作用的操作）</td>
+      </tr>
+      <tr>
+          <td><code>user-invocable</code></td>
+          <td>设为 <code>false</code> 后<strong>只能</strong>由模型自动触发，从 <code>/</code> 菜单里隐藏（适合背景知识，如 <code>legacy-system-context</code>）</td>
+      </tr>
+      <tr>
+          <td><code>paths</code></td>
+          <td>glob 模式，限制 Skill 仅在编辑匹配文件时自动触发。例：<code>paths: [&quot;src/api/**/*.ts&quot;]</code></td>
+      </tr>
+  </tbody>
+</table></div>
+<h4 id="工具与运行时控制claude-code-专有">工具与运行时控制（Claude Code 专有）
+</h4><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>字段</th>
+          <th>说明</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>allowed-tools</code></td>
+          <td>Skill 激活时无需逐次确认就可用的工具白名单，如 <code>Bash(git add *) Bash(git commit *)</code></td>
+      </tr>
+      <tr>
+          <td><code>disallowed-tools</code></td>
+          <td>Skill 激活时屏蔽的工具，下一轮消息后失效</td>
+      </tr>
+      <tr>
+          <td><code>model</code></td>
+          <td>Skill 激活时切换到指定模型</td>
+      </tr>
+      <tr>
+          <td><code>effort</code></td>
+          <td>思考强度：<code>low</code> / <code>medium</code> / <code>high</code> / <code>xhigh</code> / <code>max</code></td>
+      </tr>
+      <tr>
+          <td><code>context</code></td>
+          <td>设为 <code>fork</code> 让 Skill 在独立 subagent 上下文里执行</td>
+      </tr>
+      <tr>
+          <td><code>agent</code></td>
+          <td>配合 <code>context: fork</code>，指定使用哪个 subagent（<code>Explore</code>、<code>Plan</code>、<code>general-purpose</code> 或自定义）</td>
+      </tr>
+  </tbody>
+</table></div>
+<h4 id="参数与脚本控制claude-code-专有">参数与脚本控制（Claude Code 专有）
+</h4><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>字段</th>
+          <th>说明</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>argument-hint</code></td>
+          <td>自动补全提示，如 <code>[issue-number]</code></td>
+      </tr>
+      <tr>
+          <td><code>arguments</code></td>
+          <td>命名位置参数，用于 SKILL.md 里的 <code>$name</code> 占位符</td>
+      </tr>
+      <tr>
+          <td><code>hooks</code></td>
+          <td>绑定到此 Skill 生命周期的 hook</td>
+      </tr>
+      <tr>
+          <td><code>shell</code></td>
+          <td><code>bash</code>（默认）或 <code>powershell</code>，影响 SKILL.md 里 <code>!`command`</code> 的执行 shell</td>
+      </tr>
+  </tbody>
+</table></div>
+<blockquote>
+<p>注意：Claude API 和 claude.ai 上传的 Skills <strong>只用 <code>name</code> + <code>description</code></strong> 两个字段，上面的&quot;Claude Code 专有&quot;字段是 Claude Code 在通用标准基础上的扩展。</p></blockquote>
+<blockquote>
+<p>经验：<code>description</code> 写得好不好，直接决定 Skill 会不会被正确触发。它要回答的问题是&quot;什么场景下应该用我&quot;，而不是&quot;我是什么&quot;。官方推荐用<strong>第三人称</strong>写描述（例：<code>&quot;Processes Excel files...&quot;</code>，避免 <code>&quot;I can help...&quot;</code> / <code>&quot;You can use...&quot;</code>）。</p></blockquote>
+<h3 id="33-正文的常见组织">3.3 正文的常见组织
+</h3><p>正文是 Markdown，没有强制结构，但好的 Skill 通常包含：</p>
+<ul>
+<li><strong>What</strong>：这个 Skill 处理什么问题</li>
+<li><strong>When to use</strong>：什么场景下触发</li>
+<li><strong>Steps</strong>：标准步骤</li>
+<li><strong>Constraints</strong>：约束和禁忌</li>
+<li><strong>Examples</strong>：好例子和坏例子（强烈推荐）</li>
+<li><strong>References</strong>：链接到附属文件</li>
+</ul>
+<hr>
+<h2 id="4-skills-怎么使用">4. Skills 怎么使用
+</h2><h3 id="41-skills-的存放位置">4.1 Skills 的存放位置
+</h3><p>Claude Code 官方文档明确列出 4 级作用域，<strong>优先级从上到下依次降低</strong>（同名 Skill 高优先级覆盖低优先级）：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>层级</th>
+          <th>路径</th>
+          <th>作用域</th>
+          <th>谁负责放</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Enterprise</td>
+          <td>通过 <a class="link" href="https://docs.claude.com/en/settings#settings-files"  target="_blank" rel="noopener"
+    >managed settings</a> 部署</td>
+          <td>整个组织所有用户</td>
+          <td>组织管理员</td>
+      </tr>
+      <tr>
+          <td>Personal</td>
+          <td><code>~/.claude/skills/&lt;skill-name&gt;/SKILL.md</code></td>
+          <td>当前用户所有项目</td>
+          <td>你自己</td>
+      </tr>
+      <tr>
+          <td>Project</td>
+          <td><code>&lt;project&gt;/.claude/skills/&lt;skill-name&gt;/SKILL.md</code></td>
+          <td>仅当前项目（随仓库走，团队共享）</td>
+          <td>项目仓库</td>
+      </tr>
+      <tr>
+          <td>Plugin</td>
+          <td><code>&lt;plugin&gt;/skills/&lt;skill-name&gt;/SKILL.md</code></td>
+          <td>启用了该 plugin 的地方</td>
+          <td>插件作者</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>几个关键事实（来自官方文档）：</p>
+<ul>
+<li><strong>覆盖规则</strong>：enterprise 覆盖 personal，personal 覆盖 project。Plugin Skills 用 <code>plugin-name:skill-name</code> 命名空间，<strong>不会</strong>和其他级别冲突。</li>
+<li><strong>自动发现</strong>：personal、project、plugin 三级<strong>会被自动扫描</strong>，无需手动注册。Project Skills 还会沿目录树往上找 —— 在子目录启动 Claude Code，仍能加载到仓库根目录的 <code>.claude/skills/</code>。</li>
+<li><strong>额外目录</strong>：用 <code>--add-dir</code> 或 <code>/add-dir</code> 加入的目录里的 <code>.claude/skills/</code> 也会被自动加载（这是 <code>additionalDirectories</code> 设置默认不加载配置的一个例外）。</li>
+<li><strong>实时生效</strong>：Claude Code 监听这些目录，添加/编辑/删除 Skill <strong>不用重启</strong>就能生效。但<strong>新建一个之前不存在的顶层 <code>skills/</code> 目录</strong>需要重启 Claude Code 才能开始监听。</li>
+<li><strong>优先级冲突</strong>：如果同名既有 <code>.claude/commands/&lt;name&gt;.md</code> 又有 <code>.claude/skills/&lt;name&gt;/SKILL.md</code>，<strong>Skill 优先</strong>。</li>
+</ul>
+<blockquote>
+<p>这里说的&quot;Skills 存放位置&quot;是 <strong>Claude Code 专属</strong>的。Claude API 上的 Skills 通过 <code>/v1/skills</code> 端点上传到 workspace，claude.ai 上的通过 Settings → Features 上传 zip 文件，两者都不是文件系统路径。</p></blockquote>
+<h3 id="42-两种触发方式">4.2 两种触发方式
+</h3><p>Skills 有两种触发方式，理解这一点非常重要：</p>
+<p><strong>方式一：模型自主触发（隐式）</strong></p>
+<p>模型在执行任务时，会扫描当前可见的所有 Skill 的 <code>name + description</code>，判断当前任务是否匹配某个 Skill，匹配则加载它的完整内容。</p>
+<p>例子：</p>
+<ul>
+<li>用户说&quot;帮我写个 PR 描述&quot;</li>
+<li>模型扫描到一个 <code>write-pr-description</code> Skill，description 写着&quot;当用户要写或改 PR 描述时使用&quot;</li>
+<li>模型判断匹配，加载 SKILL.md 全文</li>
+<li>按 SKILL.md 里写的方法去写</li>
+</ul>
+<p>整个过程用户不需要知道 Skill 的存在。</p>
+<p><strong>方式二：用户显式调用</strong></p>
+<p>用户直接以 <code>/skill-name</code> 的方式触发。例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">/write-pr-description
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这种方式下：</p>
+<ul>
+<li>Skill 一定会被加载</li>
+<li>不依赖模型对 description 的匹配</li>
+<li>适合&quot;我明确知道要用哪个方法&quot;的场景</li>
+</ul>
+<h3 id="43-一个最直观的使用流程">4.3 一个最直观的使用流程
+</h3><p>假设项目下有这样一个 Skill：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">.claude/skills/
+</span></span><span class="line"><span class="cl">└── code-review/
+</span></span><span class="line"><span class="cl">    └── SKILL.md
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>SKILL.md</code> 写着：当用户要做 code review 时，按&quot;先读改动、再分维度、最后给优先级&quot;的流程做。</p>
+<p>那么任意以下输入都可能触发它：</p>
+<ul>
+<li>&ldquo;帮我 review 一下这个 PR&rdquo;</li>
+<li>&ldquo;看看这个改动有没有问题&rdquo;</li>
+<li>&ldquo;/code-review&rdquo;</li>
+</ul>
+<p>模型会：</p>
+<ol>
+<li>加载 <code>SKILL.md</code></li>
+<li>按里面写的方法执行</li>
+<li>调用必要的 tools（如 <code>read_file</code>、<code>bash</code>）</li>
+<li>按 SKILL.md 规定的输出格式给结果</li>
+</ol>
+<h3 id="44-skills-之间能互相引用吗">4.4 Skills 之间能互相引用吗
+</h3><p>可以，但<strong>没有特殊语法</strong> —— 用普通 markdown 相对路径链接即可。Skill A 的正文里这样写：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-markdown" data-lang="markdown"><span class="line"><span class="cl">完成后请按 [<span class="nt">code-review/SKILL.md</span>](<span class="na">../code-review/SKILL.md</span>) 的方法做一次自检。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>模型读到这个链接时，知道是另一个 Skill 的入口文件，需要时会通过 bash 工具去读它。</p>
+<blockquote>
+<p>注意：早期文档和一些社区材料里出现过 <code>[[skill-name]]</code> 这种 wiki 风格写法，<strong>Claude Code 官方文档没有这种语法</strong>，模型不会做特殊解析。统一用普通 markdown 链接即可。</p></blockquote>
+<hr>
+<h2 id="5-skills-怎么开发">5. Skills 怎么开发
+</h2><p>下面以 <strong>Anthropic 官方文档贯穿使用的 <code>pdf-processing</code> Skill</strong> 为例，走一遍完整开发流程。</p>
+<blockquote>
+<p>选 <code>pdf-processing</code> 是因为它在 <a class="link" href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview"  target="_blank" rel="noopener"
+    >Skills overview</a> 和 <a class="link" href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices"  target="_blank" rel="noopener"
+    >Best practices</a> 两份官方文档里都被反复用作示范，文中所有关键片段都能在官方原文里找到对应。</p></blockquote>
+<h3 id="51-第一步明确边界">5.1 第一步：明确边界
+</h3><p>在写代码前先回答三个问题：</p>
+<ol>
+<li><strong>这个 Skill 解决什么问题？</strong>
+<ul>
+<li>处理 PDF 文件：抽取文本和表格、填表、合并文档</li>
+</ul>
+</li>
+<li><strong>什么时候该触发？</strong>
+<ul>
+<li>用户在处理 PDF 文件时，或显式提到 PDFs、forms、document extraction 时</li>
+</ul>
+</li>
+<li><strong>它的输出长什么样？</strong>
+<ul>
+<li>抽取的文本 / 填好的 PDF / 合并后的 PDF（视具体子任务而定）</li>
+</ul>
+</li>
+</ol>
+<p>边界不清晰，写出来的 Skill 一定会跑偏。</p>
+<h3 id="52-第二步写-frontmatter">5.2 第二步：写 frontmatter
+</h3><p>下面是官方原文里的 description 写法（<a class="link" href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview"  target="_blank" rel="noopener"
+    >overview &ldquo;Level 1: Metadata&rdquo;</a>）：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nn">---</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l">pdf-processing</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l">Extract text and tables from PDF files, fill forms, merge documents. Use when working with PDF files or when the user mentions PDFs, forms, or document extraction.</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nn">---</span><span class="w">
+</span></span></span></code></pre></td></tr></table>
+</div>
+</div><p>注意 <code>description</code> 里：</p>
+<ul>
+<li><strong>既说&quot;做什么&quot;也说&quot;何时使用&quot;</strong>（&ldquo;Extract&hellip;&rdquo; + &ldquo;Use when&hellip;&quot;）</li>
+<li>用<strong>第三人称</strong>（&ldquo;Extract&hellip;&quot;），不是 &ldquo;I can help&hellip;&rdquo; 或 &ldquo;You can use&hellip;&rdquo;</li>
+<li>列出了<strong>多个触发关键词</strong>：PDFs、forms、document extraction —— 帮模型在不同表述下都能命中</li>
+<li>没有写&quot;我是一个 PDF 助手&quot;这种泛泛而谈的话</li>
+</ul>
+<h3 id="53-第三步写正文骨架">5.3 第三步：写正文骨架
+</h3><p>官方推荐的 SKILL.md 正文骨架（节选自 <a class="link" href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview"  target="_blank" rel="noopener"
+    >overview &ldquo;Level 2: Instructions&rdquo;</a>）：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-markdown" data-lang="markdown"><span class="line"><span class="cl"><span class="gh"># PDF Processing
+</span></span></span><span class="line"><span class="cl"><span class="gh"></span>
+</span></span><span class="line"><span class="cl"><span class="gu">## Quick start
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl">Use pdfplumber to extract text from PDFs:
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="s">```python
+</span></span></span><span class="line"><span class="cl"><span class="s"></span><span class="kn">import</span> <span class="nn">pdfplumber</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">with</span> <span class="n">pdfplumber</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&#34;document.pdf&#34;</span><span class="p">)</span> <span class="k">as</span> <span class="n">pdf</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="n">text</span> <span class="o">=</span> <span class="n">pdf</span><span class="o">.</span><span class="n">pages</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">extract_text</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="s">```</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">For advanced form filling, see [<span class="nt">FORMS.md</span>](<span class="na">FORMS.md</span>).
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>注意几个写法上的关键决策：</p>
+<ul>
+<li><strong>&ldquo;Quick start&rdquo; 直接给可运行代码</strong>：让模型一眼看到怎么用，不要先讲一堆背景</li>
+<li><strong>代码尽可能短</strong>：官方原文这段示例只占约 50 tokens</li>
+<li><strong>链接指向辅助文件</strong>：<code>[FORMS.md](FORMS.md)</code> 用普通 markdown 相对路径（<strong>不是</strong> <code>[[FORMS]]</code> 这种 wiki 语法）</li>
+<li><strong>不解释 PDF 是什么</strong>：默认 Claude 知道，加这种背景就是浪费 token</li>
+</ul>
+<h3 id="54-第四步补充辅助文件可选">5.4 第四步：补充辅助文件（可选）
+</h3><p>如果有大量参考材料，不要全部塞进 SKILL.md。把它们拆出去（<a class="link" href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices"  target="_blank" rel="noopener"
+    >best practices &ldquo;Pattern 1: High-level guide with references&rdquo;</a>）：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">pdf-skill/
+</span></span><span class="line"><span class="cl">├── SKILL.md           # Main instructions (loaded when triggered)
+</span></span><span class="line"><span class="cl">├── FORMS.md           # Form-filling guide (loaded as needed)
+</span></span><span class="line"><span class="cl">├── REFERENCE.md       # API reference (loaded as needed)
+</span></span><span class="line"><span class="cl">└── scripts/
+</span></span><span class="line"><span class="cl">    └── fill_form.py   # Utility script (executed, not loaded)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>在 SKILL.md 里这样引用：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-markdown" data-lang="markdown"><span class="line"><span class="cl"><span class="gu">## Advanced features
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="gs">**Form filling**</span>: See [<span class="nt">FORMS.md</span>](<span class="na">FORMS.md</span>) for complete guide
+</span></span><span class="line"><span class="cl"><span class="gs">**API reference**</span>: See [<span class="nt">REFERENCE.md</span>](<span class="na">REFERENCE.md</span>) for all methods
+</span></span><span class="line"><span class="cl"><span class="gs">**Examples**</span>: See [<span class="nt">EXAMPLES.md</span>](<span class="na">EXAMPLES.md</span>) for common patterns
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>模型在需要时会再去读 <code>FORMS.md</code> / <code>REFERENCE.md</code>，<strong>而且脚本（<code>scripts/fill_form.py</code>）的代码本身永远不进入上下文，只有执行后的 stdout 进</strong>。</p>
+<blockquote>
+<p>一个常见组织方式上的细节：官方示例<strong>主要用平铺的 <code>.md</code> 文件</strong>（<code>FORMS.md</code>、<code>REFERENCE.md</code>），<code>scripts/</code> 用子目录。<code>reference/</code>、<code>examples/</code> 这种&quot;全部用子目录&quot;的写法是社区习惯，官方文档里也有出现（<code>reference/finance.md</code>），两种都合法。<strong>关键约束是引用只能展开一层</strong>：SKILL.md → reference.md ✅；SKILL.md → reference.md → details.md ✗（模型可能只读个开头）。</p></blockquote>
+<h3 id="55-第五步测试">5.5 第五步：测试
+</h3><p>测试一个 Skill 是否合格，至少要覆盖：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>测试项</th>
+          <th>期望</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>正向触发</td>
+          <td>给一段 SQL 问性能，应触发</td>
+      </tr>
+      <tr>
+          <td>负向触发</td>
+          <td>问&quot;什么是事务&rdquo;，不应触发</td>
+      </tr>
+      <tr>
+          <td>流程一致性</td>
+          <td>多次执行结果结构稳定</td>
+      </tr>
+      <tr>
+          <td>越界检查</td>
+          <td>用户给非 SQL 内容时，是否会强行套用</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>测试方式很朴素：在 Claude Code 里实际跑几遍，看模型行为。</p>
+<h3 id="56-第六步分发">5.6 第六步：分发
+</h3><p>写完后放到合适位置：</p>
+<ul>
+<li>自己用 → <code>~/.claude/skills/pdf-processing/</code></li>
+<li>团队用 → 项目根目录的 <code>.claude/skills/pdf-processing/</code>，提交到仓库</li>
+<li>跨团队用 → 打成 Plugin 发布</li>
+</ul>
+<h3 id="57-在-skill-里使用代码">5.7 在 Skill 里使用代码
+</h3><p>到目前为止给的例子都是&quot;纯文档型&quot;的 Skill。但一个常见的进阶用法是：<strong>Skill 里可以引用甚至携带代码</strong>。这一节专门解释这件事，因为它是把 Skill 从&quot;文档&quot;升级为&quot;工程能力&quot;的关键，也是 5.8 节&quot;完整示例&quot;里最后一块拼图。</p>
+<h4 id="571-三种引用代码的方式从轻到重">5.7.1 三种&quot;引用代码&quot;的方式，从轻到重
+</h4><p><strong>方式 1：SKILL.md 里直接写代码片段（最轻）</strong></p>
+<p>最朴素的用法：在 SKILL.md 正文里直接写示例代码块。这正是 <a class="link" href="#53-%e7%ac%ac%e4%b8%89%e6%ad%a5%e5%86%99%e6%ad%a3%e6%96%87%e9%aa%a8%e6%9e%b6" >5.3 节</a> 那段官方 PDF 处理示例的写法：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-markdown" data-lang="markdown"><span class="line"><span class="cl"><span class="gu">## Quick start
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl">Use pdfplumber to extract text from PDFs:
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="s">```python
+</span></span></span><span class="line"><span class="cl"><span class="s"></span><span class="kn">import</span> <span class="nn">pdfplumber</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">with</span> <span class="n">pdfplumber</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&#34;document.pdf&#34;</span><span class="p">)</span> <span class="k">as</span> <span class="n">pdf</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="n">text</span> <span class="o">=</span> <span class="n">pdf</span><span class="o">.</span><span class="n">pages</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">extract_text</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="s">```</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>适用场景：</p>
+<ul>
+<li>短命令（一两行 shell / Python / 调用片段）</li>
+<li>输入输出格式示例</li>
+<li>配置片段</li>
+</ul>
+<p><strong>注意</strong>：代码片段是给<strong>模型看的指令</strong>，不是被执行的 —— 模型读到后会理解成&quot;我应该照这种方式调用&rdquo;,然后通过 <code>Bash</code> Tool 真正去跑。SKILL.md 本身没有任何执行能力。</p>
+<p><strong>方式 2：引用同目录下的辅助代码文件（中等）</strong></p>
+<p>把较长的内容（更详细的指引、模板、长 reference）放进 Skill 目录的同级或子目录，SKILL.md 用相对路径引用。这是 <a class="link" href="#54-%e7%ac%ac%e5%9b%9b%e6%ad%a5%e8%a1%a5%e5%85%85%e8%be%85%e5%8a%a9%e6%96%87%e4%bb%b6%e5%8f%af%e9%80%89" >5.4 节</a> 展示的&quot;渐进式披露&quot;模式，对应 <a class="link" href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices"  target="_blank" rel="noopener"
+    >best practices &ldquo;Pattern 1&rdquo;</a>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">pdf-skill/
+</span></span><span class="line"><span class="cl">├── SKILL.md           # 入口，主流程
+</span></span><span class="line"><span class="cl">├── FORMS.md           # Form-filling guide（按需加载）
+</span></span><span class="line"><span class="cl">├── REFERENCE.md       # 完整 API 参考（按需加载）
+</span></span><span class="line"><span class="cl">└── EXAMPLES.md        # 示例集合（按需加载）
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>SKILL.md 里这样引用：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-markdown" data-lang="markdown"><span class="line"><span class="cl"><span class="gu">## Advanced features
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="gs">**Form filling**</span>: See [<span class="nt">FORMS.md</span>](<span class="na">FORMS.md</span>) for complete guide
+</span></span><span class="line"><span class="cl"><span class="gs">**API reference**</span>: See [<span class="nt">REFERENCE.md</span>](<span class="na">REFERENCE.md</span>) for all methods
+</span></span><span class="line"><span class="cl"><span class="gs">**Examples**</span>: See [<span class="nt">EXAMPLES.md</span>](<span class="na">EXAMPLES.md</span>) for common patterns
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>适用场景：</p>
+<ul>
+<li>长 guide（几十到几百行）</li>
+<li>完整 API 参考</li>
+<li>多个域的分类参考（按 best practices Pattern 2，可拆成 <code>reference/finance.md</code>、<code>reference/sales.md</code> 等）</li>
+</ul>
+<p>关键区别：模型只在<strong>真的需要时</strong>才会去读这些文件，避免一开始就把所有代码塞进上下文。</p>
+<p><strong>方式 3：可执行的 Helper Script（最重）</strong></p>
+<p>把代码作为<strong>真正可被执行的脚本</strong>放进 Skill 目录，SKILL.md 指挥模型用 <code>Bash</code> Tool 去跑它。这就是官方示例里 <code>scripts/fill_form.py</code> 的用法：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">pdf-skill/
+</span></span><span class="line"><span class="cl">├── SKILL.md
+</span></span><span class="line"><span class="cl">├── FORMS.md
+</span></span><span class="line"><span class="cl">└── scripts/
+</span></span><span class="line"><span class="cl">    ├── analyze_form.py      # 抽取 PDF 表单字段
+</span></span><span class="line"><span class="cl">    ├── fill_form.py         # 按 mapping 填表
+</span></span><span class="line"><span class="cl">    └── validate.py          # 验证结果
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>SKILL.md 里：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-markdown" data-lang="markdown"><span class="line"><span class="cl"><span class="gu">## Form filling workflow
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="k">1.</span> <span class="gs">**Analyze the form**</span>: <span class="sb">`python scripts/analyze_form.py input.pdf &gt; fields.json`</span>
+</span></span><span class="line"><span class="cl"><span class="k">2.</span> <span class="gs">**Edit `fields.json`**</span> to add values
+</span></span><span class="line"><span class="cl"><span class="k">3.</span> <span class="gs">**Validate**</span>: <span class="sb">`python scripts/validate.py fields.json`</span>
+</span></span><span class="line"><span class="cl"><span class="k">4.</span> <span class="gs">**Fill**</span>: <span class="sb">`python scripts/fill_form.py input.pdf fields.json output.pdf`</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>适用场景：</p>
+<ul>
+<li>确定性的、机械性的步骤（解析、转换、验证）</li>
+<li>用代码实现比让模型自己推断更准确的事情（解析复杂 PDF / AST、调外部 API）</li>
+<li>团队希望&quot;无论谁执行都跑同一份逻辑&quot;，避免模型每次自己写</li>
+</ul>
+<p>这种方式本质上是：<strong>Skill 把&quot;通用方法&quot;和&quot;项目特定的工程能力&quot;打包到一起</strong>，让模型按方法调用脚本，而不是每次重新编写脚本。</p>
+<blockquote>
+<p>关键提示：脚本代码本身<strong>永远不进入上下文</strong>，只有 stdout 输出会进。所以 <code>scripts/</code> 下的文件可以很长（几百行），不像 SKILL.md 那样要严格控制在 500 行以内。</p></blockquote>
+<h4 id="572-什么时候该用哪一种">5.7.2 什么时候该用哪一种
+</h4><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>场景</th>
+          <th>选择</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>一两行命令、输入输出示例</td>
+          <td>方式 1：直接写在 SKILL.md 里</td>
+      </tr>
+      <tr>
+          <td>几十行的参考代码 / 模板 / 字典</td>
+          <td>方式 2：拆到子文件</td>
+      </tr>
+      <tr>
+          <td>任何需要&quot;确定性执行&quot;的步骤</td>
+          <td>方式 3：可执行脚本</td>
+      </tr>
+      <tr>
+          <td>同一段代码每次都让模型重写</td>
+          <td>方式 3：固化成脚本</td>
+      </tr>
+      <tr>
+          <td>涉及外部服务调用、需要凭证</td>
+          <td>方式 3：脚本里管理</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>判断口诀：</p>
+<blockquote>
+<p><strong>代码是给&quot;读&quot;的 → 方式 1 或 2；代码是给&quot;跑&quot;的 → 方式 3。</strong></p></blockquote>
+<h4 id="573-几个容易踩坑的点">5.7.3 几个容易踩坑的点
+</h4><p><strong>SKILL.md 里的代码块不会自动执行</strong></p>
+<p>新手常误以为&quot;我在 SKILL.md 里写一段 bash，模型就会跑它&quot;。<strong>不会</strong>。SKILL.md 只是改变模型的行为方式，真正的执行必须经过 Tools。</p>
+<p>正确写法是明确引导：</p>
+<ul>
+<li>✅ &ldquo;运行 <code>git diff</code> 查看改动&rdquo; —— 模型会去调 <code>bash</code> Tool 跑</li>
+<li>❌ 直接贴一段 bash 代码块然后什么都不说 —— 模型可能以为这只是示例</li>
+</ul>
+<p><strong>路径必须用相对路径</strong></p>
+<p>SKILL.md 里引用辅助文件要用<strong>相对于 SKILL.md 自身的相对路径</strong>：</p>
+<ul>
+<li>✅ 见 <code>scripts/check.sh</code></li>
+<li>✅ 见 <code>reference/index-rules.md</code></li>
+<li>❌ 见 <code>~/.claude/skills/pdf-processing/scripts/fill_form.py</code>（绝对路径跨机器会失效）</li>
+<li>❌ 见 <code>./scripts/check.sh</code>（没必要的 <code>./</code>）</li>
+</ul>
+<p><strong>脚本要做到&quot;自包含&quot;</strong></p>
+<p>如果 Skill 要分发给团队（甚至打成 Plugin），脚本不能依赖：</p>
+<ul>
+<li>固定的绝对路径</li>
+<li>必须本地预先安装的私有依赖</li>
+<li>用户机器上的特定环境</li>
+</ul>
+<p>要么脚本自己处理依赖，要么 SKILL.md 的&quot;前置条件&quot;一节明确写清楚。</p>
+<p><strong>涉及凭证 / Token 的代码不要硬编码</strong></p>
+<p>如果脚本要调外部 API：</p>
+<ul>
+<li>❌ 把 Token 写进脚本</li>
+<li>✅ 从环境变量读，SKILL.md 里写明该 export 什么</li>
+</ul>
+<p>Skill 是要进 git 的，硬编码凭证 = 凭证泄露。</p>
+<h4 id="574-skill-脚本和-tool-的边界">5.7.4 Skill 脚本和 Tool 的边界
+</h4><p>这是 5.7 节最容易踩进去的概念混淆：<strong>当 Skill 里塞了一个 <code>scripts/foo.py</code>，它和 Tool 是不是同一个东西？</strong></p>
+<p>直觉上很多人会说&quot;是&quot; —— 既然脚本能干活、有输入有输出，那它不就是个工具吗？<strong>但在 Anthropic 的 API 与 Claude Code 的语境里，二者根本不在同一个层级</strong>。</p>
+<h5 id="一句话先定调">一句话先定调
+</h5><blockquote>
+<p>Skill 里 bundled 的脚本（<code>scripts/foo.py</code>）从来都不是 Tool。它只是一个普通文件，由 <code>Bash</code> 这个 Tool 去执行它。</p></blockquote>
+<p>模型跑一个 Skill 脚本时，真实的调用链是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="err">模型决定要跑</span> <span class="n">scripts</span><span class="o">/</span><span class="n">check</span><span class="o">.</span><span class="n">py</span>
+</span></span><span class="line"><span class="cl">    <span class="err">↓</span>
+</span></span><span class="line"><span class="cl"><span class="err">模型发出一次</span> <span class="n">tool_use</span><span class="err">，调用的是</span> <span class="n">Bash</span> <span class="err">这个</span> <span class="n">Tool</span>
+</span></span><span class="line"><span class="cl">    <span class="err">↓</span>
+</span></span><span class="line"><span class="cl"><span class="n">Bash</span> <span class="n">Tool</span> <span class="err">执行命令</span> <span class="err">`</span><span class="n">python</span> <span class="n">scripts</span><span class="o">/</span><span class="n">check</span><span class="o">.</span><span class="n">py</span><span class="err">`</span>
+</span></span><span class="line"><span class="cl">    <span class="err">↓</span>
+</span></span><span class="line"><span class="cl"><span class="err">脚本</span> <span class="n">stdout</span> <span class="err">作为</span> <span class="n">tool_result</span> <span class="err">回到模型</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>整条链路里<strong>只有一个 Tool 参与（Bash）</strong>。脚本只是 Bash 的&quot;参数&quot;，<strong>不是和 Bash 平级的另一个 Tool</strong>。</p>
+<h5 id="严格对比tool-vs-skill-里的脚本">严格对比：Tool vs Skill 里的脚本
+</h5><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>维度</th>
+          <th>Tool</th>
+          <th>Skill 的 bundled 脚本</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><strong>本质</strong></td>
+          <td>模型可见的、有 JSON schema 的原子能力</td>
+          <td>文件系统上的普通可执行文件</td>
+      </tr>
+      <tr>
+          <td><strong>声明位置</strong></td>
+          <td>API 请求里的 <code>tools</code> 数组 / Claude Code 内置 / MCP server</td>
+          <td>Skill 目录里的 <code>.py</code>/<code>.sh</code> 文件</td>
+      </tr>
+      <tr>
+          <td><strong>模型怎么调用</strong></td>
+          <td>发出 <code>tool_use</code> 块，带结构化参数</td>
+          <td>让 <code>Bash</code> Tool 执行一行命令</td>
+      </tr>
+      <tr>
+          <td><strong>模型怎么知道它存在</strong></td>
+          <td>启动时 schema 注入 system prompt（<strong>永久</strong>占用 token）</td>
+          <td>加载 SKILL.md 时由文档告知（<strong>Skill 命中时</strong>才占用）</td>
+      </tr>
+      <tr>
+          <td><strong>接口约束</strong></td>
+          <td>JSON schema（强类型）</td>
+          <td>命令行参数 + stdout 文本（弱类型）</td>
+      </tr>
+      <tr>
+          <td><strong>基线 token 成本</strong></td>
+          <td>每个 Tool ~50–200 tokens 永久在线</td>
+          <td><strong>0</strong> —— 脚本代码永远不进上下文，只有 stdout 进</td>
+      </tr>
+      <tr>
+          <td><strong>权限 / 审批</strong></td>
+          <td><code>/permissions</code> 全局规则</td>
+          <td>通过 <code>Bash</code> 的权限规则间接管 + Skill 的 <code>allowed-tools</code> 可预授权</td>
+      </tr>
+      <tr>
+          <td><strong>状态</strong></td>
+          <td>可能跨多次调用持有状态（如 code execution VM 的连接池）</td>
+          <td>默认无状态、一次性</td>
+      </tr>
+      <tr>
+          <td><strong>分发</strong></td>
+          <td>内置 / MCP / 客户端实现</td>
+          <td><code>git push</code> 一个文件</td>
+      </tr>
+      <tr>
+          <td><strong>可见性</strong></td>
+          <td>模型从一开始就看见</td>
+          <td>模型读了 SKILL.md 才知道有它</td>
+      </tr>
+  </tbody>
+</table></div>
+<h5 id="选做成-tool-还是写成-skill-脚本的-5-个判断维度">选&quot;做成 Tool 还是写成 Skill 脚本&quot;的 5 个判断维度
+</h5><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>判断</th>
+          <th>倾向 Tool</th>
+          <th>倾向 Skill 脚本</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><strong>使用频率</strong></td>
+          <td>几乎每个任务都要用</td>
+          <td>只在某一类任务里用</td>
+      </tr>
+      <tr>
+          <td><strong>跨 Skill 共享</strong></td>
+          <td>多个 Skill 都需要它</td>
+          <td>只这一个 Skill 需要</td>
+      </tr>
+      <tr>
+          <td><strong>接口稳定性</strong></td>
+          <td>输入输出已成熟、不太变</td>
+          <td>还在迭代、专属业务逻辑</td>
+      </tr>
+      <tr>
+          <td><strong>复杂状态</strong></td>
+          <td>需要会话级状态（连接池、缓存）</td>
+          <td>一次性、stateless</td>
+      </tr>
+      <tr>
+          <td><strong>实现成本</strong></td>
+          <td>一个 MCP server 不算重</td>
+          <td>一个 50 行脚本，犯不着包成 Tool</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>举几个具体例子：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>需求</th>
+          <th>选 Tool 还是 Skill 脚本？理由</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>读文件 / 写文件</td>
+          <td><strong>Tool</strong>（<code>Read</code> / <code>Write</code>），任何任务都要用</td>
+      </tr>
+      <tr>
+          <td>跑 SQL 查询</td>
+          <td><strong>Tool（MCP）</strong>，多个 Skill 会用，且需要会话级连接池</td>
+      </tr>
+      <tr>
+          <td>把一段 SQL 格式化成可读形式</td>
+          <td><strong>Skill 脚本</strong>（<code>scripts/format-sql.sh</code>），只在 sql-review Skill 里用</td>
+      </tr>
+      <tr>
+          <td>调用 GitHub API 创建 issue</td>
+          <td><strong>Tool（MCP）</strong>，可被 pr-description、issue-triage 等多个 Skill 共用</td>
+      </tr>
+      <tr>
+          <td>把 sql-review 的输出 diff 一下两个版本</td>
+          <td><strong>Skill 脚本</strong>，只服务 sql-review</td>
+      </tr>
+      <tr>
+          <td>跑公司内部 lint</td>
+          <td>单项目 → <strong>Skill 脚本</strong>；多项目共用 → <strong>包成 MCP</strong></td>
+      </tr>
+  </tbody>
+</table></div>
+<p>判断口诀：</p>
+<blockquote>
+<p><strong>凡是&quot;全局通用 + 多 Skill 共享 + 接口稳定&quot; → Tool；凡是&quot;专门为这个 Skill 服务 + 接口随业务变&quot; → Skill 脚本。</strong></p></blockquote>
+<h5 id="一个常见误会">一个常见误会
+</h5><blockquote>
+<p>&ldquo;我在 Skill 里写了 <code>scripts/deploy.sh</code>，是不是等于给模型加了个 deploy tool？&rdquo;</p></blockquote>
+<p><strong>不是</strong>。</p>
+<ul>
+<li>模型的 <code>tools</code> 列表里<strong>没多任何一个 Tool</strong></li>
+<li>模型仍然只能通过 <code>Bash</code> Tool 执行 <code>bash scripts/deploy.sh</code></li>
+<li>是 <code>Bash</code> Tool 的权限规则决定能不能跑这条命令（不是 <code>deploy.sh</code> 自己的规则）</li>
+<li>在另一个会话、没加载这个 Skill 时，模型<strong>根本不知道</strong>有这个脚本</li>
+</ul>
+<p>如果你希望 deploy 真的成为模型平等可调用的&quot;动作&quot;（带 schema、在任何会话里都可见、有独立权限），应该写一个 <strong>MCP server</strong> 或 <strong>自定义 Tool</strong>，而不是塞个脚本进 Skill。</p>
+<h5 id="一句话记住">一句话记住
+</h5><blockquote>
+<p><strong>Skill 脚本是 Bash 的参数，Tool 是 Bash 的同事。</strong> 写 Skill 时把这两件事分清楚，权限边界、token 成本、可复用性都会变得清晰。</p></blockquote>
+<h4 id="575-skill-脚本的运行环境vs-tool">5.7.5 Skill 脚本的运行环境（vs Tool）
+</h4><p>5.7.4 节回答了&quot;Tool 和 Skill 脚本是不是同一个东西&quot;。这一节回答更进一步的问题：<strong>它们各自跑在哪？</strong></p>
+<h5 id="先纠正一个常见误解tool-不一定都跑在-mcp-server-里">先纠正一个常见误解：Tool 不一定都跑在 MCP server 里
+</h5><p>在 agent 开发的语境里，<strong>Tool 是个宽泛概念</strong> —— 任何模型可发起调用的&quot;能力单元&quot;都算。按运行位置可分 5 类：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>Tool 形态</th>
+          <th>运行位置</th>
+          <th>谁实现</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><strong>Local function tool</strong>（OpenAI / LangChain 经典做法）</td>
+          <td><strong>Agent 框架进程内</strong>，作为函数被调用</td>
+          <td>你的代码</td>
+      </tr>
+      <tr>
+          <td><strong>HTTP / API tool</strong></td>
+          <td><strong>远程 API 服务器</strong></td>
+          <td>第三方或你的后端</td>
+      </tr>
+      <tr>
+          <td><strong>MCP tool</strong></td>
+          <td><strong>MCP server 进程</strong>（独立进程，可本地可远程）</td>
+          <td>MCP server 实现方</td>
+      </tr>
+      <tr>
+          <td><strong>Built-in tool</strong>（Claude Code 的 <code>Bash</code>/<code>Read</code>/<code>Edit</code>）</td>
+          <td><strong>Claude Code CLI 自己的进程</strong></td>
+          <td>Anthropic</td>
+      </tr>
+      <tr>
+          <td><strong>Code execution tool</strong></td>
+          <td><strong>托管沙箱 VM</strong>（Anthropic / OpenAI / E2B 等）</td>
+          <td>平台方</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>每种 Tool 的共同点是：<strong>它是一个有独立&quot;运行实体&quot;的能力</strong>，模型通过 tool_use → tool_result 协议跟它交互，<strong>这个运行实体的生命周期跟 Skill 无关</strong>。</p>
+<h5 id="skill-代码的运行位置它没有独立运行实体">Skill 代码的运行位置：它没有独立运行实体
+</h5><p>这是 Skill 和 Tool 在&quot;运行模型&quot;上的根本差异：</p>
+<blockquote>
+<p><strong>Skill 不是一个运行实体。Skill 里的代码，是被某个 Tool（在 Claude Code 里通常是 <code>Bash</code>，在 API/claude.ai 里是 code execution tool）当作&quot;参数&quot;去执行的脚本。</strong></p></blockquote>
+<p>具体到不同 surface：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>Surface</th>
+          <th>触发 Skill 脚本的 Tool</th>
+          <th>脚本实际跑在哪</th>
+          <th>网络访问</th>
+          <th>包安装</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><strong>Claude Code</strong></td>
+          <td><code>Bash</code> Tool</td>
+          <td><strong>你本机的 shell</strong>（Claude Code 进程的子进程）</td>
+          <td>全开</td>
+          <td>不建议全局，本地 ok</td>
+      </tr>
+      <tr>
+          <td><strong>Claude API</strong></td>
+          <td>code execution tool</td>
+          <td><strong>Anthropic 托管的沙箱 VM</strong></td>
+          <td><strong>无网络</strong></td>
+          <td><strong>不可</strong> runtime install</td>
+      </tr>
+      <tr>
+          <td><strong>claude.ai</strong></td>
+          <td>code execution tool</td>
+          <td><strong>Anthropic 托管的沙箱 VM</strong></td>
+          <td>视配置（可能允许 npm/PyPI）</td>
+          <td>部分配置允许</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>简单说：</p>
+<ul>
+<li>在 Claude Code 里：&ldquo;Skill 脚本跑在哪&rdquo; = &ldquo;Bash 跑在哪&rdquo; = <strong>你的开发机</strong></li>
+<li>在 Claude API / claude.ai 里：&ldquo;Skill 脚本跑在哪&rdquo; = &ldquo;code execution tool 跑在哪&rdquo; = <strong>Anthropic 沙箱</strong></li>
+</ul>
+<h5 id="一张图把tool-vs-skill-代码的运行位置对齐">一张图把&quot;Tool vs Skill 代码&quot;的运行位置对齐
+</h5><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="err">┌────────────────────────────────────────────────────────────────┐</span>
+</span></span><span class="line"><span class="cl"><span class="err">│</span> <span class="err">模型（云端推理服务）</span>                                             <span class="err">│</span>
+</span></span><span class="line"><span class="cl"><span class="err">│</span>   <span class="err">↓</span> <span class="n">tool_use</span>                                                    <span class="err">│</span>
+</span></span><span class="line"><span class="cl"><span class="err">└─────────────────────────────────┬───────────────────────────────┘</span>
+</span></span><span class="line"><span class="cl">                                  <span class="err">│</span>
+</span></span><span class="line"><span class="cl">       <span class="err">┌──────────────┬───────────┼───────────┬──────────────┐</span>
+</span></span><span class="line"><span class="cl">       <span class="err">▼</span>              <span class="err">▼</span>           <span class="err">▼</span>           <span class="err">▼</span>              <span class="err">▼</span>
+</span></span><span class="line"><span class="cl"><span class="err">┌──────────┐</span>   <span class="err">┌──────────┐</span>  <span class="err">┌─────────┐</span>  <span class="err">┌─────────┐</span>  <span class="err">┌─────────┐</span>
+</span></span><span class="line"><span class="cl"><span class="err">│</span> <span class="err">本地函数</span>  <span class="err">│</span>   <span class="err">│</span> <span class="n">HTTP</span> <span class="n">API</span> <span class="err">│</span>  <span class="err">│</span>  <span class="n">MCP</span>    <span class="err">│</span>  <span class="err">│</span> <span class="err">内置</span>    <span class="err">│</span>  <span class="err">│</span> <span class="err">沙箱</span> <span class="n">VM</span> <span class="err">│</span>
+</span></span><span class="line"><span class="cl"><span class="err">│</span> <span class="k">tool</span>      <span class="err">│</span>   <span class="err">│</span> <span class="k">tool</span>     <span class="err">│</span>  <span class="err">│</span> <span class="n">server</span>  <span class="err">│</span>  <span class="err">│</span> <span class="k">tool</span>    <span class="err">│</span>  <span class="err">│</span>         <span class="err">│</span>
+</span></span><span class="line"><span class="cl"><span class="err">│</span>           <span class="err">│</span>   <span class="err">│</span>          <span class="err">│</span>  <span class="err">│</span> <span class="k">tool</span>    <span class="err">│</span>  <span class="err">│</span> <span class="p">(</span><span class="n">Bash</span><span class="p">)</span> <span class="err">│</span>  <span class="err">│</span>         <span class="err">│</span>
+</span></span><span class="line"><span class="cl"><span class="err">│</span> <span class="n">agent</span> <span class="err">进</span>  <span class="err">│</span>   <span class="err">│</span> <span class="err">远程服务</span> <span class="err">│</span>  <span class="err">│</span> <span class="err">独立进程│</span>  <span class="err">│</span> <span class="n">CLI</span> <span class="err">进程│</span>  <span class="err">│</span><span class="n">Anthropic</span><span class="err">│</span>
+</span></span><span class="line"><span class="cl"><span class="err">│</span> <span class="err">程内</span>      <span class="err">│</span>   <span class="err">│</span> <span class="err">器</span>       <span class="err">│</span>  <span class="err">│</span> <span class="p">(</span><span class="err">本</span><span class="o">/</span><span class="err">远</span><span class="p">)</span> <span class="err">│</span>  <span class="err">│</span>         <span class="err">│</span>  <span class="err">│</span> <span class="err">托管</span>    <span class="err">│</span>
+</span></span><span class="line"><span class="cl"><span class="err">└──────────┘</span>   <span class="err">└──────────┘</span>  <span class="err">└─────────┘</span>  <span class="err">└────┬────┘</span>  <span class="err">└────┬────┘</span>
+</span></span><span class="line"><span class="cl">                                               <span class="err">│</span>            <span class="err">│</span>
+</span></span><span class="line"><span class="cl">                                  <span class="n">Skill</span> <span class="err">脚本附在这里</span> <span class="err">───────┘</span>
+</span></span><span class="line"><span class="cl">                                  <span class="err">（</span><span class="n">Skill</span> <span class="err">没有自己的运行进程，</span>
+</span></span><span class="line"><span class="cl">                                   <span class="err">它是某个</span> <span class="n">Tool</span> <span class="err">的</span><span class="s2">&#34;参数&#34;</span><span class="err">）</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h5 id="为什么这个区分在-agent-开发里很重要">为什么这个区分在 agent 开发里很重要
+</h5><p><strong>1. 决定了 Skill 能不能跨 surface</strong></p>
+<p>如果你的 Skill 脚本依赖：</p>
+<ul>
+<li>网络访问</li>
+<li>第三方包</li>
+<li>内网服务</li>
+<li>特定本地路径</li>
+</ul>
+<p>在 <strong>Claude Code 上能跑</strong>（用你本机环境），搬到 <strong>Claude API 上可能直接死</strong>（沙箱无网络、无 runtime install、没有你本地路径）。</p>
+<p>很多人的 Skill 在自己电脑跑得好好的，发到团队就出问题，常常就是这个原因。<strong>写跨 surface 的 Skill 时，要假设运行环境是受限沙箱</strong>。</p>
+<p><strong>2. 决定了&quot;该写 Tool 还是 Skill 脚本&quot;</strong></p>
+<ul>
+<li>能力<strong>有独立运行需求</strong>（持续运行 / 维持状态 / 需要专用网络）→ 写成 <strong>Tool</strong>（local function / HTTP API / MCP server）</li>
+<li>能力<strong>只是&quot;在某个任务流程里跑一段代码&quot;</strong> → 写成 <strong>Skill 脚本</strong></li>
+</ul>
+<p><strong>3. 决定了部署模型</strong></p>
+<ul>
+<li>Tool（尤其 MCP / HTTP API）是<strong>服务</strong>，需要部署、监控、运维</li>
+<li>Skill 是<strong>文件</strong>，<code>git push</code> 就完事</li>
+</ul>
+<h5 id="一句话记住-1">一句话记住
+</h5><blockquote>
+<p><strong>Tool 是&quot;运行实体&quot;，自己有进程或服务；Skill 没有运行实体，它的代码寄生在某个 Tool 的执行上下文里跑。</strong> 跨 surface 时，记得这个&quot;上下文&quot;会换，写代码时要按受限沙箱的假设来写。</p></blockquote>
+<h4 id="576-一句话总结">5.7.6 一句话总结
+</h4><blockquote>
+<p>Skills 不只是&quot;写给模型看的方法书&quot;，它<strong>完全可以带可执行代码</strong>。把代码当成 Skill 的有机组成部分（参考片段 / 辅助脚本 / 完整工具），是让 Skill 真正落地的关键 —— 否则它就只是一份华丽的文档。</p></blockquote>
+<p>下一节就把 5.1 ~ 5.7 全部知识合并成一个<strong>可以直接落地</strong>的完整 Skill 示例。</p>
+<h3 id="58-完整示例官方-pdf-processing-skill">5.8 完整示例：官方 <code>pdf-processing</code> Skill
+</h3><p>把前面 5.1 ~ 5.7 学到的所有东西拼起来，本节给出 <strong>Anthropic 官方贯穿使用的 <code>pdf-processing</code> Skill 的完整落地版本</strong>。所有结构选择都对齐 <a class="link" href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview"  target="_blank" rel="noopener"
+    >Skills overview</a> 和 <a class="link" href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices"  target="_blank" rel="noopener"
+    >best practices</a> 两份官方文档。</p>
+<p>它同时演示了：</p>
+<ul>
+<li><strong>5.2</strong> 的 frontmatter 写法（官方示例的 description 句式）</li>
+<li><strong>5.3</strong> 的 SKILL.md 正文骨架（Quick start + 链接到长文档）</li>
+<li><strong>5.4</strong> 的辅助文件下沉（<code>FORMS.md</code>、<code>REFERENCE.md</code> 平铺）</li>
+<li><strong>5.7</strong> 三种代码引用方式都用上：内联 Python 片段 + <code>FORMS.md</code> 引用 + <code>scripts/</code> 可执行脚本</li>
+<li>第 9 章的若干最佳实践（精准 description、<code>Quick start</code> + reference 拆分、scripts 兜底确定性操作）</li>
+</ul>
+<h4 id="581-完整目录结构">5.8.1 完整目录结构
+</h4><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">.claude/skills/
+</span></span><span class="line"><span class="cl">└── pdf-processing/
+</span></span><span class="line"><span class="cl">    ├── SKILL.md                  # 入口，主流程
+</span></span><span class="line"><span class="cl">    ├── FORMS.md                  # 表单填写完整指南（按需加载）
+</span></span><span class="line"><span class="cl">    ├── REFERENCE.md              # PDF 库 API 参考（按需加载）
+</span></span><span class="line"><span class="cl">    ├── EXAMPLES.md               # 常见场景示例（按需加载）
+</span></span><span class="line"><span class="cl">    └── scripts/                  # 可执行 helper（5.7 方式 3）
+</span></span><span class="line"><span class="cl">        ├── analyze_form.py       # 抽取 PDF 表单字段
+</span></span><span class="line"><span class="cl">        ├── fill_form.py          # 按 mapping 填表
+</span></span><span class="line"><span class="cl">        └── validate.py           # 验证 mapping 合法性
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>四类内容的分工：</p>
+<ul>
+<li><strong>SKILL.md</strong>：入口，只放主流程和决策点，控制在 500 行以内</li>
+<li><strong><code>*.md</code> 平铺参考</strong>：长指南、API 参考、示例 —— 模型按需读取，<strong>不读不占 token</strong></li>
+<li><strong><code>scripts/</code> 可执行脚本</strong>：确定性预处理 / 解析 / 验证 —— 真的会被 <code>Bash</code> Tool 跑起来，<strong>代码本身不进上下文，只有 stdout 进</strong></li>
+</ul>
+<h4 id="582-skillmd-全文直接可用">5.8.2 SKILL.md 全文（直接可用）
+</h4><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span><span class="lnt">28
+</span><span class="lnt">29
+</span><span class="lnt">30
+</span><span class="lnt">31
+</span><span class="lnt">32
+</span><span class="lnt">33
+</span><span class="lnt">34
+</span><span class="lnt">35
+</span><span class="lnt">36
+</span><span class="lnt">37
+</span><span class="lnt">38
+</span><span class="lnt">39
+</span><span class="lnt">40
+</span><span class="lnt">41
+</span><span class="lnt">42
+</span><span class="lnt">43
+</span><span class="lnt">44
+</span><span class="lnt">45
+</span><span class="lnt">46
+</span><span class="lnt">47
+</span><span class="lnt">48
+</span><span class="lnt">49
+</span><span class="lnt">50
+</span><span class="lnt">51
+</span><span class="lnt">52
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-markdown" data-lang="markdown"><span class="line"><span class="cl">---
+</span></span><span class="line"><span class="cl">name: pdf-processing
+</span></span><span class="line"><span class="cl">description: Extract text and tables from PDF files, fill forms, merge documents. Use when working with PDF files or when the user mentions PDFs, forms, or document extraction.
+</span></span><span class="line"><span class="cl">---
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="gh"># PDF Processing
+</span></span></span><span class="line"><span class="cl"><span class="gh"></span>
+</span></span><span class="line"><span class="cl"><span class="gu">## Quick start
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl">Use pdfplumber to extract text from PDFs:
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="s">```python
+</span></span></span><span class="line"><span class="cl"><span class="s"></span><span class="kn">import</span> <span class="nn">pdfplumber</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">with</span> <span class="n">pdfplumber</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&#34;document.pdf&#34;</span><span class="p">)</span> <span class="k">as</span> <span class="n">pdf</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="n">text</span> <span class="o">=</span> <span class="n">pdf</span><span class="o">.</span><span class="n">pages</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">extract_text</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="s">```</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="gu">## Advanced features
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="gs">**Form filling**</span>: See [<span class="nt">FORMS.md</span>](<span class="na">FORMS.md</span>) for the complete workflow
+</span></span><span class="line"><span class="cl"><span class="gs">**API reference**</span>: See [<span class="nt">REFERENCE.md</span>](<span class="na">REFERENCE.md</span>) for all methods
+</span></span><span class="line"><span class="cl"><span class="gs">**Examples**</span>: See [<span class="nt">EXAMPLES.md</span>](<span class="na">EXAMPLES.md</span>) for common patterns
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="gu">## Form filling workflow
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl">For form-filling tasks, use the bundled scripts in this exact order:
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">1.</span> <span class="gs">**Analyze the form**</span> — extract all form fields:
+</span></span><span class="line"><span class="cl">   ``<span class="sb">`bash
+</span></span></span><span class="line"><span class="cl"><span class="sb">   python scripts/analyze_form.py input.pdf &gt; fields.json
+</span></span></span><span class="line"><span class="cl"><span class="sb">   `</span>`<span class="sb">`
+</span></span></span><span class="line"><span class="cl"><span class="sb">2. **Edit `</span>fields.json<span class="sb">`** to add the values for each field.
+</span></span></span><span class="line"><span class="cl"><span class="sb">3. **Validate the mapping** — catch errors before applying:
+</span></span></span><span class="line"><span class="cl"><span class="sb">   `</span>`<span class="sb">`bash
+</span></span></span><span class="line"><span class="cl"><span class="sb">   python scripts/validate.py fields.json
+</span></span></span><span class="line"><span class="cl"><span class="sb">   `</span>`<span class="sb">`
+</span></span></span><span class="line"><span class="cl"><span class="sb">   Fix any reported issues before continuing.
+</span></span></span><span class="line"><span class="cl"><span class="sb">4. **Fill the form**:
+</span></span></span><span class="line"><span class="cl"><span class="sb">   `</span>`<span class="sb">`bash
+</span></span></span><span class="line"><span class="cl"><span class="sb">   python scripts/fill_form.py input.pdf fields.json output.pdf
+</span></span></span><span class="line"><span class="cl"><span class="sb">   `</span>`<span class="sb">`
+</span></span></span><span class="line"><span class="cl"><span class="sb">5. **Verify the output** by opening `</span>output.pdf<span class="sb">` and confirming all fields are filled.
+</span></span></span><span class="line"><span class="cl"><span class="sb">
+</span></span></span><span class="line"><span class="cl"><span class="sb">## Don&#39;ts
+</span></span></span><span class="line"><span class="cl"><span class="sb">
+</span></span></span><span class="line"><span class="cl"><span class="sb">- **Don&#39;t** skip the `</span>validate.py<span class="sb">` step — it catches non-existent field names early.
+</span></span></span><span class="line"><span class="cl"><span class="sb">- **Don&#39;t** edit `</span>output.pdf<span class="sb">` directly. If something is wrong, fix `</span>fields.json<span class="sb">` and re-run `</span>fill_form.py<span class="sb">`.
+</span></span></span><span class="line"><span class="cl"><span class="sb">- **Don&#39;t** assume packages are installed. If `</span>pdfplumber<span class="sb">` is missing, run:
+</span></span></span><span class="line"><span class="cl"><span class="sb">  `</span>`<span class="sb">`bash
+</span></span></span><span class="line"><span class="cl"><span class="sb">  pip install pdfplumber
+</span></span></span><span class="line"><span class="cl"><span class="sb">  `</span>``
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>注意几个写法决策：</p>
+<ul>
+<li><strong>没有 <code>tags</code> / <code>version</code> / <code>author</code> 字段</strong> —— 官方不支持，写了也会被忽略</li>
+<li><strong>Quick start 在最前</strong>，先给最常用的 5 行代码</li>
+<li><strong>链接全部一层深</strong>：SKILL.md → FORMS.md ✓，避免 SKILL.md → FORMS.md → DETAILS.md（<a class="link" href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices"  target="_blank" rel="noopener"
+    >best practices &ldquo;Avoid deeply nested references&rdquo;</a>）</li>
+<li><strong>Form filling 流程用编号 + 代码块</strong>，每一步要么是检查动作要么是脚本调用，模型可以照着复制 checklist</li>
+<li><strong>Don&rsquo;ts 写得具体</strong>：不是泛泛&quot;小心使用&quot;，而是逐条说明&quot;哪一步不能省、为什么、错了怎么补&quot;</li>
+</ul>
+<h4 id="583-配套脚本scriptsanalyze_formpy">5.8.3 配套脚本：<code>scripts/analyze_form.py</code>
+</h4><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span><span class="lnt">28
+</span><span class="lnt">29
+</span><span class="lnt">30
+</span><span class="lnt">31
+</span><span class="lnt">32
+</span><span class="lnt">33
+</span><span class="lnt">34
+</span><span class="lnt">35
+</span><span class="lnt">36
+</span><span class="lnt">37
+</span><span class="lnt">38
+</span><span class="lnt">39
+</span><span class="lnt">40
+</span><span class="lnt">41
+</span><span class="lnt">42
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="ch">#!/usr/bin/env python3</span>
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;&#34;&#34;Extract form fields from a PDF file.
+</span></span></span><span class="line"><span class="cl"><span class="s2">
+</span></span></span><span class="line"><span class="cl"><span class="s2">Usage:
+</span></span></span><span class="line"><span class="cl"><span class="s2">    python scripts/analyze_form.py &lt;input.pdf&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s2">
+</span></span></span><span class="line"><span class="cl"><span class="s2">Outputs JSON to stdout: each field is a key with type/x/y info.
+</span></span></span><span class="line"><span class="cl"><span class="s2">&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">json</span>
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">sys</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">pathlib</span> <span class="kn">import</span> <span class="n">Path</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">try</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">import</span> <span class="nn">pypdf</span>
+</span></span><span class="line"><span class="cl"><span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="s2">&#34;pypdf is required: pip install pypdf&#34;</span><span class="p">,</span> <span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">extract_fields</span><span class="p">(</span><span class="n">pdf_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="n">reader</span> <span class="o">=</span> <span class="n">pypdf</span><span class="o">.</span><span class="n">PdfReader</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">pdf_path</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">    <span class="n">fields</span> <span class="o">=</span> <span class="n">reader</span><span class="o">.</span><span class="n">get_fields</span><span class="p">()</span> <span class="ow">or</span> <span class="p">{}</span>
+</span></span><span class="line"><span class="cl">    <span class="n">result</span> <span class="o">=</span> <span class="p">{}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">field</span> <span class="ow">in</span> <span class="n">fields</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+</span></span><span class="line"><span class="cl">        <span class="n">result</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="s2">&#34;type&#34;</span><span class="p">:</span> <span class="n">field</span><span class="o">.</span><span class="n">field_type</span> <span class="ow">or</span> <span class="s2">&#34;text&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="s2">&#34;value&#34;</span><span class="p">:</span> <span class="n">field</span><span class="o">.</span><span class="n">value</span> <span class="ow">or</span> <span class="s2">&#34;&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">result</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="nb">print</span><span class="p">(</span><span class="s2">&#34;Usage: analyze_form.py &lt;input.pdf&gt;&#34;</span><span class="p">,</span> <span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="mi">2</span>
+</span></span><span class="line"><span class="cl">    <span class="n">fields</span> <span class="o">=</span> <span class="n">extract_fields</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]))</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">fields</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="mi">0</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&#34;__main__&#34;</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h4 id="584-配套脚本scriptsvalidatepy">5.8.4 配套脚本：<code>scripts/validate.py</code>
+</h4><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span><span class="lnt">28
+</span><span class="lnt">29
+</span><span class="lnt">30
+</span><span class="lnt">31
+</span><span class="lnt">32
+</span><span class="lnt">33
+</span><span class="lnt">34
+</span><span class="lnt">35
+</span><span class="lnt">36
+</span><span class="lnt">37
+</span><span class="lnt">38
+</span><span class="lnt">39
+</span><span class="lnt">40
+</span><span class="lnt">41
+</span><span class="lnt">42
+</span><span class="lnt">43
+</span><span class="lnt">44
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="ch">#!/usr/bin/env python3</span>
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;&#34;&#34;Validate a fields.json before filling a form.
+</span></span></span><span class="line"><span class="cl"><span class="s2">
+</span></span></span><span class="line"><span class="cl"><span class="s2">Usage:
+</span></span></span><span class="line"><span class="cl"><span class="s2">    python scripts/validate.py &lt;fields.json&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s2">
+</span></span></span><span class="line"><span class="cl"><span class="s2">Exits 0 on success, non-zero with specific error messages on failure.
+</span></span></span><span class="line"><span class="cl"><span class="s2">&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">json</span>
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">sys</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">pathlib</span> <span class="kn">import</span> <span class="n">Path</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">validate</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+</span></span><span class="line"><span class="cl">    <span class="n">errors</span> <span class="o">=</span> <span class="p">[]</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">info</span> <span class="ow">in</span> <span class="n">data</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">info</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&#34;Field </span><span class="si">{</span><span class="n">name</span><span class="si">!r}</span><span class="s2">: value must be an object&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="k">continue</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="s2">&#34;value&#34;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">info</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&#34;Field </span><span class="si">{</span><span class="n">name</span><span class="si">!r}</span><span class="s2">: missing &#39;value&#39;&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&#34;type&#34;</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="s2">&#34;text&#34;</span><span class="p">,</span> <span class="s2">&#34;checkbox&#34;</span><span class="p">,</span> <span class="s2">&#34;sig&#34;</span><span class="p">,</span> <span class="s2">&#34;choice&#34;</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">                <span class="sa">f</span><span class="s2">&#34;Field </span><span class="si">{</span><span class="n">name</span><span class="si">!r}</span><span class="s2">: unknown type </span><span class="si">{</span><span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;type&#39;</span><span class="p">)</span><span class="si">!r}</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">            <span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">errors</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="nb">print</span><span class="p">(</span><span class="s2">&#34;Usage: validate.py &lt;fields.json&gt;&#34;</span><span class="p">,</span> <span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="mi">2</span>
+</span></span><span class="line"><span class="cl">    <span class="n">data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span>
+</span></span><span class="line"><span class="cl">    <span class="n">errors</span> <span class="o">=</span> <span class="n">validate</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="n">errors</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">errors</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&#34;ERROR: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&#34;</span><span class="p">,</span> <span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="mi">1</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="s2">&#34;OK&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="mi">0</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&#34;__main__&#34;</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h4 id="585-配套脚本scriptsfill_formpy">5.8.5 配套脚本：<code>scripts/fill_form.py</code>
+</h4><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span><span class="lnt">28
+</span><span class="lnt">29
+</span><span class="lnt">30
+</span><span class="lnt">31
+</span><span class="lnt">32
+</span><span class="lnt">33
+</span><span class="lnt">34
+</span><span class="lnt">35
+</span><span class="lnt">36
+</span><span class="lnt">37
+</span><span class="lnt">38
+</span><span class="lnt">39
+</span><span class="lnt">40
+</span><span class="lnt">41
+</span><span class="lnt">42
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="ch">#!/usr/bin/env python3</span>
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;&#34;&#34;Fill a PDF form using values from fields.json.
+</span></span></span><span class="line"><span class="cl"><span class="s2">
+</span></span></span><span class="line"><span class="cl"><span class="s2">Usage:
+</span></span></span><span class="line"><span class="cl"><span class="s2">    python scripts/fill_form.py &lt;input.pdf&gt; &lt;fields.json&gt; &lt;output.pdf&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s2">&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">json</span>
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">sys</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">pathlib</span> <span class="kn">import</span> <span class="n">Path</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">try</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">import</span> <span class="nn">pypdf</span>
+</span></span><span class="line"><span class="cl"><span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="s2">&#34;pypdf is required: pip install pypdf&#34;</span><span class="p">,</span> <span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">fill</span><span class="p">(</span><span class="n">input_pdf</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">fields</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">output_pdf</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="n">reader</span> <span class="o">=</span> <span class="n">pypdf</span><span class="o">.</span><span class="n">PdfReader</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">input_pdf</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">    <span class="n">writer</span> <span class="o">=</span> <span class="n">pypdf</span><span class="o">.</span><span class="n">PdfWriter</span><span class="p">(</span><span class="n">clone_from</span><span class="o">=</span><span class="n">reader</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">values</span> <span class="o">=</span> <span class="p">{</span><span class="n">name</span><span class="p">:</span> <span class="n">info</span><span class="p">[</span><span class="s2">&#34;value&#34;</span><span class="p">]</span> <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">info</span> <span class="ow">in</span> <span class="n">fields</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="n">page</span> <span class="ow">in</span> <span class="n">writer</span><span class="o">.</span><span class="n">pages</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="n">writer</span><span class="o">.</span><span class="n">update_page_form_field_values</span><span class="p">(</span><span class="n">page</span><span class="p">,</span> <span class="n">values</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">output_pdf</span><span class="p">,</span> <span class="s2">&#34;wb&#34;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="n">writer</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">4</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="nb">print</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">            <span class="s2">&#34;Usage: fill_form.py &lt;input.pdf&gt; &lt;fields.json&gt; &lt;output.pdf&gt;&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="mi">2</span>
+</span></span><span class="line"><span class="cl">    <span class="n">fields</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span>
+</span></span><span class="line"><span class="cl">    <span class="n">fill</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span> <span class="n">fields</span><span class="p">,</span> <span class="n">Path</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">3</span><span class="p">]))</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&#34;Wrote </span><span class="si">{</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="si">}</span><span class="s2">&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="mi">0</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&#34;__main__&#34;</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h4 id="586-这个示例验证了哪些最佳实践">5.8.6 这个示例验证了哪些最佳实践
+</h4><p>回看这份完整 Skill，可以看到 5.x 节和官方 best practices 的所有要点都在这里落地了：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>要点</th>
+          <th>在哪体现</th>
+          <th>呼应章节</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>description</code> 包含&quot;做什么 + 何时使用&quot;</td>
+          <td>frontmatter 一句话两件事</td>
+          <td><a class="link" href="#81-description-%e6%98%af-skill-%e7%9a%84%e5%91%bd%e8%84%89" >8.1</a></td>
+      </tr>
+      <tr>
+          <td>第三人称写描述</td>
+          <td>&ldquo;Extract&hellip;&quot;、&ldquo;Use when&hellip;&rdquo;</td>
+          <td>best practices</td>
+      </tr>
+      <tr>
+          <td>SKILL.md ≤ 500 行</td>
+          <td>主体只放 Quick start + workflow</td>
+          <td><a class="link" href="#82-skillmd-%e4%b8%8d%e8%a6%81%e5%a4%aa%e9%95%bf" >8.2</a></td>
+      </tr>
+      <tr>
+          <td>写&quot;不要做的事&rdquo;</td>
+          <td><code>## Don'ts</code> 段，3 条具体禁忌</td>
+          <td><a class="link" href="#83-%e5%86%99%e4%b8%8d%e8%a6%81%e5%81%9a%e7%9a%84%e4%ba%8b%e6%af%94%e5%86%99%e8%a6%81%e5%81%9a%e7%9a%84%e4%ba%8b%e6%9b%b4%e9%87%8d%e8%a6%81" >8.3</a></td>
+      </tr>
+      <tr>
+          <td>平铺参考文件，一层引用</td>
+          <td><code>FORMS.md</code> / <code>REFERENCE.md</code> 直接从 SKILL.md 链接</td>
+          <td><a class="link" href="#571-%e4%b8%89%e7%a7%8d%e5%bc%95%e7%94%a8%e4%bb%a3%e7%a0%81%e7%9a%84%e6%96%b9%e5%bc%8f%e4%bb%8e%e8%bd%bb%e5%88%b0%e9%87%8d" >5.7.1</a></td>
+      </tr>
+      <tr>
+          <td>脚本兜底确定性操作</td>
+          <td><code>scripts/</code> 三个脚本做 analyze / validate / fill</td>
+          <td><a class="link" href="#57-%e5%9c%a8-skill-%e9%87%8c%e4%bd%bf%e7%94%a8%e4%bb%a3%e7%a0%81" >5.7</a></td>
+      </tr>
+      <tr>
+          <td>验证步骤独立成一步</td>
+          <td><code>validate.py</code> 在 <code>fill_form.py</code> 之前</td>
+          <td><a class="link" href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices"  target="_blank" rel="noopener"
+    >best practices &ldquo;Implement feedback loops&rdquo;</a></td>
+      </tr>
+      <tr>
+          <td>脚本错误自处理而非 punt 给模型</td>
+          <td>缺包时 <code>print + sys.exit(3)</code>，给具体安装命令</td>
+          <td>best practices &ldquo;Solve, don&rsquo;t punt&rdquo;</td>
+      </tr>
+  </tbody>
+</table></div>
+<h4 id="587-怎么直接用上">5.8.7 怎么直接用上
+</h4><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 1. 创建 Skill 目录（personal 级）</span>
+</span></span><span class="line"><span class="cl">mkdir -p ~/.claude/skills/pdf-processing/scripts
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 把 5.8.2 ~ 5.8.5 的内容分别粘进对应文件</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    SKILL.md      ← 5.8.2</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    scripts/analyze_form.py ← 5.8.3</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    scripts/validate.py     ← 5.8.4</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    scripts/fill_form.py    ← 5.8.5</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 给脚本可执行权限</span>
+</span></span><span class="line"><span class="cl">chmod +x ~/.claude/skills/pdf-processing/scripts/*.py
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 4. 在 Claude Code 里随便给一个 PDF 试一下</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    &#34;帮我从这个 PDF 里抽出所有文本：~/Downloads/sample.pdf&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    应当自动触发 pdf-processing Skill</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>照着这个骨架长出自己的 Skill：换个 frontmatter，改改方法论，加自己的脚本 —— Skill 开发就走完了一个完整闭环。</p>
+<hr>
+<h2 id="6-skills-的底层原理">6. Skills 的底层原理
+</h2><h3 id="61-渐进式披露progressive-disclosure">6.1 渐进式披露（Progressive Disclosure）
+</h3><p>Skills 最核心的设计就是&quot;按需加载&quot;。官方 overview 把这个机制定义为<strong>三层 token 成本不同的加载层次</strong>：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>层</th>
+          <th>何时加载</th>
+          <th>Token 成本</th>
+          <th>内容</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><strong>Level 1: Metadata</strong></td>
+          <td><strong>启动时永久加载</strong></td>
+          <td><strong>~100 tokens / Skill</strong></td>
+          <td>YAML frontmatter 里的 <code>name</code> + <code>description</code></td>
+      </tr>
+      <tr>
+          <td><strong>Level 2: Instructions</strong></td>
+          <td><strong>Skill 被触发时</strong>通过 bash 读取</td>
+          <td><strong>&lt; 5,000 tokens</strong></td>
+          <td>SKILL.md 正文</td>
+      </tr>
+      <tr>
+          <td><strong>Level 3: Resources</strong></td>
+          <td><strong>按需访问</strong>或脚本被执行</td>
+          <td><strong>几乎不限</strong></td>
+          <td>引用文件、辅助脚本（脚本通过 bash 执行，<strong>代码本身不进入上下文，只有输出占用 tokens</strong>）</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>引用官方原文：</p>
+<blockquote>
+<p>&ldquo;Progressive disclosure ensures only relevant content occupies the context window at any given time.&rdquo;</p></blockquote>
+<p><strong>三层加载是怎么发生的</strong></p>
+<ol>
+<li><strong>Level 1 / 元信息扫描</strong>：Claude Code 启动时把所有可见 Skill 的 <code>name + description</code> 拼进 system prompt。这一步是<strong>永久在线</strong>的，单个 Skill 大约消耗 100 tokens。所以你可以&quot;装很多 Skill 但代价极小&quot;。</li>
+<li><strong>Level 2 / 触发与读取</strong>：当用户的请求匹配某个 Skill 的 description（或用户用 <code>/skill-name</code> 显式触发），Claude <strong>用 bash 工具去读 SKILL.md 文件</strong>，把内容作为一条消息加入上下文。这才是真正&quot;载入&quot;的时刻。注意：这里<strong>不是</strong>模型先做语义检索再决定 —— 模型一直能看见所有 description，是基于这些 description 自主选择的。</li>
+<li><strong>Level 3 / 按需展开</strong>：如果 SKILL.md 里链接了 <code>reference.md</code> 或要求执行 <code>scripts/check.sh</code>，Claude 才会再用 bash 读那些文件或跑那些脚本。<strong>未被引用的文件永远不进入上下文。脚本代码也不进入上下文，只有 stdout 输出会进</strong>。</li>
+</ol>
+<p><strong>这套机制带来的工程含义</strong></p>
+<ul>
+<li><strong>可扩展性</strong>：你可以装 100+ 个 Skill，每个 Skill 只占 ~100 tokens 的 metadata。所有 metadata 加起来如果撑满了 listing 预算（默认是模型上下文窗口的 1%），可以在 settings 里调 <code>skillListingBudgetFraction</code>。</li>
+<li><strong><code>description</code> 是 100 tokens 的命脉</strong>：因为它是永远在线的，写得越精准检索越准；写得越冗余越浪费。</li>
+<li><strong>大文件零成本</strong>：在 Skill 目录里塞 100KB 的 reference 文档没有任何代价，只要它没被读到。</li>
+<li><strong>脚本远比&quot;模型现写代码&quot;高效</strong>：<code>validate_form.py</code> 这种确定性脚本，跑一次只占输出的 tokens，远比让模型每次重写一遍代码省。</li>
+</ul>
+<blockquote>
+<p>注意：Skills 在 Claude Code 里跑在一个<strong>有 bash 和文件系统访问的 VM/code execution 环境</strong>里 —— &ldquo;模型用 bash 读 SKILL.md&rdquo; 不是隐喻，而是真实发生的事情。</p></blockquote>
+<h3 id="62-skills-与-system-prompt-的关系">6.2 Skills 与 system prompt 的关系
+</h3><p>可以把 Skills 看作是&quot;延迟加载的 system prompt 片段&quot;。</p>
+<ul>
+<li>system prompt 是<strong>永远在线</strong>的指令</li>
+<li>Skills 是<strong>按需在线</strong>的指令</li>
+</ul>
+<p>被加载后的 Skill，作用上等价于把 SKILL.md 内容拼接到了 system prompt 后面。所以 Skill 的指令优先级、措辞方式，应该和写好的 system prompt 是一致的。</p>
+<h3 id="63-skills-与-tools-的关系">6.3 Skills 与 Tools 的关系
+</h3><p>Tools 是模型的&quot;手脚&quot;，Skill 是模型的&quot;作业指导书&quot;。</p>
+<p>举例：</p>
+<ul>
+<li><code>read_file</code>、<code>bash</code>、<code>edit_file</code> 是 Tools</li>
+<li>&ldquo;写 PR 描述时按这五步走&rdquo; 是 Skill</li>
+</ul>
+<p>执行时的协作关系：</p>
+<blockquote>
+<p>Skill 告诉模型该按什么流程做，Tools 让模型把流程一步步执行下去。</p></blockquote>
+<p>Skill 自己不会&quot;执行&quot;任何东西，它只是改变模型的行为方式。</p>
+<hr>
+<h2 id="7-skills-与-mcptoolssubagent-的区别">7. Skills 与 MCP、Tools、Subagent 的区别
+</h2><blockquote>
+<p>重要前提：<strong>Slash Command 不在这张对比表里</strong>。</p>
+<p>在当前的 Claude Code 实现里，&ldquo;Slash Command&rdquo; 已经合并进 Skills（详见 <a class="link" href="#13-%e5%ae%83%e5%9c%a8-agent-%e4%bd%93%e7%b3%bb%e9%87%8c%e7%9a%84%e4%bd%8d%e7%bd%ae" >1.3 节</a> 的引用）—— 你写一个 <code>.claude/skills/deploy/SKILL.md</code> 就自动产生了 <code>/deploy</code> 命令；老的 <code>.claude/commands/deploy.md</code> 也是同一个东西的简化形式。所以这一节剩下的就是 Skills 与 Tools / MCP / Subagent 三者的区别。</p></blockquote>
+<p>这四个概念最容易搞混，下面统一对比一遍。</p>
+<h3 id="71-一句话区分">7.1 一句话区分
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>概念</th>
+          <th>一句话定义</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Tools</td>
+          <td>模型可调用的原子能力</td>
+      </tr>
+      <tr>
+          <td>MCP</td>
+          <td>一种把 Tools/Resources/Prompts 标准化暴露给模型宿主的协议</td>
+      </tr>
+      <tr>
+          <td>Skills</td>
+          <td>按需加载的任务方法包（同时也是 Slash Command 的实现）</td>
+      </tr>
+      <tr>
+          <td>Subagent</td>
+          <td>在独立上下文里执行子任务的执行体</td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="72-它们各自回答的问题">7.2 它们各自回答的问题
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>概念</th>
+          <th>回答的问题</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Tools</td>
+          <td>&ldquo;我能做什么动作&rdquo;</td>
+      </tr>
+      <tr>
+          <td>MCP</td>
+          <td>&ldquo;怎么把能力标准化接进来&rdquo;</td>
+      </tr>
+      <tr>
+          <td>Skills</td>
+          <td>&ldquo;这类任务该怎么做&rdquo;</td>
+      </tr>
+      <tr>
+          <td>Subagent</td>
+          <td>&ldquo;这个子任务交给谁、用什么独立上下文做&rdquo;</td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="73-一个综合对比表">7.3 一个综合对比表
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>维度</th>
+          <th>Tools</th>
+          <th>MCP</th>
+          <th>Skills</th>
+          <th>Subagent</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>本质</td>
+          <td>函数/动作</td>
+          <td>协议</td>
+          <td>方法书 + Slash Command</td>
+          <td>执行体</td>
+      </tr>
+      <tr>
+          <td>是否执行能力</td>
+          <td>是</td>
+          <td>否（只接入）</td>
+          <td>否（只注入方法）</td>
+          <td>是</td>
+      </tr>
+      <tr>
+          <td>触发方式</td>
+          <td>模型在执行任务时调用</td>
+          <td>/</td>
+          <td>模型自动 + 用户 <code>/skill-name</code>（受 frontmatter 字段约束）</td>
+          <td>主 Agent 派发，或 Skill 用 <code>context: fork</code> 触发</td>
+      </tr>
+      <tr>
+          <td>上下文</td>
+          <td>主上下文</td>
+          <td>/</td>
+          <td>主上下文（命中后注入式）</td>
+          <td>独立上下文</td>
+      </tr>
+      <tr>
+          <td>适合分发</td>
+          <td>一般（每个 host 自己定义）</td>
+          <td>强（跨平台）</td>
+          <td>强（文件系统、随仓库走、可打 plugin）</td>
+          <td>一般</td>
+      </tr>
+      <tr>
+          <td>典型例子</td>
+          <td><code>Read</code>、<code>Bash</code></td>
+          <td>PostgreSQL MCP Server</td>
+          <td><code>code-review</code>、<code>sql-review</code>、<code>/deploy</code></td>
+          <td><code>general-purpose</code>、<code>Explore</code></td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="74-一个综合协作场景">7.4 一个综合协作场景
+</h3><p>假设场景：&ldquo;用户让 Agent 帮忙做一个数据库性能优化&rdquo;：</p>
+<ol>
+<li>用户输入&quot;帮我优化下这个 SQL&quot;，<strong>模型自动加载</strong> <code>sql-review</code> <strong>Skill</strong>（按方法做 review）</li>
+<li>Skill 里写明要查表结构，模型调用 <code>read_db_schema</code> <strong>Tool</strong> 拉表结构</li>
+<li>这个 Tool 是通过一个 PostgreSQL <strong>MCP Server</strong> 提供的</li>
+<li>Review 中发现需要做大规模历史查询统计，Skill 用 <code>context: fork</code> 在一个 <strong>Subagent</strong> 里跑慢查询日志分析（独立上下文，不污染主对话）</li>
+<li>之后用户想再做同样的事，直接打 <code>/sql-review</code> —— <strong>同一个 Skill</strong> 被显式触发，不靠模型自动判断</li>
+</ol>
+<p>四个概念在一个工作流里清晰各司其职。<code>/sql-review</code> 不是独立的&quot;Slash Command&quot;，<strong>它就是 <code>sql-review</code> 这个 Skill 的另一个触发入口</strong>。</p>
+<h2 id="8-skills-的最佳实践">8. Skills 的最佳实践
+</h2><p>下面是写过和用过若干 Skill 之后总结出的若干经验。</p>
+<h3 id="81-description-是-skill-的命脉">8.1 description 是 Skill 的命脉
+</h3><p><code>description</code> 不要写：</p>
+<ul>
+<li>&ldquo;我是一个 SQL 助手&rdquo;</li>
+<li>&ldquo;用于代码相关的任务&rdquo;</li>
+</ul>
+<p>要写成：</p>
+<ul>
+<li>&ldquo;当用户给一段 SQL 并询问性能或正确性时使用&rdquo;</li>
+<li>&ldquo;当用户要写或改 PR description 时使用&rdquo;</li>
+</ul>
+<p><strong>写法上的关键词是&quot;当&hellip;时&quot;</strong>。模型靠这一句话决定要不要加载你，含糊一点都会出问题。</p>
+<h3 id="82-skillmd-不要太长">8.2 SKILL.md 不要太长
+</h3><p>官方 best-practices 文档给的明确指引是：</p>
+<blockquote>
+<p>&ldquo;<strong>Keep SKILL.md body under 500 lines</strong> for optimal performance.&rdquo;</p></blockquote>
+<p>所以经验值：</p>
+<ul>
+<li><strong>目标：SKILL.md 正文 ≤ 500 行</strong></li>
+<li>接近这个上限就该把内容拆出去</li>
+<li>拆到平铺的 <code>.md</code> 文件（如 <code>reference.md</code>、<code>examples.md</code>、<code>FORMS.md</code>）或子目录（<code>reference/</code>、<code>examples/</code>、<code>scripts/</code>），从 SKILL.md 用相对路径链接</li>
+</ul>
+<p>记住：SKILL.md 是&quot;按需加载&quot;，但<strong>一旦加载就是整个文件</strong>。一旦超过 5,000 tokens（约 ≈ 500 行），就开始侵占其他上下文预算。同时官方明确<strong>只展开一层引用</strong>：模型从 SKILL.md 跳到 <code>reference.md</code> 是稳的，但 <code>reference.md</code> 再跳到 <code>details.md</code>，模型可能只读个开头，<strong>所以所有辅助文件都要从 SKILL.md 直接链接，不要嵌套引用</strong>。</p>
+<h3 id="83-写不要做的事比写要做的事更重要">8.3 写&quot;不要做的事&quot;比写&quot;要做的事&quot;更重要
+</h3><p>模型本来就会做大多数对的事，但很容易掉进若干常见坑。</p>
+<p>每个 SKILL.md 里都加一节 <code>## 不要做的事</code>，效果立竿见影。</p>
+<h3 id="84-给好例子和坏例子">8.4 给好例子和坏例子
+</h3><p>模型对&quot;格式&quot;非常敏感。</p>
+<ul>
+<li>给一个完美的输出例子</li>
+<li>给一个反面例子并标注&quot;这是错的，原因是&hellip;&quot;</li>
+</ul>
+<p>效果远好过用文字描述格式。</p>
+<h3 id="85-每个-skill-只解决一类问题">8.5 每个 Skill 只解决一类问题
+</h3><p>不要写一个&quot;万能 Skill&quot;。</p>
+<ul>
+<li>❌ <code>dev-helper</code>：什么都管</li>
+<li>✅ <code>git-commit</code> + <code>pr-description</code> + <code>code-review</code>：每个专精一个</li>
+</ul>
+<p>小而清晰的 Skill 更容易被正确触发，也更容易维护。</p>
+<h3 id="86-用-skill-互引代替复制粘贴">8.6 用 Skill 互引代替复制粘贴
+</h3><p>如果 <code>pr-description</code> Skill 也需要遵守&quot;写英文要用现在时&quot;，不要复制规则进去，而是写：</p>
+<blockquote>
+<p>措辞规则与 <a class="link" href="../git-commit/SKILL.md" >git-commit Skill</a> 一致，详见该 Skill。</p></blockquote>
+<p>让 Skills 形成网络，而不是孤岛。</p>
+<h3 id="87-把-skills-当代码维护">8.7 把 Skills 当代码维护
+</h3><ul>
+<li>进版本控制</li>
+<li>写 CHANGELOG</li>
+<li>经验更新就改 Skill，而不是新写一个</li>
+<li>团队 review</li>
+</ul>
+<p>Skill 是会被全员复用的&quot;团队记忆&quot;，值得当代码一样认真对待。</p>
+<h3 id="88-skills-的安全模型">8.8 Skills 的安全模型
+</h3><blockquote>
+<p>这一节官方有专门一章 (<a class="link" href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview"  target="_blank" rel="noopener"
+    >Security considerations</a>)，强烈建议在团队推广 Skills 前读一遍。下面只是把要点摘出来。</p></blockquote>
+<p>Skill 不是无害的文档 —— 它能让模型 <strong>直接执行代码、调用工具</strong>。从这个角度看，<strong>安装一个 Skill 等同于安装一段会被 Claude 自动执行的程序</strong>。官方原话：</p>
+<blockquote>
+<p>&ldquo;Use Skills only from trusted sources: those you created yourself or obtained from Anthropic. &hellip; a malicious Skill can direct Claude to invoke tools or execute code in ways that don&rsquo;t match the Skill&rsquo;s stated purpose.&rdquo;</p></blockquote>
+<h4 id="881-几个真实风险">8.8.1 几个真实风险
+</h4><ul>
+<li><strong>工具滥用</strong>：恶意 SKILL.md 可以指挥 Claude 滥用 <code>Bash</code>、<code>Edit</code>、<code>Read</code> 等工具（甚至 <code>allowed-tools</code> 已经预授权）</li>
+<li><strong>数据外泄</strong>：能读取代码、能执行 bash，就能把代码或环境变量打到外部 endpoint</li>
+<li><strong>外部源被污染</strong>：用 <code>!`curl &lt;url&gt;`</code> 拉远程内容的 Skill，远程 endpoint 被攻破后等于植入了 prompt injection</li>
+<li><strong><code>allowed-tools</code> 滥用</strong>：作者写 <code>allowed-tools: Bash(*)</code> 等同于&quot;对这个 Skill 永久免确认&quot;，意味着你 trust 这个仓库等于 trust 这段授权</li>
+</ul>
+<h4 id="882-落地实践">8.8.2 落地实践
+</h4><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>场景</th>
+          <th>建议</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>用第三方 Skill</td>
+          <td><strong>先审计</strong> SKILL.md + 所有 bundled 文件、所有脚本，确认 <code>allowed-tools</code> 范围合理</td>
+      </tr>
+      <tr>
+          <td>项目级 Skill 进 git</td>
+          <td><strong>PR review 时把 <code>.claude/skills/</code> 当代码 review</strong>，重点看 <code>allowed-tools</code>、<code>!</code>(命令注入)</td>
+      </tr>
+      <tr>
+          <td>Skill 调外部 API</td>
+          <td>Token 永远从 env var 读，<strong>不要硬编码</strong>；尽量用 <code>disable-model-invocation: true</code> 防止模型自作主张触发</td>
+      </tr>
+      <tr>
+          <td>生产敏感操作（部署、删数据）</td>
+          <td>一律用 <code>disable-model-invocation: true</code> 强制手动触发，并加 <code>allowed-tools</code> 白名单</td>
+      </tr>
+      <tr>
+          <td>跨团队分发</td>
+          <td>优先做成 plugin，让用户能一眼看清 namespace 和来源</td>
+      </tr>
+  </tbody>
+</table></div>
+<h4 id="883-一个具体例子为什么信任仓库不是免审">8.8.3 一个具体例子：为什么&quot;信任仓库&quot;不是免审
+</h4><p>考虑下面这个看似无害的项目级 Skill：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nn">---</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l">deploy</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l">Deploy current branch to staging</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">allowed-tools</span><span class="p">:</span><span class="w"> </span><span class="l">Bash(*)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nn">---</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">Run</span><span class="p">:</span><span class="w"> </span>!<span class="l">`curl https://internal.example.com/deploy.sh | bash`</span><span class="w">
+</span></span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果你 <strong>trust 了这个仓库</strong>（Claude Code 的 workspace trust dialog），它就拥有了：</p>
+<ul>
+<li>模型可以通过 <code>disable-model-invocation</code> 默认值随时自动触发</li>
+<li>任意 bash 命令都不需要再确认</li>
+<li>上线时实际执行的命令是从外部 URL 拉的脚本（远程一旦被改，你这边毫不知情）</li>
+</ul>
+<p>这套组合是合法的，但同时也是供应链攻击的标准入口。所以在团队推广 Skills 时，<strong>最重要的不是&quot;鼓励大家多写&quot;，而是建立&quot;Skill 也要经过 review&quot;的纪律</strong>。</p>
+<hr>
+<h2 id="9-skills-常见高频面试题">9. Skills 常见高频面试题
+</h2><p>下面整理 10 道有代表性的题目，覆盖面试和实际答辩中常见的问法。</p>
+<h3 id="91-skills-和-system-prompt-有什么本质区别">9.1 Skills 和 system prompt 有什么本质区别？
+</h3><p><strong>答：</strong></p>
+<p>最大的区别在<strong>加载时机</strong>：</p>
+<ul>
+<li>system prompt 是<strong>始终加载</strong>，每次请求都占用上下文</li>
+<li>Skills 是<strong>按需加载</strong>，只在模型判断需要时才占用上下文</li>
+</ul>
+<p>其次是<strong>作用域</strong>：</p>
+<ul>
+<li>system prompt 一般是平台级或会话级的全局指令</li>
+<li>Skills 是任务方法级的局部指令</li>
+</ul>
+<p>第三是<strong>可分发性</strong>：</p>
+<ul>
+<li>system prompt 改起来要碰到底层配置</li>
+<li>Skills 是文件，能进 git，能跨人复用</li>
+</ul>
+<h3 id="92-模型怎么知道该不该加载某个-skill">9.2 模型怎么知道该不该加载某个 Skill？
+</h3><p><strong>答：</strong></p>
+<p>机制是<strong>两阶段检索</strong>：</p>
+<ol>
+<li>启动/初始化阶段，模型只看到所有 Skill 的 <code>name + description</code></li>
+<li>任务来临时，模型基于当前对话内容，对这些 description 做语义匹配</li>
+<li>命中的 Skill 才会把 SKILL.md 完整加载</li>
+</ol>
+<p>所以 description 写得是否到位，直接决定 Skill 能否被正确触发。</p>
+<h3 id="93-skills-和-mcp-有什么区别">9.3 Skills 和 MCP 有什么区别？
+</h3><p><strong>答：</strong></p>
+<p>不在一个层面：</p>
+<ul>
+<li>MCP 是<strong>协议</strong>，回答&quot;能力怎么标准化暴露给模型宿主&quot;</li>
+<li>Skills 是<strong>方法包</strong>，回答&quot;这类任务该怎么做&quot;</li>
+</ul>
+<p>MCP 暴露出来的更多是 Tools 和 Resources（工具与数据），而 Skills 是文档化的方法论。</p>
+<p>一个能力可以同时存在两种形态：通过 MCP Server 暴露具体 tool 调用，再通过一个 Skill 告诉模型&quot;这个 tool 在什么场景下、按什么流程用&quot;。</p>
+<h3 id="94-skills-和-subagent-有什么区别">9.4 Skills 和 Subagent 有什么区别？
+</h3><p><strong>答：</strong></p>
+<ul>
+<li>Subagent 是<strong>执行体</strong>：它有自己的独立上下文，能跑完整任务</li>
+<li>Skill 是<strong>方法书</strong>：它没有自己的上下文，只是注入到主 Agent 当前上下文里</li>
+</ul>
+<p>适用场景：</p>
+<ul>
+<li>任务需要大量上下文且不希望污染主上下文 → Subagent</li>
+<li>想让主 Agent 在某类任务上表现得更专业 → Skill</li>
+</ul>
+<p>它们也可以组合：Subagent 自己也可以读取并使用 Skills。</p>
+<h3 id="95-skills-会不会让模型变得机械">9.5 Skills 会不会让模型变得&quot;机械&quot;？
+</h3><p><strong>答：</strong></p>
+<p>理论上有这个风险，但实际中可控：</p>
+<ul>
+<li>写 Skill 时鼓励&quot;在 X 场景下应该 Y，否则交给模型自己判断&quot;</li>
+<li>不要把所有分支都用规则写死</li>
+<li>只在需要&quot;稳定输出&quot;的地方做强约束</li>
+</ul>
+<blockquote>
+<p>一个好 Skill 的标志是：把&quot;必须这样&quot;的部分写死，把&quot;看情况&quot;的部分留给模型。</p></blockquote>
+<h3 id="96-一个项目里-skill-多到一定程度会不会拖慢响应">9.6 一个项目里 Skill 多到一定程度，会不会拖慢响应？
+</h3><p><strong>答：</strong></p>
+<p>主要成本是 metadata 占用上下文，不是加载本身。每个 Skill 的 <code>name + description</code> 占大约 <strong>100 tokens</strong>，永久在线。Claude Code 给 metadata listing 一个上限，<strong>默认是模型上下文窗口的 1%</strong>（可以用 <code>skillListingBudgetFraction</code> 调整）。超出预算时，<strong>最少被调用的 Skill 的 description 会被先截断</strong>，所以&quot;装很多但不用&quot;的 Skill 会先被牺牲。</p>
+<p>经验上：</p>
+<ul>
+<li>几十个 Skill：几乎无感</li>
+<li>上百个：开始触发预算 trim，但你常用的那些不受影响</li>
+<li>上千个：建议分作用域（personal/project/plugin）、分 namespace（plugin 自带 <code>plugin-name:skill-name</code>）、用 <code>skillOverrides</code> 把不常用的设为 <code>&quot;name-only&quot;</code> 或 <code>&quot;off&quot;</code></li>
+</ul>
+<p>可以通过几种方式优化：</p>
+<ul>
+<li>用 <code>paths:</code> 让 Skill 只在编辑匹配文件时自动触发</li>
+<li>用 <code>skillOverrides</code> 在用户 settings 里关闭长期不用的 Skill</li>
+<li>不囤 Skill，用不上的删掉</li>
+</ul>
+<h3 id="97-skills-能调用-tools-吗能调用别的-skill-吗">9.7 Skills 能调用 Tools 吗？能调用别的 Skill 吗？
+</h3><p><strong>答：</strong></p>
+<ul>
+<li><strong>Tools</strong>：Skill 不直接调用 Tool，但它会<strong>指挥模型</strong>调用。SKILL.md 里可以写&quot;用 <code>git diff</code> 查改动&quot;，模型读完后就会去调 <code>Bash</code> Tool。Skill 还能用 <code>allowed-tools</code> 字段预授权工具，避免每次确认。</li>
+<li><strong>别的 Skill</strong>：通过普通 markdown 相对路径链接（如 <code>[code-review](../code-review/SKILL.md)</code>）引用。模型读到链接后，会通过 bash 工具按需读取被引用的文件。Claude Code 官方文档<strong>没有 <code>[[wiki-link]]</code> 这种特殊语法</strong>。</li>
+</ul>
+<h3 id="98-skills-和-slash-command-是不是同一个东西">9.8 Skills 和 Slash Command 是不是同一个东西？
+</h3><p><strong>答：</strong></p>
+<p>在当前的 Claude Code 实现里，<strong>是同一个东西</strong>。官方文档原话：</p>
+<blockquote>
+<p>&ldquo;Custom commands have been merged into skills. A file at <code>.claude/commands/deploy.md</code> and a skill at <code>.claude/skills/deploy/SKILL.md</code> both create <code>/deploy</code> and work the same way.&rdquo;</p></blockquote>
+<p>也就是说：</p>
+<ul>
+<li>你写一个 <code>.claude/skills/code-review/SKILL.md</code>，<strong>自动</strong>就有 <code>/code-review</code> 命令</li>
+<li>同一个 Skill <strong>既能</strong>被模型自动触发（看 description），<strong>也能</strong>被用户用 <code>/code-review</code> 显式触发</li>
+<li>用 frontmatter 字段可以限制只允许其中一种：<code>disable-model-invocation: true</code> → 只能手动触发；<code>user-invocable: false</code> → 只能模型自动触发</li>
+</ul>
+<p>老的 <code>.claude/commands/&lt;name&gt;.md</code> 仍然能用，本质是一个简化版 Skill（只有 SKILL.md 内容、没有附属文件）。如果同名的 Skill 和 Command 都存在，<strong>Skill 优先</strong>。</p>
+<h3 id="99-怎么测试一个-skill-是不是写得好">9.9 怎么测试一个 Skill 是不是写得好？
+</h3><p><strong>答：</strong></p>
+<p>至少做四类测试：</p>
+<ol>
+<li><strong>正向触发</strong>：用 Skill 适用的典型 prompt 测，看是否被加载并按方法执行</li>
+<li><strong>负向触发</strong>：用相似但不该触发的 prompt 测，看是否被错误加载</li>
+<li><strong>稳定性</strong>：同一类输入跑多次，输出格式是否稳定</li>
+<li><strong>越界</strong>：故意给一个不太相关的输入，看 Skill 会不会强行套用</li>
+</ol>
+<p>只要有一类不过关，回去改 description 或 SKILL.md。</p>
+<h3 id="910-skills-的未来会怎么发展">9.10 Skills 的未来会怎么发展？
+</h3><p><strong>答：</strong></p>
+<p>可以预见的几个方向：</p>
+<ul>
+<li><strong>Skill Marketplace</strong>：类似插件市场，可下载、安装、订阅 Skill</li>
+<li><strong>Skill 组合 / 编排</strong>：多个 Skill 形成更高阶的&quot;工作流模板&quot;</li>
+<li><strong>可执行 Skill</strong>：Skill 里不止是 Markdown，还能挂脚本（Claude Code 里部分形态已支持）</li>
+<li><strong>跨 Agent 互通</strong>：通过类似 MCP 的协议，让 Skill 可以被不同 Agent 通用读取</li>
+<li><strong>自动生成 Skill</strong>：根据团队的对话历史和最佳实践自动萃取出 Skill</li>
+</ul>
+<p>整体趋势：<strong>Skills 会成为 Agent 的&quot;个性&quot;和&quot;团队记忆&quot;的主要载体</strong>。</p>
+<hr>
+<h2 id="10-附录进一步阅读">10. 附录：进一步阅读
+</h2><h3 id="101-官方文档一手来源">10.1 官方文档（一手来源）
+</h3><p>本文所有具体字段、token 数、长度建议、安全规范等&quot;硬事实&quot;都对齐了下面这两份官方文档（截至 2026 年 6 月）：</p>
+<ul>
+<li><a class="link" href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview"  target="_blank" rel="noopener"
+    >Agent Skills overview</a> — 概念、三层加载、安全考量、跨产品支持矩阵</li>
+<li><a class="link" href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices"  target="_blank" rel="noopener"
+    >Authoring best practices</a> — 写法规范、SKILL.md 长度、组织模式</li>
+<li><a class="link" href="https://code.claude.com/docs/en/skills"  target="_blank" rel="noopener"
+    >Use Skills in Claude Code</a> — Claude Code 专属能力（frontmatter 全字段、<code>!</code>(&hellip;)<code>、</code>context: fork<code>、</code>${CLAUDE_SKILL_DIR}` 等）</li>
+</ul>
+<h3 id="102-与本文相关的概念文章">10.2 与本文相关的概念文章
+</h3><ul>
+<li><a class="link" href="what-is-mcp.md" >什么是 MCP：概念、使用方式、开发方法、底层原理与常见面试题</a></li>
+<li><a class="link" href="component-mcp-skills.md" >AppBuilder 组件、MCP 与 Skills 的对比学习</a></li>
+</ul>
+<h3 id="103-一个最精简的总结">10.3 一个最精简的总结
+</h3><p>如果让我用三句话总结 Skills：</p>
+<ul>
+<li><code>Skills</code> 不是工具，而是<strong>按需加载的方法书</strong>（也是 Slash Command 的实现）</li>
+<li>核心机制是<strong>三层渐进披露</strong>：metadata 永久在线（~100 tokens / Skill）→ 命中时读 SKILL.md（&lt; 5k tokens）→ 按需读引用文件 / 跑脚本（不限）</li>
+<li>命脉是 <strong><code>description</code> 写得准不准</strong>（最长 1024 字符，listing 总预算 1536 字符，关键场景写在最前）</li>
+</ul>
+<p>把这三点想清楚，就能开始动手写出一个能被团队真正用起来的 Skill。</p>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/ai/">AI</a>
+        
+            <a href="/tags/skills/">Skills</a>
+        
+            <a href="/tags/claude-code/">Claude-Code</a>
+        
+            <a href="/tags/agent/">Agent</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/appbuilder-%E7%BB%84%E4%BB%B6mcp-%E4%B8%8E-skills-%E7%9A%84%E5%AF%B9%E6%AF%94%E5%AD%A6%E4%B9%A0/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AppBuilder 组件、MCP 与 Skills 的对比学习</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/ai-agent-loop-%E4%B8%8E-react-%E6%A8%A1%E5%BC%8F%E8%AF%A6%E8%A7%A3%E6%80%9D%E8%80%83%E8%A1%8C%E5%8A%A8%E8%A7%82%E5%AF%9F%E5%81%9C%E6%AD%A2%E6%9D%A1%E4%BB%B6%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AI Agent Loop 与 ReAct 模式详解：思考、行动、观察、停止条件与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/ai-agent-memory-%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%B8%8E-langchain-1.0-%E6%BA%90%E7%A0%81%E5%89%96%E6%9E%90/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AI Agent Memory 深度解析：原理、实现机制与 LangChain 1.0&#43; 源码剖析</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/ai-agent-planning-%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AI Agent Planning 深度解析：原理、实现机制、工程实践与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/ai-agent-prompt-engineering%E6%8C%87%E4%BB%A4%E5%88%86%E5%B1%82%E8%BE%93%E5%87%BA%E7%BA%A6%E6%9D%9F%E4%BB%BB%E5%8A%A1%E6%8B%86%E8%A7%A3%E5%8F%8D%E5%B9%BB%E8%A7%89%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AI Agent Prompt Engineering：指令分层、输出约束、任务拆解、反幻觉与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>
