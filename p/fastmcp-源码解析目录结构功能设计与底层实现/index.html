@@ -1,0 +1,1210 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 如果你想系统学习：\nPython 里怎么开发 MCP server 一个高层 MCP 框架怎么设计 工具、资源、提示模板是怎么被封装出来的 那么 PrefectHQ/fastmcp 是一个非常适合读源码的项目。\n它的价值不只在于“能快速写一个 server”，更在于它把 MCP 开发里最常见的几类问题都整理成了统一框架能力：\nserver 生命周期 tool / resource / prompt 注册 schema 自动生成 transport 适配 context 注入 auth / proxy / composition 所以这篇文章的重点不是介绍怎么安装 fastmcp，而是回答三个更关键的问题：\n这个项目的目录结构是怎么组织的 它到底帮开发者封装了哪些能力 它底层是怎样把 Python 函数变成 MCP 能力的 一、先给 FastMCP 一个定位 如果只用一句话概括：\nFastMCP 是一个面向 Python 开发者的高层 MCP 框架，用来降低开发 MCP server 和 MCP client 的复杂度。\n这句话里最重要的是“高层框架”。\n也就是说，它不是在和 MCP 协议竞争，而是在 MCP 协议之上提供一层更适合 Python 开发者的抽象。\n">
+<title>FastMCP 源码解析：目录结构、功能设计与底层实现</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/fastmcp-%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84%E5%8A%9F%E8%83%BD%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%BA%95%E5%B1%82%E5%AE%9E%E7%8E%B0/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="FastMCP 源码解析：目录结构、功能设计与底层实现">
+<meta property='og:description' content="写在前面 如果你想系统学习：\nPython 里怎么开发 MCP server 一个高层 MCP 框架怎么设计 工具、资源、提示模板是怎么被封装出来的 那么 PrefectHQ/fastmcp 是一个非常适合读源码的项目。\n它的价值不只在于“能快速写一个 server”，更在于它把 MCP 开发里最常见的几类问题都整理成了统一框架能力：\nserver 生命周期 tool / resource / prompt 注册 schema 自动生成 transport 适配 context 注入 auth / proxy / composition 所以这篇文章的重点不是介绍怎么安装 fastmcp，而是回答三个更关键的问题：\n这个项目的目录结构是怎么组织的 它到底帮开发者封装了哪些能力 它底层是怎样把 Python 函数变成 MCP 能力的 一、先给 FastMCP 一个定位 如果只用一句话概括：\nFastMCP 是一个面向 Python 开发者的高层 MCP 框架，用来降低开发 MCP server 和 MCP client 的复杂度。\n这句话里最重要的是“高层框架”。\n也就是说，它不是在和 MCP 协议竞争，而是在 MCP 协议之上提供一层更适合 Python 开发者的抽象。\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/fastmcp-%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84%E5%8A%9F%E8%83%BD%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%BA%95%E5%B1%82%E5%AE%9E%E7%8E%B0/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='mcp' /><meta property='article:tag' content='python' /><meta property='article:tag' content='fastmcp' /><meta property='article:tag' content='sourcecode' /><meta property='article:published_time' content='2026-05-03T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-03T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="FastMCP 源码解析：目录结构、功能设计与底层实现">
+<meta name="twitter:description" content="写在前面 如果你想系统学习：\nPython 里怎么开发 MCP server 一个高层 MCP 框架怎么设计 工具、资源、提示模板是怎么被封装出来的 那么 PrefectHQ/fastmcp 是一个非常适合读源码的项目。\n它的价值不只在于“能快速写一个 server”，更在于它把 MCP 开发里最常见的几类问题都整理成了统一框架能力：\nserver 生命周期 tool / resource / prompt 注册 schema 自动生成 transport 适配 context 注入 auth / proxy / composition 所以这篇文章的重点不是介绍怎么安装 fastmcp，而是回答三个更关键的问题：\n这个项目的目录结构是怎么组织的 它到底帮开发者封装了哪些能力 它底层是怎样把 Python 函数变成 MCP 能力的 一、先给 FastMCP 一个定位 如果只用一句话概括：\nFastMCP 是一个面向 Python 开发者的高层 MCP 框架，用来降低开发 MCP server 和 MCP client 的复杂度。\n这句话里最重要的是“高层框架”。\n也就是说，它不是在和 MCP 协议竞争，而是在 MCP 协议之上提供一层更适合 Python 开发者的抽象。\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ol>
+    <li><a href="#21-可以先建立一个目录骨架视图">2.1 可以先建立一个目录骨架视图</a></li>
+    <li><a href="#22-先看仓库根目录各自承担什么职责">2.2 先看仓库根目录各自承担什么职责</a>
+      <ol>
+        <li><a href="#readmemd"><code>README.md</code></a></li>
+        <li><a href="#pyprojecttoml"><code>pyproject.toml</code></a></li>
+        <li><a href="#examples"><code>examples/</code></a></li>
+        <li><a href="#tests"><code>tests/</code></a></li>
+        <li><a href="#srcfastmcp"><code>src/fastmcp/</code></a></li>
+      </ol>
+    </li>
+    <li><a href="#23-再看-srcfastmcp-里的核心模块分工">2.3 再看 <code>src/fastmcp/</code> 里的核心模块分工</a>
+      <ol>
+        <li><a href="#server"><code>server/</code></a></li>
+        <li><a href="#client"><code>client/</code></a></li>
+        <li><a href="#tools"><code>tools/</code></a></li>
+        <li><a href="#resources"><code>resources/</code></a></li>
+        <li><a href="#prompts"><code>prompts/</code></a></li>
+        <li><a href="#context"><code>context/</code></a></li>
+        <li><a href="#transport"><code>transport/</code></a></li>
+        <li><a href="#auth"><code>auth/</code></a></li>
+        <li><a href="#proxy"><code>proxy/</code></a></li>
+        <li><a href="#composition"><code>composition/</code></a></li>
+        <li><a href="#utilities--models--schema"><code>utilities / models / schema</code></a></li>
+      </ol>
+    </li>
+    <li><a href="#24-第一层examples">2.4 第一层：examples</a></li>
+    <li><a href="#25-第二层核心-server-抽象">2.5 第二层：核心 server 抽象</a></li>
+    <li><a href="#26-第三层tool--resource--prompt-的注册逻辑">2.6 第三层：tool / resource / prompt 的注册逻辑</a></li>
+    <li><a href="#27-第四层schema-与数据模型">2.7 第四层：schema 与数据模型</a></li>
+    <li><a href="#28-第五层transport-与-runtime">2.8 第五层：transport 与 runtime</a></li>
+    <li><a href="#29-第六层auth--proxy--composition">2.9 第六层：auth / proxy / composition</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#31-最核心能力把-python-函数变成-mcp-工具">3.1 最核心能力：把 Python 函数变成 MCP 工具</a></li>
+    <li><a href="#32-第二个核心能力暴露-resource">3.2 第二个核心能力：暴露 resource</a></li>
+    <li><a href="#33-第三个核心能力暴露-prompt">3.3 第三个核心能力：暴露 prompt</a></li>
+    <li><a href="#34-第四个核心能力context-注入">3.4 第四个核心能力：context 注入</a></li>
+    <li><a href="#35-第五个核心能力client--proxy--composition">3.5 第五个核心能力：client / proxy / composition</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#41-fastmcp-背后做了什么">4.1 <code>FastMCP(...)</code> 背后做了什么</a></li>
+    <li><a href="#42-mcptool-背后做了什么">4.2 <code>@mcp.tool()</code> 背后做了什么</a></li>
+    <li><a href="#43-为什么自动-schema-生成很重要">4.3 为什么自动 schema 生成很重要</a></li>
+    <li><a href="#44-runtime-路由链路大致是什么">4.4 runtime 路由链路大致是什么</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#51-第一条线入口和-server-生命周期">5.1 第一条线：入口和 server 生命周期</a></li>
+    <li><a href="#52-第二条线装饰器注册链">5.2 第二条线：装饰器注册链</a></li>
+    <li><a href="#53-第三条线类型系统到-schema-的映射">5.3 第三条线：类型系统到 schema 的映射</a></li>
+    <li><a href="#54-第四条线context-注入机制">5.4 第四条线：context 注入机制</a></li>
+    <li><a href="#55-第五条线transport-与协议边界">5.5 第五条线：transport 与协议边界</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#61-开发体验非常顺">6.1 开发体验非常顺</a></li>
+    <li><a href="#62-把样板代码压得很低">6.2 把样板代码压得很低</a></li>
+    <li><a href="#63-便于逐步进阶">6.3 便于逐步进阶</a></li>
+    <li><a href="#64-特别适合做学习入口">6.4 特别适合做学习入口</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#71-它是高层框架不等于协议本身">7.1 它是高层框架，不等于协议本身</a></li>
+    <li><a href="#72-开发体验好意味着抽象会更厚">7.2 开发体验好，意味着抽象会更厚</a></li>
+    <li><a href="#73-真实生产环境还会有更多问题">7.3 真实生产环境还会有更多问题</a></li>
+  </ol>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/ai/" >
+                Ai
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/fastmcp-%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84%E5%8A%9F%E8%83%BD%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%BA%95%E5%B1%82%E5%AE%9E%E7%8E%B0/">FastMCP 源码解析：目录结构、功能设计与底层实现</a>
+        </h2>
+    
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">May 03, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h1 id="写在前面">写在前面
+</h1><p>如果你想系统学习：</p>
+<ul>
+<li>Python 里怎么开发 MCP server</li>
+<li>一个高层 MCP 框架怎么设计</li>
+<li>工具、资源、提示模板是怎么被封装出来的</li>
+</ul>
+<p>那么 <a class="link" href="https://github.com/PrefectHQ/fastmcp"  target="_blank" rel="noopener"
+    ><code>PrefectHQ/fastmcp</code></a> 是一个非常适合读源码的项目。</p>
+<p>它的价值不只在于“能快速写一个 server”，更在于它把 MCP 开发里最常见的几类问题都整理成了统一框架能力：</p>
+<ul>
+<li>server 生命周期</li>
+<li>tool / resource / prompt 注册</li>
+<li>schema 自动生成</li>
+<li>transport 适配</li>
+<li>context 注入</li>
+<li>auth / proxy / composition</li>
+</ul>
+<p>所以这篇文章的重点不是介绍怎么安装 <code>fastmcp</code>，而是回答三个更关键的问题：</p>
+<ol>
+<li>这个项目的目录结构是怎么组织的</li>
+<li>它到底帮开发者封装了哪些能力</li>
+<li>它底层是怎样把 Python 函数变成 MCP 能力的</li>
+</ol>
+<h1 id="一先给-fastmcp-一个定位">一、先给 FastMCP 一个定位
+</h1><p>如果只用一句话概括：</p>
+<blockquote>
+<p><code>FastMCP</code> 是一个面向 Python 开发者的高层 MCP 框架，用来降低开发 MCP server 和 MCP client 的复杂度。</p></blockquote>
+<p>这句话里最重要的是“高层框架”。</p>
+<p>也就是说，它不是在和 MCP 协议竞争，而是在 MCP 协议之上提供一层更适合 Python 开发者的抽象。</p>
+<p>它主要做了几件事：</p>
+<ul>
+<li>把协议注册过程变成 Python 装饰器</li>
+<li>把参数 schema 生成变成类型标注推导</li>
+<li>把上下文能力变成 <code>ctx</code></li>
+<li>把 transport、server、client、proxy 等能力收敛进统一接口</li>
+</ul>
+<p>所以从学习视角看：</p>
+<ul>
+<li>如果你想先快速建立“怎么写 MCP”直觉，先看 <code>fastmcp</code></li>
+<li>如果你想理解官方协议边界，再回头看官方 <code>python-sdk</code></li>
+</ul>
+<h1 id="二从目录结构理解这个项目">二、从目录结构理解这个项目
+</h1><p>读这类框架仓库，最忌讳一上来就平铺看所有文件。</p>
+<p>更高效的方式，是先按职责给目录分层。</p>
+<h2 id="21-可以先建立一个目录骨架视图">2.1 可以先建立一个目录骨架视图
+</h2><p>如果不纠结某个具体版本里的细小文件差异，可以先把这个项目粗略理解成下面这几层：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">fastmcp/
+</span></span><span class="line"><span class="cl">├── README.md
+</span></span><span class="line"><span class="cl">├── examples/
+</span></span><span class="line"><span class="cl">├── docs/ 或文档目录
+</span></span><span class="line"><span class="cl">├── src/
+</span></span><span class="line"><span class="cl">│   └── fastmcp/
+</span></span><span class="line"><span class="cl">│       ├── server/
+</span></span><span class="line"><span class="cl">│       ├── client/
+</span></span><span class="line"><span class="cl">│       ├── tools/
+</span></span><span class="line"><span class="cl">│       ├── resources/
+</span></span><span class="line"><span class="cl">│       ├── prompts/
+</span></span><span class="line"><span class="cl">│       ├── context/
+</span></span><span class="line"><span class="cl">│       ├── auth/
+</span></span><span class="line"><span class="cl">│       ├── transport/
+</span></span><span class="line"><span class="cl">│       ├── proxy/
+</span></span><span class="line"><span class="cl">│       ├── composition/
+</span></span><span class="line"><span class="cl">│       └── utilities / models / schema
+</span></span><span class="line"><span class="cl">├── tests/
+</span></span><span class="line"><span class="cl">└── pyproject.toml
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里最重要的不是每个目录名一定百分之百完全一致，而是先建立“框架分层”的心智模型。</p>
+<p>也就是说，读这个仓库时，你可以先把它拆成四大块：</p>
+<ul>
+<li><code>examples</code>：告诉你怎么用</li>
+<li><code>src/fastmcp</code>：告诉你框架怎么实现</li>
+<li><code>tests</code>：告诉你作者重点验证什么行为</li>
+<li><code>docs</code>：告诉你作者希望用户怎样理解 API</li>
+</ul>
+<h2 id="22-先看仓库根目录各自承担什么职责">2.2 先看仓库根目录各自承担什么职责
+</h2><h3 id="readmemd"><code>README.md</code>
+</h3><p>这是项目入口。</p>
+<p>一般会承担这些职责：</p>
+<ul>
+<li>介绍框架定位</li>
+<li>给最小示例</li>
+<li>说明安装方式</li>
+<li>引导你进入文档或 examples</li>
+</ul>
+<p>它适合拿来建立第一印象，但不适合替代源码阅读。</p>
+<h3 id="pyprojecttoml"><code>pyproject.toml</code>
+</h3><p>这是 Python 项目的工程入口之一。</p>
+<p>它通常会暴露很多对读源码有帮助的信息，例如：</p>
+<ul>
+<li>包名</li>
+<li>Python 版本要求</li>
+<li>核心依赖</li>
+<li>可选依赖</li>
+<li>CLI 入口</li>
+</ul>
+<p>很多人读源码会忽略这个文件，但它其实很适合用来快速判断：</p>
+<ul>
+<li>项目依赖哪些底层库</li>
+<li>是否支持多种运行形态</li>
+<li>包结构大概怎样组织</li>
+</ul>
+<h3 id="examples"><code>examples/</code>
+</h3><p>这是最适合从“使用者视角”切入的目录。</p>
+<p>它告诉你的不是底层细节，而是：</p>
+<ul>
+<li>框架希望你怎么写代码</li>
+<li>最常见的能力组合是什么</li>
+<li>哪些 API 是作者主推的</li>
+</ul>
+<h3 id="tests"><code>tests/</code>
+</h3><p>这是非常值得看的目录。</p>
+<p>因为测试最能暴露作者真正关心的行为边界，例如：</p>
+<ul>
+<li>tool 注册是否正确</li>
+<li>schema 生成是否稳定</li>
+<li>transport 行为是否一致</li>
+<li>context 注入是否符合预期</li>
+</ul>
+<p>很多时候，测试比文档更接近真实设计意图。</p>
+<h3 id="srcfastmcp"><code>src/fastmcp/</code>
+</h3><p>这是最核心的源码目录。</p>
+<p>如果你只想抓主干，绝大多数时间都应该放在这里。</p>
+<h2 id="23-再看-srcfastmcp-里的核心模块分工">2.3 再看 <code>src/fastmcp/</code> 里的核心模块分工
+</h2><p>这一层可以把它理解成“框架内核”。</p>
+<h3 id="server"><code>server/</code>
+</h3><p>这是最核心的目录之一。</p>
+<p>它通常负责：</p>
+<ul>
+<li>定义 <code>FastMCP</code> 或 server 主对象</li>
+<li>维护注册表</li>
+<li>管理生命周期</li>
+<li>对接 transport</li>
+<li>把请求路由到具体能力</li>
+</ul>
+<p>如果你只想回答“FastMCP 到底是什么对象”，先看这里。</p>
+<h3 id="client"><code>client/</code>
+</h3><p>这一层通常负责：</p>
+<ul>
+<li>连接远端或本地 MCP server</li>
+<li>发送请求</li>
+<li>接收响应</li>
+<li>封装 Python 侧 client 调用体验</li>
+</ul>
+<p>这说明 <code>fastmcp</code> 不是只想帮你写 server，它也在构建 client 侧抽象。</p>
+<h3 id="tools"><code>tools/</code>
+</h3><p>这一层主要负责 tool 相关能力。</p>
+<p>通常可以期待在这里看到：</p>
+<ul>
+<li>tool 定义</li>
+<li>tool 注册</li>
+<li>参数提取</li>
+<li>调用包装</li>
+<li>返回值处理</li>
+</ul>
+<p>如果你最关心 <code>@mcp.tool()</code> 背后做了什么，这一层最值得看。</p>
+<h3 id="resources"><code>resources/</code>
+</h3><p>这里负责 resource 相关抽象。</p>
+<p>重点通常包括：</p>
+<ul>
+<li>resource 注册</li>
+<li>resource URI 或标识组织</li>
+<li>resource 读取逻辑</li>
+<li>resource 内容封装</li>
+</ul>
+<p>这一层特别适合理解 MCP 里的上下文供给。</p>
+<h3 id="prompts"><code>prompts/</code>
+</h3><p>这里负责 prompt 模板能力。</p>
+<p>如果项目把 prompts 单独拆出来，说明作者已经明确把它当成和 tools、resources 并列的一等能力，而不是随手附加的功能。</p>
+<h3 id="context"><code>context/</code>
+</h3><p>这是很有框架味道的一层。</p>
+<p>它通常负责：</p>
+<ul>
+<li>运行时上下文对象</li>
+<li>日志、进度、资源访问等辅助能力</li>
+<li>tool 执行时的上下文注入</li>
+</ul>
+<p>如果你想知道 <code>ctx</code> 为什么能存在、能做什么，就重点看这里。</p>
+<h3 id="transport"><code>transport/</code>
+</h3><p>这里一般负责通信层。</p>
+<p>常见职责包括：</p>
+<ul>
+<li><code>stdio</code> 适配</li>
+<li>HTTP 或 streamable HTTP 适配</li>
+<li>输入输出消息传递</li>
+<li>协议消息与底层连接解耦</li>
+</ul>
+<p>这部分更接近“运行时基础设施”。</p>
+<h3 id="auth"><code>auth/</code>
+</h3><p>这部分负责认证、鉴权或安全相关封装。</p>
+<p>它说明项目并没有把自己局限在“本地 demo 工具”层面，而是在考虑更真实的服务接入场景。</p>
+<h3 id="proxy"><code>proxy/</code>
+</h3><p>这一层通常负责 server 间转发或代理能力。</p>
+<p>这在复杂系统里很常见，比如：</p>
+<ul>
+<li>一个上层 server 代理多个下层 server</li>
+<li>把已有 MCP server 再次包装</li>
+</ul>
+<h3 id="composition"><code>composition/</code>
+</h3><p>这一层通常负责组合多个能力源。</p>
+<p>它适合处理：</p>
+<ul>
+<li>多 server 聚合</li>
+<li>多模块拼装</li>
+<li>统一对外暴露能力</li>
+</ul>
+<h3 id="utilities--models--schema"><code>utilities / models / schema</code>
+</h3><p>这些目录名可能会因版本略有不同，但职责通常比较稳定：</p>
+<ul>
+<li>工具函数</li>
+<li>内部数据模型</li>
+<li>schema 转换</li>
+<li>类型辅助</li>
+</ul>
+<p>这部分通常不是最先读的，但它们往往支撑着上面所有高层 API。</p>
+<h2 id="24-第一层examples">2.4 第一层：examples
+</h2><p>这是最适合入门的目录。</p>
+<p>它通常承担两个作用：</p>
+<ul>
+<li>展示最小可运行示例</li>
+<li>展示特定能力的组合用法</li>
+</ul>
+<p>如果你第一次读 <code>fastmcp</code>，建议先看这里，而不是直接扎进底层实现。</p>
+<p>因为 examples 能快速回答几个问题：</p>
+<ul>
+<li>一个最小 server 长什么样</li>
+<li>一个 tool 是怎样暴露的</li>
+<li>resource / prompt / context 是怎么被使用的</li>
+</ul>
+<h2 id="25-第二层核心-server-抽象">2.5 第二层：核心 server 抽象
+</h2><p>这一层通常是整个项目最重要的部分。</p>
+<p>你要重点关注：</p>
+<ul>
+<li><code>FastMCP(...)</code> 是在哪里定义的</li>
+<li>server 对象初始化时收集了哪些能力</li>
+<li><code>run()</code> 最后做了哪些事情</li>
+</ul>
+<p>这一层回答的是：</p>
+<blockquote>
+<p>一个 Python MCP server 在框架里到底被抽象成了什么对象。</p></blockquote>
+<h2 id="26-第三层tool--resource--prompt-的注册逻辑">2.6 第三层：tool / resource / prompt 的注册逻辑
+</h2><p>这部分是 MCP 开发体验的核心。</p>
+<p>因为开发者最常写的就是：</p>
+<ul>
+<li><code>@mcp.tool()</code></li>
+<li><code>@mcp.resource()</code></li>
+<li><code>@mcp.prompt()</code></li>
+</ul>
+<p>所以你要重点看：</p>
+<ul>
+<li>装饰器是怎样把函数注册到 server 里的</li>
+<li>函数元信息怎样被提取</li>
+<li>docstring 和类型标注怎样变成工具描述</li>
+</ul>
+<p>这一层是把“Python 语法”翻译成“协议能力”的关键桥梁。</p>
+<h2 id="27-第四层schema-与数据模型">2.7 第四层：schema 与数据模型
+</h2><p>这里要重点看两类东西：</p>
+<ul>
+<li>输入参数 schema 怎么生成</li>
+<li>返回结果怎样被转成模型或客户端可理解的结构</li>
+</ul>
+<p>MCP 场景下，schema 非常重要，因为：</p>
+<ul>
+<li>模型依赖 schema 决定怎么调用工具</li>
+<li>host 依赖 schema 校验参数</li>
+<li>server 依赖 schema 约束输入</li>
+</ul>
+<p>所以对 <code>fastmcp</code> 来说，schema 不是附属功能，而是核心能力。</p>
+<h2 id="28-第五层transport-与-runtime">2.8 第五层：transport 与 runtime
+</h2><p>这一层回答的是：</p>
+<ul>
+<li>server 最终怎么和 client 通信</li>
+<li>支持哪些传输模式</li>
+<li>消息是怎样被送进 server，再被路由到具体能力上的</li>
+</ul>
+<p>一般来说，这部分会涉及：</p>
+<ul>
+<li><code>stdio</code></li>
+<li>HTTP / streamable HTTP</li>
+<li>长连接或事件流相关适配</li>
+</ul>
+<p>这层对业务开发者未必是最先要看的，但对理解底层实现非常重要。</p>
+<h2 id="29-第六层auth--proxy--composition">2.9 第六层：auth / proxy / composition
+</h2><p>这是 <code>fastmcp</code> 比较有框架味道的地方。</p>
+<p>它不只是帮你写一个最小 server，还考虑了更复杂的工程场景，例如：</p>
+<ul>
+<li>认证</li>
+<li>代理</li>
+<li>server 组合</li>
+<li>多能力拼装</li>
+</ul>
+<p>这一层说明它的目标不是 demo，而是尽量把 MCP 的真实工程问题也纳入框架能力。</p>
+<h1 id="三fastmcp-的核心功能到底有哪些">三、FastMCP 的核心功能到底有哪些
+</h1><h2 id="31-最核心能力把-python-函数变成-mcp-工具">3.1 最核心能力：把 Python 函数变成 MCP 工具
+</h2><p>这是整个项目最直观的能力。</p>
+<p>例如开发者写：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">mcp.server.fastmcp</span> <span class="kn">import</span> <span class="n">FastMCP</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">mcp</span> <span class="o">=</span> <span class="n">FastMCP</span><span class="p">(</span><span class="s2">&#34;demo&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nd">@mcp.tool</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">add</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;Add two numbers.&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>框架要帮你做的，不只是“记住这个函数”，而是要进一步完成：</p>
+<ul>
+<li>注册 tool 名称</li>
+<li>提取 tool 描述</li>
+<li>推导输入参数 schema</li>
+<li>推导返回值结构</li>
+<li>在运行时把调用请求路由到这个函数</li>
+</ul>
+<p>所以 <code>@mcp.tool()</code> 的本质不是语法糖，而是一整个注册流程的入口。</p>
+<h2 id="32-第二个核心能力暴露-resource">3.2 第二个核心能力：暴露 resource
+</h2><p>resource 和 tool 的区别在于：</p>
+<ul>
+<li>tool 偏“动作执行”</li>
+<li>resource 偏“上下文读取”</li>
+</ul>
+<p><code>fastmcp</code> 通过 <code>@mcp.resource()</code> 这类抽象，让开发者可以把：</p>
+<ul>
+<li>文件</li>
+<li>配置</li>
+<li>某类可查询对象</li>
+<li>动态生成的内容</li>
+</ul>
+<p>作为标准资源暴露出去。</p>
+<p>这对代码助手、知识库助手、企业内部助手都很重要。</p>
+<h2 id="33-第三个核心能力暴露-prompt">3.3 第三个核心能力：暴露 prompt
+</h2><p>这部分很多人容易忽略，但它非常能体现 MCP 的完整性。</p>
+<p>通过 <code>@mcp.prompt()</code>，框架不仅能暴露“能执行什么”，还能暴露“该怎么组织任务提示”。</p>
+<p>这意味着 server 不只是一个工具盒子，也可以成为一组任务模板的提供方。</p>
+<h2 id="34-第四个核心能力context-注入">3.4 第四个核心能力：context 注入
+</h2><p>这是 <code>fastmcp</code> 一个很值得学习的点。</p>
+<p>在简单示例里，tool 看起来像普通函数。</p>
+<p>但实际工程里，tool 往往需要额外能力，比如：</p>
+<ul>
+<li>读其他 resource</li>
+<li>报告进度</li>
+<li>写日志</li>
+<li>获取请求上下文</li>
+<li>调宿主提供的能力</li>
+</ul>
+<p>所以框架需要一个统一上下文对象，这就是 <code>ctx</code> 这一类抽象存在的意义。</p>
+<p>这部分的重要性在于：</p>
+<blockquote>
+<p>它让工具函数从“静态函数”变成“运行时参与者”。</p></blockquote>
+<h2 id="35-第五个核心能力client--proxy--composition">3.5 第五个核心能力：client / proxy / composition
+</h2><p>这是为什么 <code>fastmcp</code> 不只是一个 server helper。</p>
+<p>它还会进一步考虑：</p>
+<ul>
+<li>MCP client 怎样封装</li>
+<li>不同 server 之间怎样代理</li>
+<li>多个能力怎样组合</li>
+</ul>
+<p>这对复杂 agent 系统很有用。</p>
+<p>因为在真实项目里，你常常不是写一个孤立 server，而是要处理：</p>
+<ul>
+<li>多个 server</li>
+<li>多个能力域</li>
+<li>多层转发</li>
+<li>多种 transport</li>
+</ul>
+<h1 id="四从使用体验反推底层实现">四、从使用体验反推底层实现
+</h1><p>框架源码最适合用“从表及里”的方式看。</p>
+<p>也就是说，先看开发者怎么用，再反推底层做了什么。</p>
+<h2 id="41-fastmcp-背后做了什么">4.1 <code>FastMCP(...)</code> 背后做了什么
+</h2><p>当你创建：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="n">mcp</span> <span class="o">=</span> <span class="n">FastMCP</span><span class="p">(</span><span class="s2">&#34;demo&#34;</span><span class="p">)</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>底层通常至少要准备这些事情：</p>
+<ul>
+<li>创建 server 容器对象</li>
+<li>初始化 registry</li>
+<li>初始化 tool / resource / prompt 集合</li>
+<li>初始化 transport / runtime 配置</li>
+<li>记录 server 元信息</li>
+</ul>
+<p>所以这一步表面看很简单，实际上是在搭一个协议运行壳。</p>
+<h2 id="42-mcptool-背后做了什么">4.2 <code>@mcp.tool()</code> 背后做了什么
+</h2><p>这个装饰器背后通常会经历：</p>
+<ol>
+<li>拿到函数对象</li>
+<li>读取函数名</li>
+<li>读取类型标注</li>
+<li>读取 docstring</li>
+<li>生成 tool 描述和 schema</li>
+<li>把函数注册到工具表</li>
+<li>生成运行时 handler</li>
+</ol>
+<p>这里最有技术含量的地方通常是：</p>
+<ul>
+<li>Python 类型系统和 schema 的映射</li>
+<li>docstring 提取</li>
+<li>参数绑定与校验</li>
+</ul>
+<p>因为如果这些地方处理得不好，工具虽然“能跑”，但模型并不好用。</p>
+<h2 id="43-为什么自动-schema-生成很重要">4.3 为什么自动 schema 生成很重要
+</h2><p>因为 MCP 的工具不是给人手写 CLI 用的，而是要被模型理解。</p>
+<p>模型能否稳定使用工具，很大程度取决于：</p>
+<ul>
+<li>参数名字是否清楚</li>
+<li>类型是否准确</li>
+<li>必填项是否明确</li>
+<li>描述是否可读</li>
+</ul>
+<p>所以 <code>fastmcp</code> 的自动 schema 生成，不只是提升开发效率，更是在提升模型调用稳定性。</p>
+<h2 id="44-runtime-路由链路大致是什么">4.4 runtime 路由链路大致是什么
+</h2><p>当 client 发来一次工具调用时，框架内部大致要经历：</p>
+<ol>
+<li>收到 MCP 请求</li>
+<li>解析请求类型</li>
+<li>找到目标 tool</li>
+<li>校验参数</li>
+<li>构造上下文对象</li>
+<li>调用 Python 函数</li>
+<li>处理返回值</li>
+<li>封装为 MCP 响应</li>
+</ol>
+<p>这条链路说明一个关键点：</p>
+<blockquote>
+<p>框架的本质工作，不是“帮你写函数”，而是“把函数接进协议运行时”。</p></blockquote>
+<h1 id="五读-fastmcp-源码时最值得抓的几条线">五、读 FastMCP 源码时最值得抓的几条线
+</h1><h2 id="51-第一条线入口和-server-生命周期">5.1 第一条线：入口和 server 生命周期
+</h2><p>重点问题：</p>
+<ul>
+<li>server 是怎么创建的</li>
+<li>registry 是怎么初始化的</li>
+<li><code>run()</code> 到底做了什么</li>
+<li>什么时候开始真正监听或处理请求</li>
+</ul>
+<p>这条线帮你建立全局骨架。</p>
+<h2 id="52-第二条线装饰器注册链">5.2 第二条线：装饰器注册链
+</h2><p>重点问题：</p>
+<ul>
+<li>tool / resource / prompt 分别怎么注册</li>
+<li>注册时保留了哪些元信息</li>
+<li>这些元信息最后怎样被暴露给 client</li>
+</ul>
+<p>这条线直接决定开发体验。</p>
+<h2 id="53-第三条线类型系统到-schema-的映射">5.3 第三条线：类型系统到 schema 的映射
+</h2><p>重点问题：</p>
+<ul>
+<li><code>int</code>、<code>str</code>、<code>list[str]</code>、<code>dict</code> 这类类型怎样变成 schema</li>
+<li>optional / default value 怎样表示</li>
+<li>返回值是怎样被包装的</li>
+</ul>
+<p>这条线是理解“为什么 Python 写法能自动变成 MCP 能力”的关键。</p>
+<h2 id="54-第四条线context-注入机制">5.4 第四条线：context 注入机制
+</h2><p>重点问题：</p>
+<ul>
+<li><code>ctx</code> 是什么时候创建的</li>
+<li><code>ctx</code> 里有哪些能力</li>
+<li>为什么某些工具函数能读 resource、报进度或写日志</li>
+</ul>
+<p>如果这条线读明白了，你对 <code>fastmcp</code> 的理解会明显比“只会写装饰器”更深。</p>
+<h2 id="55-第五条线transport-与协议边界">5.5 第五条线：transport 与协议边界
+</h2><p>重点问题：</p>
+<ul>
+<li><code>stdio</code> 与 HTTP 入口有什么差异</li>
+<li>哪部分是 FastMCP 的高级封装</li>
+<li>哪部分已经接近 MCP 协议原语</li>
+</ul>
+<p>这条线很适合和官方 <code>python-sdk</code> 对照着看。</p>
+<h1 id="六fastmcp-对开发者最大的价值是什么">六、FastMCP 对开发者最大的价值是什么
+</h1><p>我觉得主要有四点。</p>
+<h2 id="61-开发体验非常顺">6.1 开发体验非常顺
+</h2><p>对 Python 开发者来说，装饰器 + 类型标注的组合非常自然。</p>
+<h2 id="62-把样板代码压得很低">6.2 把样板代码压得很低
+</h2><p>你不需要一开始就手写大量协议注册和 schema 定义代码。</p>
+<h2 id="63-便于逐步进阶">6.3 便于逐步进阶
+</h2><p>可以先从最小 server 开始，再逐步接触：</p>
+<ul>
+<li>resource</li>
+<li>prompt</li>
+<li>context</li>
+<li>transport</li>
+<li>auth</li>
+<li>proxy</li>
+</ul>
+<h2 id="64-特别适合做学习入口">6.4 特别适合做学习入口
+</h2><p>很多人如果一上来就只读底层协议实现，很容易“知道很多术语，但不会写 server”。</p>
+<p>而 <code>fastmcp</code> 的优势在于：</p>
+<blockquote>
+<p>你可以先把 server 写出来，再回头理解协议分层。</p></blockquote>
+<h1 id="七fastmcp-的局限和阅读时要注意的点">七、FastMCP 的局限和阅读时要注意的点
+</h1><h2 id="71-它是高层框架不等于协议本身">7.1 它是高层框架，不等于协议本身
+</h2><p>读这个项目时要始终记住：</p>
+<ul>
+<li><code>FastMCP</code> 是开发框架</li>
+<li><code>MCP</code> 是协议标准</li>
+</ul>
+<p>不要把框架 API 误认为协议原语。</p>
+<h2 id="72-开发体验好意味着抽象会更厚">7.2 开发体验好，意味着抽象会更厚
+</h2><p>抽象越友好，越要主动去问：</p>
+<ul>
+<li>这些便利背后做了什么</li>
+<li>哪些能力是框架帮我补的</li>
+<li>如果不用框架，协议层应该怎么表达</li>
+</ul>
+<h2 id="73-真实生产环境还会有更多问题">7.3 真实生产环境还会有更多问题
+</h2><p>例如：</p>
+<ul>
+<li>认证与鉴权</li>
+<li>多租户</li>
+<li>超时控制</li>
+<li>观测性</li>
+<li>灰度发布</li>
+</ul>
+<p>这些不一定能只靠框架默认能力完全解决。</p>
+<h1 id="八建议怎样读这个仓库">八、建议怎样读这个仓库
+</h1><p>一个比较稳的顺序是：</p>
+<ol>
+<li>先看 <code>examples</code></li>
+<li>再看 <code>FastMCP(...)</code> 的定义和入口</li>
+<li>再看 tool / resource / prompt 注册逻辑</li>
+<li>再看 context 与 schema 生成</li>
+<li>最后再看 transport、proxy、composition</li>
+</ol>
+<p>如果你是为了写自己的 Python MCP server，这个顺序通常会比较顺手。</p>
+<h1 id="小结">小结
+</h1><p>如果只用一句话总结：</p>
+<blockquote>
+<p><code>FastMCP</code> 最值得学习的地方，不只是它让你“更快写出一个 MCP server”，而是它很好地展示了“如何把 Python 开发体验和 MCP 协议能力连接起来”。</p></blockquote>
+<p>所以它非常适合作为：</p>
+<ul>
+<li>Python MCP 入门源码</li>
+<li>高层框架设计案例</li>
+<li>“函数如何变成协议能力”的学习样本</li>
+</ul>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/ai/">AI</a>
+        
+            <a href="/tags/agent/">Agent</a>
+        
+            <a href="/tags/mcp/">Mcp</a>
+        
+            <a href="/tags/python/">Python</a>
+        
+            <a href="/tags/fastmcp/">Fastmcp</a>
+        
+            <a href="/tags/sourcecode/">Sourcecode</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/python-sdk-%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90%E5%AE%98%E6%96%B9-mcp-python-sdk-%E7%9A%84%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84%E8%83%BD%E5%8A%9B%E6%A8%A1%E5%9E%8B%E4%B8%8E%E5%BA%95%E5%B1%82%E5%AE%9E%E7%8E%B0/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">Python SDK 源码解析：官方 MCP Python SDK 的目录结构、能力模型与底层实现</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/appbuilder-%E7%BB%84%E4%BB%B6mcp-%E4%B8%8E-skills-%E7%9A%84%E5%AF%B9%E6%AF%94%E5%AD%A6%E4%B9%A0/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AppBuilder 组件、MCP 与 Skills 的对比学习</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-skills%E6%A6%82%E5%BF%B5%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F%E5%BC%80%E5%8F%91%E6%96%B9%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/ai-agent-loop-%E4%B8%8E-react-%E6%A8%A1%E5%BC%8F%E8%AF%A6%E8%A7%A3%E6%80%9D%E8%80%83%E8%A1%8C%E5%8A%A8%E8%A7%82%E5%AF%9F%E5%81%9C%E6%AD%A2%E6%9D%A1%E4%BB%B6%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AI Agent Loop 与 ReAct 模式详解：思考、行动、观察、停止条件与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/ai-agent-memory-%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%B8%8E-langchain-1.0-%E6%BA%90%E7%A0%81%E5%89%96%E6%9E%90/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AI Agent Memory 深度解析：原理、实现机制与 LangChain 1.0&#43; 源码剖析</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>

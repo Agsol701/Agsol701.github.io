@@ -1,0 +1,596 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+    <channel>
+        <title>Fastmcp on Agsol Blog</title>
+        <link>https://Agsol701.github.io/tags/fastmcp/</link>
+        <description>Recent content in Fastmcp on Agsol Blog</description>
+        <generator>Hugo -- gohugo.io</generator>
+        <language>en</language>
+        <copyright>Agsol</copyright>
+        <lastBuildDate>Sun, 03 May 2026 00:00:00 +0000</lastBuildDate><atom:link href="https://Agsol701.github.io/tags/fastmcp/index.xml" rel="self" type="application/rss+xml" /><item>
+        <title>FastMCP 源码解析：目录结构、功能设计与底层实现</title>
+        <link>https://Agsol701.github.io/p/fastmcp-%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84%E5%8A%9F%E8%83%BD%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%BA%95%E5%B1%82%E5%AE%9E%E7%8E%B0/</link>
+        <pubDate>Sun, 03 May 2026 00:00:00 +0000</pubDate>
+        
+        <guid>https://Agsol701.github.io/p/fastmcp-%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84%E5%8A%9F%E8%83%BD%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%BA%95%E5%B1%82%E5%AE%9E%E7%8E%B0/</guid>
+        <description>&lt;h1 id=&#34;写在前面&#34;&gt;写在前面
+&lt;/h1&gt;&lt;p&gt;如果你想系统学习：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Python 里怎么开发 MCP server&lt;/li&gt;
+&lt;li&gt;一个高层 MCP 框架怎么设计&lt;/li&gt;
+&lt;li&gt;工具、资源、提示模板是怎么被封装出来的&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;那么 &lt;a class=&#34;link&#34; href=&#34;https://github.com/PrefectHQ/fastmcp&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;&lt;code&gt;PrefectHQ/fastmcp&lt;/code&gt;&lt;/a&gt; 是一个非常适合读源码的项目。&lt;/p&gt;
+&lt;p&gt;它的价值不只在于“能快速写一个 server”，更在于它把 MCP 开发里最常见的几类问题都整理成了统一框架能力：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;server 生命周期&lt;/li&gt;
+&lt;li&gt;tool / resource / prompt 注册&lt;/li&gt;
+&lt;li&gt;schema 自动生成&lt;/li&gt;
+&lt;li&gt;transport 适配&lt;/li&gt;
+&lt;li&gt;context 注入&lt;/li&gt;
+&lt;li&gt;auth / proxy / composition&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以这篇文章的重点不是介绍怎么安装 &lt;code&gt;fastmcp&lt;/code&gt;，而是回答三个更关键的问题：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;这个项目的目录结构是怎么组织的&lt;/li&gt;
+&lt;li&gt;它到底帮开发者封装了哪些能力&lt;/li&gt;
+&lt;li&gt;它底层是怎样把 Python 函数变成 MCP 能力的&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h1 id=&#34;一先给-fastmcp-一个定位&#34;&gt;一、先给 FastMCP 一个定位
+&lt;/h1&gt;&lt;p&gt;如果只用一句话概括：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;code&gt;FastMCP&lt;/code&gt; 是一个面向 Python 开发者的高层 MCP 框架，用来降低开发 MCP server 和 MCP client 的复杂度。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;这句话里最重要的是“高层框架”。&lt;/p&gt;
+&lt;p&gt;也就是说，它不是在和 MCP 协议竞争，而是在 MCP 协议之上提供一层更适合 Python 开发者的抽象。&lt;/p&gt;
+&lt;p&gt;它主要做了几件事：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;把协议注册过程变成 Python 装饰器&lt;/li&gt;
+&lt;li&gt;把参数 schema 生成变成类型标注推导&lt;/li&gt;
+&lt;li&gt;把上下文能力变成 &lt;code&gt;ctx&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;把 transport、server、client、proxy 等能力收敛进统一接口&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以从学习视角看：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;如果你想先快速建立“怎么写 MCP”直觉，先看 &lt;code&gt;fastmcp&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;如果你想理解官方协议边界，再回头看官方 &lt;code&gt;python-sdk&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;二从目录结构理解这个项目&#34;&gt;二、从目录结构理解这个项目
+&lt;/h1&gt;&lt;p&gt;读这类框架仓库，最忌讳一上来就平铺看所有文件。&lt;/p&gt;
+&lt;p&gt;更高效的方式，是先按职责给目录分层。&lt;/p&gt;
+&lt;h2 id=&#34;21-可以先建立一个目录骨架视图&#34;&gt;2.1 可以先建立一个目录骨架视图
+&lt;/h2&gt;&lt;p&gt;如果不纠结某个具体版本里的细小文件差异，可以先把这个项目粗略理解成下面这几层：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;15
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;16
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;17
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;18
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;19
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;fastmcp/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;├── README.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;├── examples/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;├── docs/ 或文档目录
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;├── src/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│   └── fastmcp/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│       ├── server/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│       ├── client/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│       ├── tools/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│       ├── resources/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│       ├── prompts/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│       ├── context/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│       ├── auth/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│       ├── transport/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│       ├── proxy/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│       ├── composition/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│       └── utilities / models / schema
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;├── tests/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;└── pyproject.toml
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这里最重要的不是每个目录名一定百分之百完全一致，而是先建立“框架分层”的心智模型。&lt;/p&gt;
+&lt;p&gt;也就是说，读这个仓库时，你可以先把它拆成四大块：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;examples&lt;/code&gt;：告诉你怎么用&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;src/fastmcp&lt;/code&gt;：告诉你框架怎么实现&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;tests&lt;/code&gt;：告诉你作者重点验证什么行为&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;docs&lt;/code&gt;：告诉你作者希望用户怎样理解 API&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;22-先看仓库根目录各自承担什么职责&#34;&gt;2.2 先看仓库根目录各自承担什么职责
+&lt;/h2&gt;&lt;h3 id=&#34;readmemd&#34;&gt;&lt;code&gt;README.md&lt;/code&gt;
+&lt;/h3&gt;&lt;p&gt;这是项目入口。&lt;/p&gt;
+&lt;p&gt;一般会承担这些职责：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;介绍框架定位&lt;/li&gt;
+&lt;li&gt;给最小示例&lt;/li&gt;
+&lt;li&gt;说明安装方式&lt;/li&gt;
+&lt;li&gt;引导你进入文档或 examples&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;它适合拿来建立第一印象，但不适合替代源码阅读。&lt;/p&gt;
+&lt;h3 id=&#34;pyprojecttoml&#34;&gt;&lt;code&gt;pyproject.toml&lt;/code&gt;
+&lt;/h3&gt;&lt;p&gt;这是 Python 项目的工程入口之一。&lt;/p&gt;
+&lt;p&gt;它通常会暴露很多对读源码有帮助的信息，例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;包名&lt;/li&gt;
+&lt;li&gt;Python 版本要求&lt;/li&gt;
+&lt;li&gt;核心依赖&lt;/li&gt;
+&lt;li&gt;可选依赖&lt;/li&gt;
+&lt;li&gt;CLI 入口&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;很多人读源码会忽略这个文件，但它其实很适合用来快速判断：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;项目依赖哪些底层库&lt;/li&gt;
+&lt;li&gt;是否支持多种运行形态&lt;/li&gt;
+&lt;li&gt;包结构大概怎样组织&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;examples&#34;&gt;&lt;code&gt;examples/&lt;/code&gt;
+&lt;/h3&gt;&lt;p&gt;这是最适合从“使用者视角”切入的目录。&lt;/p&gt;
+&lt;p&gt;它告诉你的不是底层细节，而是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;框架希望你怎么写代码&lt;/li&gt;
+&lt;li&gt;最常见的能力组合是什么&lt;/li&gt;
+&lt;li&gt;哪些 API 是作者主推的&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;tests&#34;&gt;&lt;code&gt;tests/&lt;/code&gt;
+&lt;/h3&gt;&lt;p&gt;这是非常值得看的目录。&lt;/p&gt;
+&lt;p&gt;因为测试最能暴露作者真正关心的行为边界，例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;tool 注册是否正确&lt;/li&gt;
+&lt;li&gt;schema 生成是否稳定&lt;/li&gt;
+&lt;li&gt;transport 行为是否一致&lt;/li&gt;
+&lt;li&gt;context 注入是否符合预期&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;很多时候，测试比文档更接近真实设计意图。&lt;/p&gt;
+&lt;h3 id=&#34;srcfastmcp&#34;&gt;&lt;code&gt;src/fastmcp/&lt;/code&gt;
+&lt;/h3&gt;&lt;p&gt;这是最核心的源码目录。&lt;/p&gt;
+&lt;p&gt;如果你只想抓主干，绝大多数时间都应该放在这里。&lt;/p&gt;
+&lt;h2 id=&#34;23-再看-srcfastmcp-里的核心模块分工&#34;&gt;2.3 再看 &lt;code&gt;src/fastmcp/&lt;/code&gt; 里的核心模块分工
+&lt;/h2&gt;&lt;p&gt;这一层可以把它理解成“框架内核”。&lt;/p&gt;
+&lt;h3 id=&#34;server&#34;&gt;&lt;code&gt;server/&lt;/code&gt;
+&lt;/h3&gt;&lt;p&gt;这是最核心的目录之一。&lt;/p&gt;
+&lt;p&gt;它通常负责：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;定义 &lt;code&gt;FastMCP&lt;/code&gt; 或 server 主对象&lt;/li&gt;
+&lt;li&gt;维护注册表&lt;/li&gt;
+&lt;li&gt;管理生命周期&lt;/li&gt;
+&lt;li&gt;对接 transport&lt;/li&gt;
+&lt;li&gt;把请求路由到具体能力&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果你只想回答“FastMCP 到底是什么对象”，先看这里。&lt;/p&gt;
+&lt;h3 id=&#34;client&#34;&gt;&lt;code&gt;client/&lt;/code&gt;
+&lt;/h3&gt;&lt;p&gt;这一层通常负责：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;连接远端或本地 MCP server&lt;/li&gt;
+&lt;li&gt;发送请求&lt;/li&gt;
+&lt;li&gt;接收响应&lt;/li&gt;
+&lt;li&gt;封装 Python 侧 client 调用体验&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这说明 &lt;code&gt;fastmcp&lt;/code&gt; 不是只想帮你写 server，它也在构建 client 侧抽象。&lt;/p&gt;
+&lt;h3 id=&#34;tools&#34;&gt;&lt;code&gt;tools/&lt;/code&gt;
+&lt;/h3&gt;&lt;p&gt;这一层主要负责 tool 相关能力。&lt;/p&gt;
+&lt;p&gt;通常可以期待在这里看到：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;tool 定义&lt;/li&gt;
+&lt;li&gt;tool 注册&lt;/li&gt;
+&lt;li&gt;参数提取&lt;/li&gt;
+&lt;li&gt;调用包装&lt;/li&gt;
+&lt;li&gt;返回值处理&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果你最关心 &lt;code&gt;@mcp.tool()&lt;/code&gt; 背后做了什么，这一层最值得看。&lt;/p&gt;
+&lt;h3 id=&#34;resources&#34;&gt;&lt;code&gt;resources/&lt;/code&gt;
+&lt;/h3&gt;&lt;p&gt;这里负责 resource 相关抽象。&lt;/p&gt;
+&lt;p&gt;重点通常包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;resource 注册&lt;/li&gt;
+&lt;li&gt;resource URI 或标识组织&lt;/li&gt;
+&lt;li&gt;resource 读取逻辑&lt;/li&gt;
+&lt;li&gt;resource 内容封装&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这一层特别适合理解 MCP 里的上下文供给。&lt;/p&gt;
+&lt;h3 id=&#34;prompts&#34;&gt;&lt;code&gt;prompts/&lt;/code&gt;
+&lt;/h3&gt;&lt;p&gt;这里负责 prompt 模板能力。&lt;/p&gt;
+&lt;p&gt;如果项目把 prompts 单独拆出来，说明作者已经明确把它当成和 tools、resources 并列的一等能力，而不是随手附加的功能。&lt;/p&gt;
+&lt;h3 id=&#34;context&#34;&gt;&lt;code&gt;context/&lt;/code&gt;
+&lt;/h3&gt;&lt;p&gt;这是很有框架味道的一层。&lt;/p&gt;
+&lt;p&gt;它通常负责：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;运行时上下文对象&lt;/li&gt;
+&lt;li&gt;日志、进度、资源访问等辅助能力&lt;/li&gt;
+&lt;li&gt;tool 执行时的上下文注入&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果你想知道 &lt;code&gt;ctx&lt;/code&gt; 为什么能存在、能做什么，就重点看这里。&lt;/p&gt;
+&lt;h3 id=&#34;transport&#34;&gt;&lt;code&gt;transport/&lt;/code&gt;
+&lt;/h3&gt;&lt;p&gt;这里一般负责通信层。&lt;/p&gt;
+&lt;p&gt;常见职责包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;stdio&lt;/code&gt; 适配&lt;/li&gt;
+&lt;li&gt;HTTP 或 streamable HTTP 适配&lt;/li&gt;
+&lt;li&gt;输入输出消息传递&lt;/li&gt;
+&lt;li&gt;协议消息与底层连接解耦&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这部分更接近“运行时基础设施”。&lt;/p&gt;
+&lt;h3 id=&#34;auth&#34;&gt;&lt;code&gt;auth/&lt;/code&gt;
+&lt;/h3&gt;&lt;p&gt;这部分负责认证、鉴权或安全相关封装。&lt;/p&gt;
+&lt;p&gt;它说明项目并没有把自己局限在“本地 demo 工具”层面，而是在考虑更真实的服务接入场景。&lt;/p&gt;
+&lt;h3 id=&#34;proxy&#34;&gt;&lt;code&gt;proxy/&lt;/code&gt;
+&lt;/h3&gt;&lt;p&gt;这一层通常负责 server 间转发或代理能力。&lt;/p&gt;
+&lt;p&gt;这在复杂系统里很常见，比如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;一个上层 server 代理多个下层 server&lt;/li&gt;
+&lt;li&gt;把已有 MCP server 再次包装&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;composition&#34;&gt;&lt;code&gt;composition/&lt;/code&gt;
+&lt;/h3&gt;&lt;p&gt;这一层通常负责组合多个能力源。&lt;/p&gt;
+&lt;p&gt;它适合处理：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;多 server 聚合&lt;/li&gt;
+&lt;li&gt;多模块拼装&lt;/li&gt;
+&lt;li&gt;统一对外暴露能力&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;utilities--models--schema&#34;&gt;&lt;code&gt;utilities / models / schema&lt;/code&gt;
+&lt;/h3&gt;&lt;p&gt;这些目录名可能会因版本略有不同，但职责通常比较稳定：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;工具函数&lt;/li&gt;
+&lt;li&gt;内部数据模型&lt;/li&gt;
+&lt;li&gt;schema 转换&lt;/li&gt;
+&lt;li&gt;类型辅助&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这部分通常不是最先读的，但它们往往支撑着上面所有高层 API。&lt;/p&gt;
+&lt;h2 id=&#34;24-第一层examples&#34;&gt;2.4 第一层：examples
+&lt;/h2&gt;&lt;p&gt;这是最适合入门的目录。&lt;/p&gt;
+&lt;p&gt;它通常承担两个作用：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;展示最小可运行示例&lt;/li&gt;
+&lt;li&gt;展示特定能力的组合用法&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果你第一次读 &lt;code&gt;fastmcp&lt;/code&gt;，建议先看这里，而不是直接扎进底层实现。&lt;/p&gt;
+&lt;p&gt;因为 examples 能快速回答几个问题：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;一个最小 server 长什么样&lt;/li&gt;
+&lt;li&gt;一个 tool 是怎样暴露的&lt;/li&gt;
+&lt;li&gt;resource / prompt / context 是怎么被使用的&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;25-第二层核心-server-抽象&#34;&gt;2.5 第二层：核心 server 抽象
+&lt;/h2&gt;&lt;p&gt;这一层通常是整个项目最重要的部分。&lt;/p&gt;
+&lt;p&gt;你要重点关注：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;FastMCP(...)&lt;/code&gt; 是在哪里定义的&lt;/li&gt;
+&lt;li&gt;server 对象初始化时收集了哪些能力&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;run()&lt;/code&gt; 最后做了哪些事情&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这一层回答的是：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;一个 Python MCP server 在框架里到底被抽象成了什么对象。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;h2 id=&#34;26-第三层tool--resource--prompt-的注册逻辑&#34;&gt;2.6 第三层：tool / resource / prompt 的注册逻辑
+&lt;/h2&gt;&lt;p&gt;这部分是 MCP 开发体验的核心。&lt;/p&gt;
+&lt;p&gt;因为开发者最常写的就是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;@mcp.tool()&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;@mcp.resource()&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;@mcp.prompt()&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以你要重点看：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;装饰器是怎样把函数注册到 server 里的&lt;/li&gt;
+&lt;li&gt;函数元信息怎样被提取&lt;/li&gt;
+&lt;li&gt;docstring 和类型标注怎样变成工具描述&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这一层是把“Python 语法”翻译成“协议能力”的关键桥梁。&lt;/p&gt;
+&lt;h2 id=&#34;27-第四层schema-与数据模型&#34;&gt;2.7 第四层：schema 与数据模型
+&lt;/h2&gt;&lt;p&gt;这里要重点看两类东西：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;输入参数 schema 怎么生成&lt;/li&gt;
+&lt;li&gt;返回结果怎样被转成模型或客户端可理解的结构&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;MCP 场景下，schema 非常重要，因为：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;模型依赖 schema 决定怎么调用工具&lt;/li&gt;
+&lt;li&gt;host 依赖 schema 校验参数&lt;/li&gt;
+&lt;li&gt;server 依赖 schema 约束输入&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以对 &lt;code&gt;fastmcp&lt;/code&gt; 来说，schema 不是附属功能，而是核心能力。&lt;/p&gt;
+&lt;h2 id=&#34;28-第五层transport-与-runtime&#34;&gt;2.8 第五层：transport 与 runtime
+&lt;/h2&gt;&lt;p&gt;这一层回答的是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;server 最终怎么和 client 通信&lt;/li&gt;
+&lt;li&gt;支持哪些传输模式&lt;/li&gt;
+&lt;li&gt;消息是怎样被送进 server，再被路由到具体能力上的&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;一般来说，这部分会涉及：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;stdio&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;HTTP / streamable HTTP&lt;/li&gt;
+&lt;li&gt;长连接或事件流相关适配&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这层对业务开发者未必是最先要看的，但对理解底层实现非常重要。&lt;/p&gt;
+&lt;h2 id=&#34;29-第六层auth--proxy--composition&#34;&gt;2.9 第六层：auth / proxy / composition
+&lt;/h2&gt;&lt;p&gt;这是 &lt;code&gt;fastmcp&lt;/code&gt; 比较有框架味道的地方。&lt;/p&gt;
+&lt;p&gt;它不只是帮你写一个最小 server，还考虑了更复杂的工程场景，例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;认证&lt;/li&gt;
+&lt;li&gt;代理&lt;/li&gt;
+&lt;li&gt;server 组合&lt;/li&gt;
+&lt;li&gt;多能力拼装&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这一层说明它的目标不是 demo，而是尽量把 MCP 的真实工程问题也纳入框架能力。&lt;/p&gt;
+&lt;h1 id=&#34;三fastmcp-的核心功能到底有哪些&#34;&gt;三、FastMCP 的核心功能到底有哪些
+&lt;/h1&gt;&lt;h2 id=&#34;31-最核心能力把-python-函数变成-mcp-工具&#34;&gt;3.1 最核心能力：把 Python 函数变成 MCP 工具
+&lt;/h2&gt;&lt;p&gt;这是整个项目最直观的能力。&lt;/p&gt;
+&lt;p&gt;例如开发者写：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;9
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;kn&#34;&gt;from&lt;/span&gt; &lt;span class=&#34;nn&#34;&gt;mcp.server.fastmcp&lt;/span&gt; &lt;span class=&#34;kn&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;FastMCP&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;mcp&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;FastMCP&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;demo&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;nd&#34;&gt;@mcp.tool&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;()&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;nf&#34;&gt;add&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;a&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;nb&#34;&gt;int&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;b&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;nb&#34;&gt;int&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&amp;gt;&lt;/span&gt; &lt;span class=&#34;nb&#34;&gt;int&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;s2&#34;&gt;&amp;#34;&amp;#34;&amp;#34;Add two numbers.&amp;#34;&amp;#34;&amp;#34;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;k&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;a&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;+&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;b&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;框架要帮你做的，不只是“记住这个函数”，而是要进一步完成：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;注册 tool 名称&lt;/li&gt;
+&lt;li&gt;提取 tool 描述&lt;/li&gt;
+&lt;li&gt;推导输入参数 schema&lt;/li&gt;
+&lt;li&gt;推导返回值结构&lt;/li&gt;
+&lt;li&gt;在运行时把调用请求路由到这个函数&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以 &lt;code&gt;@mcp.tool()&lt;/code&gt; 的本质不是语法糖，而是一整个注册流程的入口。&lt;/p&gt;
+&lt;h2 id=&#34;32-第二个核心能力暴露-resource&#34;&gt;3.2 第二个核心能力：暴露 resource
+&lt;/h2&gt;&lt;p&gt;resource 和 tool 的区别在于：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;tool 偏“动作执行”&lt;/li&gt;
+&lt;li&gt;resource 偏“上下文读取”&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;code&gt;fastmcp&lt;/code&gt; 通过 &lt;code&gt;@mcp.resource()&lt;/code&gt; 这类抽象，让开发者可以把：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;文件&lt;/li&gt;
+&lt;li&gt;配置&lt;/li&gt;
+&lt;li&gt;某类可查询对象&lt;/li&gt;
+&lt;li&gt;动态生成的内容&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;作为标准资源暴露出去。&lt;/p&gt;
+&lt;p&gt;这对代码助手、知识库助手、企业内部助手都很重要。&lt;/p&gt;
+&lt;h2 id=&#34;33-第三个核心能力暴露-prompt&#34;&gt;3.3 第三个核心能力：暴露 prompt
+&lt;/h2&gt;&lt;p&gt;这部分很多人容易忽略，但它非常能体现 MCP 的完整性。&lt;/p&gt;
+&lt;p&gt;通过 &lt;code&gt;@mcp.prompt()&lt;/code&gt;，框架不仅能暴露“能执行什么”，还能暴露“该怎么组织任务提示”。&lt;/p&gt;
+&lt;p&gt;这意味着 server 不只是一个工具盒子，也可以成为一组任务模板的提供方。&lt;/p&gt;
+&lt;h2 id=&#34;34-第四个核心能力context-注入&#34;&gt;3.4 第四个核心能力：context 注入
+&lt;/h2&gt;&lt;p&gt;这是 &lt;code&gt;fastmcp&lt;/code&gt; 一个很值得学习的点。&lt;/p&gt;
+&lt;p&gt;在简单示例里，tool 看起来像普通函数。&lt;/p&gt;
+&lt;p&gt;但实际工程里，tool 往往需要额外能力，比如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;读其他 resource&lt;/li&gt;
+&lt;li&gt;报告进度&lt;/li&gt;
+&lt;li&gt;写日志&lt;/li&gt;
+&lt;li&gt;获取请求上下文&lt;/li&gt;
+&lt;li&gt;调宿主提供的能力&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以框架需要一个统一上下文对象，这就是 &lt;code&gt;ctx&lt;/code&gt; 这一类抽象存在的意义。&lt;/p&gt;
+&lt;p&gt;这部分的重要性在于：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;它让工具函数从“静态函数”变成“运行时参与者”。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;h2 id=&#34;35-第五个核心能力client--proxy--composition&#34;&gt;3.5 第五个核心能力：client / proxy / composition
+&lt;/h2&gt;&lt;p&gt;这是为什么 &lt;code&gt;fastmcp&lt;/code&gt; 不只是一个 server helper。&lt;/p&gt;
+&lt;p&gt;它还会进一步考虑：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;MCP client 怎样封装&lt;/li&gt;
+&lt;li&gt;不同 server 之间怎样代理&lt;/li&gt;
+&lt;li&gt;多个能力怎样组合&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这对复杂 agent 系统很有用。&lt;/p&gt;
+&lt;p&gt;因为在真实项目里，你常常不是写一个孤立 server，而是要处理：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;多个 server&lt;/li&gt;
+&lt;li&gt;多个能力域&lt;/li&gt;
+&lt;li&gt;多层转发&lt;/li&gt;
+&lt;li&gt;多种 transport&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;四从使用体验反推底层实现&#34;&gt;四、从使用体验反推底层实现
+&lt;/h1&gt;&lt;p&gt;框架源码最适合用“从表及里”的方式看。&lt;/p&gt;
+&lt;p&gt;也就是说，先看开发者怎么用，再反推底层做了什么。&lt;/p&gt;
+&lt;h2 id=&#34;41-fastmcp-背后做了什么&#34;&gt;4.1 &lt;code&gt;FastMCP(...)&lt;/code&gt; 背后做了什么
+&lt;/h2&gt;&lt;p&gt;当你创建：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;mcp&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;FastMCP&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;demo&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;底层通常至少要准备这些事情：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;创建 server 容器对象&lt;/li&gt;
+&lt;li&gt;初始化 registry&lt;/li&gt;
+&lt;li&gt;初始化 tool / resource / prompt 集合&lt;/li&gt;
+&lt;li&gt;初始化 transport / runtime 配置&lt;/li&gt;
+&lt;li&gt;记录 server 元信息&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以这一步表面看很简单，实际上是在搭一个协议运行壳。&lt;/p&gt;
+&lt;h2 id=&#34;42-mcptool-背后做了什么&#34;&gt;4.2 &lt;code&gt;@mcp.tool()&lt;/code&gt; 背后做了什么
+&lt;/h2&gt;&lt;p&gt;这个装饰器背后通常会经历：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;拿到函数对象&lt;/li&gt;
+&lt;li&gt;读取函数名&lt;/li&gt;
+&lt;li&gt;读取类型标注&lt;/li&gt;
+&lt;li&gt;读取 docstring&lt;/li&gt;
+&lt;li&gt;生成 tool 描述和 schema&lt;/li&gt;
+&lt;li&gt;把函数注册到工具表&lt;/li&gt;
+&lt;li&gt;生成运行时 handler&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;这里最有技术含量的地方通常是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Python 类型系统和 schema 的映射&lt;/li&gt;
+&lt;li&gt;docstring 提取&lt;/li&gt;
+&lt;li&gt;参数绑定与校验&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;因为如果这些地方处理得不好，工具虽然“能跑”，但模型并不好用。&lt;/p&gt;
+&lt;h2 id=&#34;43-为什么自动-schema-生成很重要&#34;&gt;4.3 为什么自动 schema 生成很重要
+&lt;/h2&gt;&lt;p&gt;因为 MCP 的工具不是给人手写 CLI 用的，而是要被模型理解。&lt;/p&gt;
+&lt;p&gt;模型能否稳定使用工具，很大程度取决于：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;参数名字是否清楚&lt;/li&gt;
+&lt;li&gt;类型是否准确&lt;/li&gt;
+&lt;li&gt;必填项是否明确&lt;/li&gt;
+&lt;li&gt;描述是否可读&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以 &lt;code&gt;fastmcp&lt;/code&gt; 的自动 schema 生成，不只是提升开发效率，更是在提升模型调用稳定性。&lt;/p&gt;
+&lt;h2 id=&#34;44-runtime-路由链路大致是什么&#34;&gt;4.4 runtime 路由链路大致是什么
+&lt;/h2&gt;&lt;p&gt;当 client 发来一次工具调用时，框架内部大致要经历：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;收到 MCP 请求&lt;/li&gt;
+&lt;li&gt;解析请求类型&lt;/li&gt;
+&lt;li&gt;找到目标 tool&lt;/li&gt;
+&lt;li&gt;校验参数&lt;/li&gt;
+&lt;li&gt;构造上下文对象&lt;/li&gt;
+&lt;li&gt;调用 Python 函数&lt;/li&gt;
+&lt;li&gt;处理返回值&lt;/li&gt;
+&lt;li&gt;封装为 MCP 响应&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;这条链路说明一个关键点：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;框架的本质工作，不是“帮你写函数”，而是“把函数接进协议运行时”。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;h1 id=&#34;五读-fastmcp-源码时最值得抓的几条线&#34;&gt;五、读 FastMCP 源码时最值得抓的几条线
+&lt;/h1&gt;&lt;h2 id=&#34;51-第一条线入口和-server-生命周期&#34;&gt;5.1 第一条线：入口和 server 生命周期
+&lt;/h2&gt;&lt;p&gt;重点问题：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;server 是怎么创建的&lt;/li&gt;
+&lt;li&gt;registry 是怎么初始化的&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;run()&lt;/code&gt; 到底做了什么&lt;/li&gt;
+&lt;li&gt;什么时候开始真正监听或处理请求&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这条线帮你建立全局骨架。&lt;/p&gt;
+&lt;h2 id=&#34;52-第二条线装饰器注册链&#34;&gt;5.2 第二条线：装饰器注册链
+&lt;/h2&gt;&lt;p&gt;重点问题：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;tool / resource / prompt 分别怎么注册&lt;/li&gt;
+&lt;li&gt;注册时保留了哪些元信息&lt;/li&gt;
+&lt;li&gt;这些元信息最后怎样被暴露给 client&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这条线直接决定开发体验。&lt;/p&gt;
+&lt;h2 id=&#34;53-第三条线类型系统到-schema-的映射&#34;&gt;5.3 第三条线：类型系统到 schema 的映射
+&lt;/h2&gt;&lt;p&gt;重点问题：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;int&lt;/code&gt;、&lt;code&gt;str&lt;/code&gt;、&lt;code&gt;list[str]&lt;/code&gt;、&lt;code&gt;dict&lt;/code&gt; 这类类型怎样变成 schema&lt;/li&gt;
+&lt;li&gt;optional / default value 怎样表示&lt;/li&gt;
+&lt;li&gt;返回值是怎样被包装的&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这条线是理解“为什么 Python 写法能自动变成 MCP 能力”的关键。&lt;/p&gt;
+&lt;h2 id=&#34;54-第四条线context-注入机制&#34;&gt;5.4 第四条线：context 注入机制
+&lt;/h2&gt;&lt;p&gt;重点问题：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;ctx&lt;/code&gt; 是什么时候创建的&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;ctx&lt;/code&gt; 里有哪些能力&lt;/li&gt;
+&lt;li&gt;为什么某些工具函数能读 resource、报进度或写日志&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果这条线读明白了，你对 &lt;code&gt;fastmcp&lt;/code&gt; 的理解会明显比“只会写装饰器”更深。&lt;/p&gt;
+&lt;h2 id=&#34;55-第五条线transport-与协议边界&#34;&gt;5.5 第五条线：transport 与协议边界
+&lt;/h2&gt;&lt;p&gt;重点问题：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;stdio&lt;/code&gt; 与 HTTP 入口有什么差异&lt;/li&gt;
+&lt;li&gt;哪部分是 FastMCP 的高级封装&lt;/li&gt;
+&lt;li&gt;哪部分已经接近 MCP 协议原语&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这条线很适合和官方 &lt;code&gt;python-sdk&lt;/code&gt; 对照着看。&lt;/p&gt;
+&lt;h1 id=&#34;六fastmcp-对开发者最大的价值是什么&#34;&gt;六、FastMCP 对开发者最大的价值是什么
+&lt;/h1&gt;&lt;p&gt;我觉得主要有四点。&lt;/p&gt;
+&lt;h2 id=&#34;61-开发体验非常顺&#34;&gt;6.1 开发体验非常顺
+&lt;/h2&gt;&lt;p&gt;对 Python 开发者来说，装饰器 + 类型标注的组合非常自然。&lt;/p&gt;
+&lt;h2 id=&#34;62-把样板代码压得很低&#34;&gt;6.2 把样板代码压得很低
+&lt;/h2&gt;&lt;p&gt;你不需要一开始就手写大量协议注册和 schema 定义代码。&lt;/p&gt;
+&lt;h2 id=&#34;63-便于逐步进阶&#34;&gt;6.3 便于逐步进阶
+&lt;/h2&gt;&lt;p&gt;可以先从最小 server 开始，再逐步接触：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;resource&lt;/li&gt;
+&lt;li&gt;prompt&lt;/li&gt;
+&lt;li&gt;context&lt;/li&gt;
+&lt;li&gt;transport&lt;/li&gt;
+&lt;li&gt;auth&lt;/li&gt;
+&lt;li&gt;proxy&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;64-特别适合做学习入口&#34;&gt;6.4 特别适合做学习入口
+&lt;/h2&gt;&lt;p&gt;很多人如果一上来就只读底层协议实现，很容易“知道很多术语，但不会写 server”。&lt;/p&gt;
+&lt;p&gt;而 &lt;code&gt;fastmcp&lt;/code&gt; 的优势在于：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;你可以先把 server 写出来，再回头理解协议分层。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;h1 id=&#34;七fastmcp-的局限和阅读时要注意的点&#34;&gt;七、FastMCP 的局限和阅读时要注意的点
+&lt;/h1&gt;&lt;h2 id=&#34;71-它是高层框架不等于协议本身&#34;&gt;7.1 它是高层框架，不等于协议本身
+&lt;/h2&gt;&lt;p&gt;读这个项目时要始终记住：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;FastMCP&lt;/code&gt; 是开发框架&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;MCP&lt;/code&gt; 是协议标准&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;不要把框架 API 误认为协议原语。&lt;/p&gt;
+&lt;h2 id=&#34;72-开发体验好意味着抽象会更厚&#34;&gt;7.2 开发体验好，意味着抽象会更厚
+&lt;/h2&gt;&lt;p&gt;抽象越友好，越要主动去问：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;这些便利背后做了什么&lt;/li&gt;
+&lt;li&gt;哪些能力是框架帮我补的&lt;/li&gt;
+&lt;li&gt;如果不用框架，协议层应该怎么表达&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;73-真实生产环境还会有更多问题&#34;&gt;7.3 真实生产环境还会有更多问题
+&lt;/h2&gt;&lt;p&gt;例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;认证与鉴权&lt;/li&gt;
+&lt;li&gt;多租户&lt;/li&gt;
+&lt;li&gt;超时控制&lt;/li&gt;
+&lt;li&gt;观测性&lt;/li&gt;
+&lt;li&gt;灰度发布&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这些不一定能只靠框架默认能力完全解决。&lt;/p&gt;
+&lt;h1 id=&#34;八建议怎样读这个仓库&#34;&gt;八、建议怎样读这个仓库
+&lt;/h1&gt;&lt;p&gt;一个比较稳的顺序是：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;先看 &lt;code&gt;examples&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;再看 &lt;code&gt;FastMCP(...)&lt;/code&gt; 的定义和入口&lt;/li&gt;
+&lt;li&gt;再看 tool / resource / prompt 注册逻辑&lt;/li&gt;
+&lt;li&gt;再看 context 与 schema 生成&lt;/li&gt;
+&lt;li&gt;最后再看 transport、proxy、composition&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;如果你是为了写自己的 Python MCP server，这个顺序通常会比较顺手。&lt;/p&gt;
+&lt;h1 id=&#34;小结&#34;&gt;小结
+&lt;/h1&gt;&lt;p&gt;如果只用一句话总结：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;code&gt;FastMCP&lt;/code&gt; 最值得学习的地方，不只是它让你“更快写出一个 MCP server”，而是它很好地展示了“如何把 Python 开发体验和 MCP 协议能力连接起来”。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;所以它非常适合作为：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Python MCP 入门源码&lt;/li&gt;
+&lt;li&gt;高层框架设计案例&lt;/li&gt;
+&lt;li&gt;“函数如何变成协议能力”的学习样本&lt;/li&gt;
+&lt;/ul&gt;
+</description>
+        </item>
+        
+    </channel>
+</rss>

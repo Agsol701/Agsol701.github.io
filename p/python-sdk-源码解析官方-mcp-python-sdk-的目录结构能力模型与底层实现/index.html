@@ -1,0 +1,1091 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 如果说 PrefectHQ/fastmcp 更适合帮你快速建立开发直觉，那么 modelcontextprotocol/python-sdk 更适合帮你建立“官方视角”。\n这点非常重要。\n因为很多人学 MCP 时会遇到一个典型问题：\n会写框架代码 但分不清哪些是框架抽象，哪些是协议能力 而官方 Python SDK 的价值就在这里：\n它能帮你把“开发体验”和“协议边界”对齐起来。\n所以这篇文章会重点拆三件事：\n官方 Python SDK 的目录结构怎么理解 它暴露了哪些能力模型 它底层是怎样把 MCP 协议落到 Python 里的 一、先给官方 Python SDK 一个定位 如果用一句话概括：\nmodelcontextprotocol/python-sdk 是 MCP 官方维护的 Python SDK，用来在 Python 生态中实现 MCP server、client 以及相关协议能力。\n和高层框架相比，它更值得学习的地方在于：\n更贴近官方能力模型 更容易看到协议原语 示例覆盖面很完整 适合从最小能力一直读到进阶 transport 所以这个仓库的价值，不只是“可以用”，更是“可以作为学习协议的标准参照物”。\n二、从目录结构看这个项目 2.1 先建立一个目录结构心智图 如果不纠结某个版本里的细节差异，可以先把官方 Python SDK 粗略理解成下面这几块：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 python-sdk/ ├── README.md ├── examples/ │ └── snippets/ │ └── servers/ ├── src/ │ └── mcp/ │ ├── server/ │ ├── client/ │ ├── types/ 或 protocol models │ ├── transport/ │ ├── auth/ │ ├── utilities / shared helpers │ └── high-level API related modules ├── tests/ └── pyproject.toml 同样地，这里的重点不是每个目录名绝对一模一样，而是先抓住这个仓库的骨架：\n">
+<title>Python SDK 源码解析：官方 MCP Python SDK 的目录结构、能力模型与底层实现</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/python-sdk-%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90%E5%AE%98%E6%96%B9-mcp-python-sdk-%E7%9A%84%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84%E8%83%BD%E5%8A%9B%E6%A8%A1%E5%9E%8B%E4%B8%8E%E5%BA%95%E5%B1%82%E5%AE%9E%E7%8E%B0/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="Python SDK 源码解析：官方 MCP Python SDK 的目录结构、能力模型与底层实现">
+<meta property='og:description' content="写在前面 如果说 PrefectHQ/fastmcp 更适合帮你快速建立开发直觉，那么 modelcontextprotocol/python-sdk 更适合帮你建立“官方视角”。\n这点非常重要。\n因为很多人学 MCP 时会遇到一个典型问题：\n会写框架代码 但分不清哪些是框架抽象，哪些是协议能力 而官方 Python SDK 的价值就在这里：\n它能帮你把“开发体验”和“协议边界”对齐起来。\n所以这篇文章会重点拆三件事：\n官方 Python SDK 的目录结构怎么理解 它暴露了哪些能力模型 它底层是怎样把 MCP 协议落到 Python 里的 一、先给官方 Python SDK 一个定位 如果用一句话概括：\nmodelcontextprotocol/python-sdk 是 MCP 官方维护的 Python SDK，用来在 Python 生态中实现 MCP server、client 以及相关协议能力。\n和高层框架相比，它更值得学习的地方在于：\n更贴近官方能力模型 更容易看到协议原语 示例覆盖面很完整 适合从最小能力一直读到进阶 transport 所以这个仓库的价值，不只是“可以用”，更是“可以作为学习协议的标准参照物”。\n二、从目录结构看这个项目 2.1 先建立一个目录结构心智图 如果不纠结某个版本里的细节差异，可以先把官方 Python SDK 粗略理解成下面这几块：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 python-sdk/ ├── README.md ├── examples/ │ └── snippets/ │ └── servers/ ├── src/ │ └── mcp/ │ ├── server/ │ ├── client/ │ ├── types/ 或 protocol models │ ├── transport/ │ ├── auth/ │ ├── utilities / shared helpers │ └── high-level API related modules ├── tests/ └── pyproject.toml 同样地，这里的重点不是每个目录名绝对一模一样，而是先抓住这个仓库的骨架：\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/python-sdk-%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90%E5%AE%98%E6%96%B9-mcp-python-sdk-%E7%9A%84%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84%E8%83%BD%E5%8A%9B%E6%A8%A1%E5%9E%8B%E4%B8%8E%E5%BA%95%E5%B1%82%E5%AE%9E%E7%8E%B0/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='mcp' /><meta property='article:tag' content='python' /><meta property='article:tag' content='sdk' /><meta property='article:tag' content='sourcecode' /><meta property='article:published_time' content='2026-05-03T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-03T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="Python SDK 源码解析：官方 MCP Python SDK 的目录结构、能力模型与底层实现">
+<meta name="twitter:description" content="写在前面 如果说 PrefectHQ/fastmcp 更适合帮你快速建立开发直觉，那么 modelcontextprotocol/python-sdk 更适合帮你建立“官方视角”。\n这点非常重要。\n因为很多人学 MCP 时会遇到一个典型问题：\n会写框架代码 但分不清哪些是框架抽象，哪些是协议能力 而官方 Python SDK 的价值就在这里：\n它能帮你把“开发体验”和“协议边界”对齐起来。\n所以这篇文章会重点拆三件事：\n官方 Python SDK 的目录结构怎么理解 它暴露了哪些能力模型 它底层是怎样把 MCP 协议落到 Python 里的 一、先给官方 Python SDK 一个定位 如果用一句话概括：\nmodelcontextprotocol/python-sdk 是 MCP 官方维护的 Python SDK，用来在 Python 生态中实现 MCP server、client 以及相关协议能力。\n和高层框架相比，它更值得学习的地方在于：\n更贴近官方能力模型 更容易看到协议原语 示例覆盖面很完整 适合从最小能力一直读到进阶 transport 所以这个仓库的价值，不只是“可以用”，更是“可以作为学习协议的标准参照物”。\n二、从目录结构看这个项目 2.1 先建立一个目录结构心智图 如果不纠结某个版本里的细节差异，可以先把官方 Python SDK 粗略理解成下面这几块：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 python-sdk/ ├── README.md ├── examples/ │ └── snippets/ │ └── servers/ ├── src/ │ └── mcp/ │ ├── server/ │ ├── client/ │ ├── types/ 或 protocol models │ ├── transport/ │ ├── auth/ │ ├── utilities / shared helpers │ └── high-level API related modules ├── tests/ └── pyproject.toml 同样地，这里的重点不是每个目录名绝对一模一样，而是先抓住这个仓库的骨架：\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ol>
+    <li><a href="#21-先建立一个目录结构心智图">2.1 先建立一个目录结构心智图</a></li>
+    <li><a href="#22-先看根目录各自的职责">2.2 先看根目录各自的职责</a>
+      <ol>
+        <li><a href="#readmemd"><code>README.md</code></a></li>
+        <li><a href="#pyprojecttoml"><code>pyproject.toml</code></a></li>
+        <li><a href="#examples"><code>examples/</code></a></li>
+        <li><a href="#tests"><code>tests/</code></a></li>
+        <li><a href="#srcmcp"><code>src/mcp/</code></a></li>
+      </ol>
+    </li>
+    <li><a href="#23-再看-srcmcp-内部主要模块做什么">2.3 再看 <code>src/mcp/</code> 内部主要模块做什么</a>
+      <ol>
+        <li><a href="#server"><code>server/</code></a></li>
+        <li><a href="#client"><code>client/</code></a></li>
+        <li><a href="#types-或协议模型目录"><code>types/</code> 或协议模型目录</a></li>
+        <li><a href="#transport"><code>transport/</code></a></li>
+        <li><a href="#auth"><code>auth/</code></a></li>
+        <li><a href="#utilities--shared-helpers"><code>utilities / shared helpers</code></a></li>
+        <li><a href="#高层-api-相关模块">高层 API 相关模块</a></li>
+      </ol>
+    </li>
+    <li><a href="#24-第一层readme-与-examples">2.4 第一层：README 与 examples</a></li>
+    <li><a href="#25-第二层高层-api">2.5 第二层：高层 API</a></li>
+    <li><a href="#26-第三层低层-server--client-抽象">2.6 第三层：低层 server / client 抽象</a></li>
+    <li><a href="#27-第四层transport">2.7 第四层：transport</a></li>
+    <li><a href="#28-第五层类型与-schema">2.8 第五层：类型与 schema</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#31-tools">3.1 tools</a></li>
+    <li><a href="#32-resources">3.2 resources</a></li>
+    <li><a href="#33-prompts">3.3 prompts</a></li>
+    <li><a href="#34-notifications">3.4 notifications</a></li>
+    <li><a href="#35-streamable-http">3.5 streamable HTTP</a></li>
+    <li><a href="#36-lowlevel">3.6 lowlevel</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#41-从-basic_tool-看最小工具链路">4.1 从 <code>basic_tool</code> 看最小工具链路</a></li>
+    <li><a href="#42-从-basic_resource-看上下文供给">4.2 从 <code>basic_resource</code> 看上下文供给</a></li>
+    <li><a href="#43-从-structured_output-看结构化结果">4.3 从 <code>structured_output</code> 看结构化结果</a></li>
+    <li><a href="#44-从-notifications-看协议不只是-rpc">4.4 从 <code>notifications</code> 看协议不只是 RPC</a></li>
+    <li><a href="#45-从-streamable_http-看部署形态">4.5 从 <code>streamable_http</code> 看部署形态</a></li>
+    <li><a href="#46-从-lowlevel-看协议原语">4.6 从 <code>lowlevel</code> 看协议原语</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#51-第一条线能力注册">5.1 第一条线：能力注册</a></li>
+    <li><a href="#52-第二条线类型schema-与结构化输出">5.2 第二条线：类型、schema 与结构化输出</a></li>
+    <li><a href="#53-第三条线请求路由">5.3 第三条线：请求路由</a></li>
+    <li><a href="#54-第四条线notifications-与事件机制">5.4 第四条线：notifications 与事件机制</a></li>
+    <li><a href="#55-第五条线transport-层">5.5 第五条线：transport 层</a></li>
+    <li><a href="#56-第六条线低层-api-与高层-helper-的边界">5.6 第六条线：低层 API 与高层 helper 的边界</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#61-学官方推荐写法">6.1 学“官方推荐写法”</a></li>
+    <li><a href="#62-学协议能力全貌">6.2 学“协议能力全貌”</a></li>
+    <li><a href="#63-学从最小示例到进阶特性的路径">6.3 学“从最小示例到进阶特性”的路径</a></li>
+    <li><a href="#64-学高层封装和低层协议的边界">6.4 学“高层封装和低层协议的边界”</a></li>
+    <li><a href="#65-学如何把-mcp-真正落到-python-里">6.5 学“如何把 MCP 真正落到 Python 里”</a></li>
+  </ol>
+
+  <ol>
+    <li><a href="#71-不要只看-readme">7.1 不要只看 README</a></li>
+    <li><a href="#72-不要只看最小示例">7.2 不要只看最小示例</a></li>
+    <li><a href="#73-不要把-sdk-helper-当成协议本身">7.3 不要把 SDK helper 当成协议本身</a></li>
+  </ol>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/ai/" >
+                Ai
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/python-sdk-%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90%E5%AE%98%E6%96%B9-mcp-python-sdk-%E7%9A%84%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84%E8%83%BD%E5%8A%9B%E6%A8%A1%E5%9E%8B%E4%B8%8E%E5%BA%95%E5%B1%82%E5%AE%9E%E7%8E%B0/">Python SDK 源码解析：官方 MCP Python SDK 的目录结构、能力模型与底层实现</a>
+        </h2>
+    
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">May 03, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h1 id="写在前面">写在前面
+</h1><p>如果说 <a class="link" href="https://github.com/PrefectHQ/fastmcp"  target="_blank" rel="noopener"
+    ><code>PrefectHQ/fastmcp</code></a> 更适合帮你快速建立开发直觉，那么 <a class="link" href="https://github.com/modelcontextprotocol/python-sdk"  target="_blank" rel="noopener"
+    ><code>modelcontextprotocol/python-sdk</code></a> 更适合帮你建立“官方视角”。</p>
+<p>这点非常重要。</p>
+<p>因为很多人学 MCP 时会遇到一个典型问题：</p>
+<ul>
+<li>会写框架代码</li>
+<li>但分不清哪些是框架抽象，哪些是协议能力</li>
+</ul>
+<p>而官方 Python SDK 的价值就在这里：</p>
+<blockquote>
+<p>它能帮你把“开发体验”和“协议边界”对齐起来。</p></blockquote>
+<p>所以这篇文章会重点拆三件事：</p>
+<ol>
+<li>官方 Python SDK 的目录结构怎么理解</li>
+<li>它暴露了哪些能力模型</li>
+<li>它底层是怎样把 MCP 协议落到 Python 里的</li>
+</ol>
+<h1 id="一先给官方-python-sdk-一个定位">一、先给官方 Python SDK 一个定位
+</h1><p>如果用一句话概括：</p>
+<blockquote>
+<p><code>modelcontextprotocol/python-sdk</code> 是 MCP 官方维护的 Python SDK，用来在 Python 生态中实现 MCP server、client 以及相关协议能力。</p></blockquote>
+<p>和高层框架相比，它更值得学习的地方在于：</p>
+<ul>
+<li>更贴近官方能力模型</li>
+<li>更容易看到协议原语</li>
+<li>示例覆盖面很完整</li>
+<li>适合从最小能力一直读到进阶 transport</li>
+</ul>
+<p>所以这个仓库的价值，不只是“可以用”，更是“可以作为学习协议的标准参照物”。</p>
+<h1 id="二从目录结构看这个项目">二、从目录结构看这个项目
+</h1><h2 id="21-先建立一个目录结构心智图">2.1 先建立一个目录结构心智图
+</h2><p>如果不纠结某个版本里的细节差异，可以先把官方 Python SDK 粗略理解成下面这几块：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">python-sdk/
+</span></span><span class="line"><span class="cl">├── README.md
+</span></span><span class="line"><span class="cl">├── examples/
+</span></span><span class="line"><span class="cl">│   └── snippets/
+</span></span><span class="line"><span class="cl">│       └── servers/
+</span></span><span class="line"><span class="cl">├── src/
+</span></span><span class="line"><span class="cl">│   └── mcp/
+</span></span><span class="line"><span class="cl">│       ├── server/
+</span></span><span class="line"><span class="cl">│       ├── client/
+</span></span><span class="line"><span class="cl">│       ├── types/ 或 protocol models
+</span></span><span class="line"><span class="cl">│       ├── transport/
+</span></span><span class="line"><span class="cl">│       ├── auth/
+</span></span><span class="line"><span class="cl">│       ├── utilities / shared helpers
+</span></span><span class="line"><span class="cl">│       └── high-level API related modules
+</span></span><span class="line"><span class="cl">├── tests/
+</span></span><span class="line"><span class="cl">└── pyproject.toml
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>同样地，这里的重点不是每个目录名绝对一模一样，而是先抓住这个仓库的骨架：</p>
+<ul>
+<li><code>examples</code>：展示官方推荐用法</li>
+<li><code>src/mcp</code>：协议和 SDK 的核心实现</li>
+<li><code>tests</code>：验证能力边界</li>
+<li><code>pyproject.toml</code>：展示工程配置和依赖边界</li>
+</ul>
+<h2 id="22-先看根目录各自的职责">2.2 先看根目录各自的职责
+</h2><h3 id="readmemd"><code>README.md</code>
+</h3><p>这是官方 SDK 的总入口。</p>
+<p>它最重要的作用通常是：</p>
+<ul>
+<li>说明项目定位</li>
+<li>给最小示例</li>
+<li>给学习路径</li>
+<li>指向 examples 和文档</li>
+</ul>
+<h3 id="pyprojecttoml"><code>pyproject.toml</code>
+</h3><p>这类文件虽然不显眼，但很适合拿来快速判断：</p>
+<ul>
+<li>SDK 的包结构</li>
+<li>依赖关系</li>
+<li>Python 版本要求</li>
+<li>命令行入口或构建方式</li>
+</ul>
+<p>对于读源码的人来说，这个文件能帮你先建立“工程边界感”。</p>
+<h3 id="examples"><code>examples/</code>
+</h3><p>这是整个仓库最适合先看的地方之一。</p>
+<p>它的价值在于：</p>
+<ul>
+<li>把抽象能力转成最小可运行代码</li>
+<li>展示官方希望用户怎样使用 SDK</li>
+<li>给出从基础到进阶的样例路径</li>
+</ul>
+<h3 id="tests"><code>tests/</code>
+</h3><p>测试目录通常最能体现官方 SDK 认为什么行为是关键契约。</p>
+<p>例如：</p>
+<ul>
+<li>工具注册的正确性</li>
+<li>transport 行为的一致性</li>
+<li>notifications 的协议语义</li>
+<li>结构化输出的稳定性</li>
+</ul>
+<h3 id="srcmcp"><code>src/mcp/</code>
+</h3><p>这是最核心的源码目录。</p>
+<p>它承载的不是单纯“一个 server helper”，而是官方 Python 版 MCP 能力模型本身。</p>
+<h2 id="23-再看-srcmcp-内部主要模块做什么">2.3 再看 <code>src/mcp/</code> 内部主要模块做什么
+</h2><h3 id="server"><code>server/</code>
+</h3><p>这里通常是 server 侧实现核心。</p>
+<p>主要职责通常包括：</p>
+<ul>
+<li>server 生命周期</li>
+<li>能力注册</li>
+<li>请求分发</li>
+<li>和 transport 的对接</li>
+</ul>
+<p>如果你想知道“一个 MCP server 在官方 SDK 里是怎样被建模的”，这里是第一优先级。</p>
+<h3 id="client"><code>client/</code>
+</h3><p>这里是 client 侧抽象。</p>
+<p>主要职责通常包括：</p>
+<ul>
+<li>建立连接</li>
+<li>发起请求</li>
+<li>接收响应</li>
+<li>处理通知</li>
+</ul>
+<p>它能帮助你理解 MCP 不只是 server 框架，而是完整 client/server 交互模型。</p>
+<h3 id="types-或协议模型目录"><code>types/</code> 或协议模型目录
+</h3><p>这一层非常关键。</p>
+<p>因为它通常负责：</p>
+<ul>
+<li>请求对象</li>
+<li>响应对象</li>
+<li>通知对象</li>
+<li>schema 或协议数据模型</li>
+</ul>
+<p>如果你想真正理解“协议长什么样”，这层比高层示例更重要。</p>
+<h3 id="transport"><code>transport/</code>
+</h3><p>这里负责协议消息的承载方式。</p>
+<p>通常会覆盖：</p>
+<ul>
+<li><code>stdio</code></li>
+<li>HTTP 相关 transport</li>
+<li>streamable HTTP</li>
+</ul>
+<p>这层说明官方 SDK 并不只是一个“本地工具包装库”，而是在认真处理协议通信。</p>
+<h3 id="auth"><code>auth/</code>
+</h3><p>这部分一般负责认证或授权相关能力。</p>
+<p>尤其在 OAuth 示例存在时，这部分就更值得关注，因为它能帮助你理解官方 SDK 如何进入更真实的服务场景。</p>
+<h3 id="utilities--shared-helpers"><code>utilities / shared helpers</code>
+</h3><p>这部分通常负责：</p>
+<ul>
+<li>公共工具函数</li>
+<li>共享转换逻辑</li>
+<li>内部辅助封装</li>
+</ul>
+<p>虽然它不是第一优先级，但很多高层能力最后都会落回这里。</p>
+<h3 id="高层-api-相关模块">高层 API 相关模块
+</h3><p>这一层负责把低层协议能力包装成更易用的 Python 接口。</p>
+<p>如果你在示例里看到的代码非常简洁，那么大量“简洁体验”通常就来自这里。</p>
+<h2 id="24-第一层readme-与-examples">2.4 第一层：README 与 examples
+</h2><p>这是读官方 SDK 最好的起点。</p>
+<p>因为你最先需要知道的不是内部实现细节，而是：</p>
+<ul>
+<li>官方推荐怎么写最小 server</li>
+<li>官方示例怎么组织</li>
+<li>哪些功能是 SDK 直接支持的</li>
+</ul>
+<p>这个仓库里非常适合学习的目录是：</p>
+<ul>
+<li><a class="link" href="https://github.com/modelcontextprotocol/python-sdk/tree/main/examples/snippets/servers"  target="_blank" rel="noopener"
+    ><code>examples/snippets/servers</code></a></li>
+</ul>
+<p>这里的示例基本覆盖了从基础到进阶的关键能力：</p>
+<ul>
+<li><a class="link" href="https://github.com/modelcontextprotocol/python-sdk/tree/main/examples/snippets/servers/basic_tool"  target="_blank" rel="noopener"
+    ><code>basic_tool</code></a></li>
+<li><a class="link" href="https://github.com/modelcontextprotocol/python-sdk/tree/main/examples/snippets/servers/basic_resource"  target="_blank" rel="noopener"
+    ><code>basic_resource</code></a></li>
+<li><a class="link" href="https://github.com/modelcontextprotocol/python-sdk/tree/main/examples/snippets/servers/structured_output"  target="_blank" rel="noopener"
+    ><code>structured_output</code></a></li>
+<li><a class="link" href="https://github.com/modelcontextprotocol/python-sdk/tree/main/examples/snippets/servers/notifications"  target="_blank" rel="noopener"
+    ><code>notifications</code></a></li>
+<li><a class="link" href="https://github.com/modelcontextprotocol/python-sdk/tree/main/examples/snippets/servers/oauth_server"  target="_blank" rel="noopener"
+    ><code>oauth_server</code></a></li>
+<li><a class="link" href="https://github.com/modelcontextprotocol/python-sdk/tree/main/examples/snippets/servers/streamable_http"  target="_blank" rel="noopener"
+    ><code>streamable_http</code></a></li>
+<li><a class="link" href="https://github.com/modelcontextprotocol/python-sdk/tree/main/examples/snippets/servers/lowlevel"  target="_blank" rel="noopener"
+    ><code>lowlevel</code></a></li>
+</ul>
+<h2 id="25-第二层高层-api">2.5 第二层：高层 API
+</h2><p>如果你从示例往回追，通常会先看到高层 API。</p>
+<p>这一层主要回答：</p>
+<ul>
+<li>怎样快速创建 server</li>
+<li>怎样注册 tool / resource / prompt</li>
+<li>怎样用更 Pythonic 的方式编写 MCP 能力</li>
+</ul>
+<p>这一层和 <code>FastMCP</code> 比较接近，但更值得关注的是：</p>
+<blockquote>
+<p>它和官方能力模型之间的映射会更直接。</p></blockquote>
+<h2 id="26-第三层低层-server--client-抽象">2.6 第三层：低层 server / client 抽象
+</h2><p>这部分是理解官方 SDK 的关键。</p>
+<p>因为一旦往下走，你会逐渐看到：</p>
+<ul>
+<li>请求和响应是怎样建模的</li>
+<li>server 和 client 之间怎样通信</li>
+<li>哪些能力属于高层封装</li>
+<li>哪些能力已经接近协议原语</li>
+</ul>
+<p>如果说 examples 帮你看“怎么用”，那么这一层是在回答“协议是怎么落地的”。</p>
+<h2 id="27-第四层transport">2.7 第四层：transport
+</h2><p>官方 SDK 很值得看的一个地方，就是它不会只停留在“最小 demo”层。</p>
+<p>它还会通过示例和实现展示：</p>
+<ul>
+<li><code>stdio</code></li>
+<li><code>streamable HTTP</code></li>
+<li>notification 机制</li>
+<li>OAuth 相关能力</li>
+</ul>
+<p>也就是说，这个仓库既能帮你写 toy project，也能帮你理解真实工程里会遇到的通信问题。</p>
+<h2 id="28-第五层类型与-schema">2.8 第五层：类型与 schema
+</h2><p>MCP 在 Python 里落地时，绕不开的一层就是：</p>
+<ul>
+<li>Python 类型</li>
+<li>schema 描述</li>
+<li>结构化输出</li>
+</ul>
+<p>这也是为什么 <code>structured_output</code> 这个示例特别值得看。</p>
+<p>因为它直接对应一个现实问题：</p>
+<blockquote>
+<p>工具结果不仅要“能返回”，还要“能被宿主和模型稳定理解”。</p></blockquote>
+<h1 id="三这个-sdk-的能力模型可以怎么理解">三、这个 SDK 的能力模型可以怎么理解
+</h1><h2 id="31-tools">3.1 tools
+</h2><p>这是最直观的能力。</p>
+<p>官方 SDK 会帮助你把 Python 里的可调用能力暴露成 MCP tool。</p>
+<p>这一层重点不只是“调用函数”，而是：</p>
+<ul>
+<li>工具元信息</li>
+<li>参数约束</li>
+<li>结构化返回</li>
+<li>与 host 的对接方式</li>
+</ul>
+<h2 id="32-resources">3.2 resources
+</h2><p>这部分非常适合拿来理解为什么 MCP 叫 <code>Model Context Protocol</code>。</p>
+<p>因为 resource 的价值在于：</p>
+<ul>
+<li>不是执行动作</li>
+<li>而是供模型读取上下文</li>
+</ul>
+<p>这也是为什么 <code>basic_resource</code> 这类示例值得单独看。</p>
+<h2 id="33-prompts">3.3 prompts
+</h2><p>prompts 往往不是初学者最先关注的能力，但它其实是 MCP 体系完整性的体现。</p>
+<p>它说明 server 不只是一个执行层，还可以是任务模板的提供层。</p>
+<h2 id="34-notifications">3.4 notifications
+</h2><p>这是官方 SDK 很值得学的部分之一。</p>
+<p>传统的“请求-响应”视角，很容易让人以为 MCP 只是 RPC。</p>
+<p>但 notifications 说明它不只是同步调用协议，还会涉及：</p>
+<ul>
+<li>状态变化通知</li>
+<li>进度反馈</li>
+<li>能力变化广播</li>
+</ul>
+<p>这对复杂工具调用和长任务执行都很重要。</p>
+<h2 id="35-streamable-http">3.5 streamable HTTP
+</h2><p>这部分对应的是更真实的远程服务场景。</p>
+<p>如果你只看 <code>stdio</code>，会很容易把 MCP 理解成“本地 CLI 工具协议”。</p>
+<p>但 <code>streamable_http</code> 会提醒你：</p>
+<blockquote>
+<p>MCP 也可以被部署成更标准的远程服务形态。</p></blockquote>
+<h2 id="36-lowlevel">3.6 lowlevel
+</h2><p>这一部分尤其适合进阶学习。</p>
+<p>因为它能帮助你区分：</p>
+<ul>
+<li>哪些是 SDK 提供的便利层</li>
+<li>哪些是协议本身的低层表达</li>
+</ul>
+<p>如果这部分读懂了，你对 MCP 的理解就会更扎实。</p>
+<h1 id="四从示例反推底层实现">四、从示例反推底层实现
+</h1><p>官方 SDK 最适合的读法，不是先看底层实现，而是先抓几个示例，再反推底层。</p>
+<h2 id="41-从-basic_tool-看最小工具链路">4.1 从 <code>basic_tool</code> 看最小工具链路
+</h2><p>这一类示例最适合回答：</p>
+<ul>
+<li>一个最小 server 怎么启动</li>
+<li>一个最小 tool 怎么注册</li>
+<li>一次调用怎样从输入走到输出</li>
+</ul>
+<p>如果把这条线读清楚，你就能建立一个最小心智模型：</p>
+<ol>
+<li>server 暴露工具</li>
+<li>client 发现工具</li>
+<li>host 把工具描述交给模型</li>
+<li>模型产生调用意图</li>
+<li>host 调用 server</li>
+<li>server 返回结果</li>
+</ol>
+<h2 id="42-从-basic_resource-看上下文供给">4.2 从 <code>basic_resource</code> 看上下文供给
+</h2><p>这一类示例会帮助你理解：</p>
+<ul>
+<li>resource 和 tool 的职责区别</li>
+<li>resource 为什么适合做上下文注入</li>
+<li>为什么 MCP 不只是“执行动作”</li>
+</ul>
+<p>这部分对于写代码助手、文档助手特别重要。</p>
+<h2 id="43-从-structured_output-看结构化结果">4.3 从 <code>structured_output</code> 看结构化结果
+</h2><p>很多初学者只关注输入参数 schema，却忽略了输出结构也同样重要。</p>
+<p><code>structured_output</code> 会直接告诉你：</p>
+<ul>
+<li>结果怎么组织更稳</li>
+<li>为什么结构化输出比一大段自由文本更适合工具调用链</li>
+<li>模型后续推理为什么会受返回结构影响</li>
+</ul>
+<h2 id="44-从-notifications-看协议不只是-rpc">4.4 从 <code>notifications</code> 看协议不只是 RPC
+</h2><p>这是官方 SDK 很适合拿来拉开理解层次的地方。</p>
+<p>如果你只看到“tool call”，很容易把 MCP 误认为是另一种函数调用协议。</p>
+<p>而 notifications 这一层会告诉你，它还在处理：</p>
+<ul>
+<li>事件</li>
+<li>状态</li>
+<li>进度</li>
+<li>变更传播</li>
+</ul>
+<h2 id="45-从-streamable_http-看部署形态">4.5 从 <code>streamable_http</code> 看部署形态
+</h2><p>这一类示例能帮助你从本地开发迈向远程服务思维。</p>
+<p>重点要看：</p>
+<ul>
+<li>HTTP transport 是怎样接入的</li>
+<li>数据流是怎样传递的</li>
+<li>远程部署和本地 <code>stdio</code> 有哪些心智差异</li>
+</ul>
+<h2 id="46-从-lowlevel-看协议原语">4.6 从 <code>lowlevel</code> 看协议原语
+</h2><p>这一部分最适合问自己：</p>
+<ul>
+<li>如果没有这些高层 helper，我该怎么手工表达 MCP 能力</li>
+<li>SDK 到底替我封装了多少</li>
+<li>协议层到底长什么样</li>
+</ul>
+<h1 id="五读官方-sdk-源码时最值得抓的几条线">五、读官方 SDK 源码时最值得抓的几条线
+</h1><h2 id="51-第一条线能力注册">5.1 第一条线：能力注册
+</h2><p>重点看：</p>
+<ul>
+<li>tool / resource / prompt 分别怎么注册</li>
+<li>注册时会记录哪些元数据</li>
+<li>这些元数据最后怎样暴露给 client</li>
+</ul>
+<h2 id="52-第二条线类型schema-与结构化输出">5.2 第二条线：类型、schema 与结构化输出
+</h2><p>重点看：</p>
+<ul>
+<li>类型标注怎样映射成 schema</li>
+<li>返回结构怎样映射成可传输对象</li>
+<li>为什么某些输出更适合让模型继续推理</li>
+</ul>
+<h2 id="53-第三条线请求路由">5.3 第三条线：请求路由
+</h2><p>重点看：</p>
+<ul>
+<li>请求到达 server 后怎样分流</li>
+<li>怎样从协议消息找到具体 handler</li>
+<li>参数在什么时候被校验</li>
+</ul>
+<p>这一条线是理解 runtime 的关键。</p>
+<h2 id="54-第四条线notifications-与事件机制">5.4 第四条线：notifications 与事件机制
+</h2><p>重点看：</p>
+<ul>
+<li>哪些能力属于请求-响应</li>
+<li>哪些能力属于通知</li>
+<li>进度或状态变化如何被传递</li>
+</ul>
+<p>这能帮助你避免把 MCP 过度简化成 RPC。</p>
+<h2 id="55-第五条线transport-层">5.5 第五条线：transport 层
+</h2><p>重点看：</p>
+<ul>
+<li><code>stdio</code> 与 <code>streamable HTTP</code> 的差异</li>
+<li>transport 和业务 handler 是怎么解耦的</li>
+<li>哪些逻辑属于协议层，哪些属于通信层</li>
+</ul>
+<h2 id="56-第六条线低层-api-与高层-helper-的边界">5.6 第六条线：低层 API 与高层 helper 的边界
+</h2><p>这是官方 SDK 最适合深挖的一条线。</p>
+<p>因为它最能帮助你建立这种判断力：</p>
+<ul>
+<li>我现在用的是 SDK 便利层</li>
+<li>我现在看到的是协议原语</li>
+</ul>
+<h1 id="六官方-python-sdk-最适合拿来学什么">六、官方 Python SDK 最适合拿来学什么
+</h1><p>我觉得主要有五点。</p>
+<h2 id="61-学官方推荐写法">6.1 学“官方推荐写法”
+</h2><p>这个价值非常直接。</p>
+<h2 id="62-学协议能力全貌">6.2 学“协议能力全貌”
+</h2><p>不仅是 tools，还包括：</p>
+<ul>
+<li>resources</li>
+<li>prompts</li>
+<li>notifications</li>
+<li>OAuth</li>
+<li>streamable HTTP</li>
+</ul>
+<h2 id="63-学从最小示例到进阶特性的路径">6.3 学“从最小示例到进阶特性”的路径
+</h2><p>它的 examples 体系很适合搭建系统学习路径。</p>
+<h2 id="64-学高层封装和低层协议的边界">6.4 学“高层封装和低层协议的边界”
+</h2><p>这点尤其适合写博客、做技术分享或者准备面试。</p>
+<h2 id="65-学如何把-mcp-真正落到-python-里">6.5 学“如何把 MCP 真正落到 Python 里”
+</h2><p>这和只看概念介绍完全不是一回事。</p>
+<h1 id="七阅读这个仓库时要注意什么">七、阅读这个仓库时要注意什么
+</h1><h2 id="71-不要只看-readme">7.1 不要只看 README
+</h2><p>README 适合入门，但不够形成真正的源码理解。</p>
+<h2 id="72-不要只看最小示例">7.2 不要只看最小示例
+</h2><p>最小示例会让你以为 MCP 很简单，但它不会自然暴露：</p>
+<ul>
+<li>notifications</li>
+<li>transport 差异</li>
+<li>低层 API</li>
+</ul>
+<h2 id="73-不要把-sdk-helper-当成协议本身">7.3 不要把 SDK helper 当成协议本身
+</h2><p>这点和读 <code>FastMCP</code> 时一样重要。</p>
+<p>一定要不断追问：</p>
+<ul>
+<li>这是 SDK 的便利层吗</li>
+<li>这是协议本身的要求吗</li>
+</ul>
+<h1 id="八建议怎样读这个仓库">八、建议怎样读这个仓库
+</h1><p>一个比较稳的顺序是：</p>
+<ol>
+<li>先看 README 的最小 server 示例</li>
+<li>再看 <a class="link" href="https://github.com/modelcontextprotocol/python-sdk/tree/main/examples/snippets/servers"  target="_blank" rel="noopener"
+    ><code>examples/snippets/servers</code></a></li>
+<li>先读 <code>basic_tool</code> 和 <code>basic_resource</code></li>
+<li>再读 <code>structured_output</code> 和 <code>notifications</code></li>
+<li>然后看 <code>streamable_http</code></li>
+<li>最后再看 <code>lowlevel</code></li>
+</ol>
+<p>这个顺序的好处是：</p>
+<ul>
+<li>先建立最小直觉</li>
+<li>再补全能力全貌</li>
+<li>最后再理解协议边界</li>
+</ul>
+<h1 id="小结">小结
+</h1><p>如果只用一句话总结：</p>
+<blockquote>
+<p>官方 <code>python-sdk</code> 最值得学习的地方，是它能帮助你把“会写 Python MCP”进一步升级成“理解官方 MCP 能力模型和协议边界”。</p></blockquote>
+<p>所以它特别适合作为：</p>
+<ul>
+<li>官方参考实现</li>
+<li>示例驱动学习材料</li>
+<li>Python 版 MCP 协议落地样本</li>
+</ul>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/ai/">AI</a>
+        
+            <a href="/tags/agent/">Agent</a>
+        
+            <a href="/tags/mcp/">Mcp</a>
+        
+            <a href="/tags/python/">Python</a>
+        
+            <a href="/tags/sdk/">Sdk</a>
+        
+            <a href="/tags/sourcecode/">Sourcecode</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/fastmcp-%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84%E5%8A%9F%E8%83%BD%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%BA%95%E5%B1%82%E5%AE%9E%E7%8E%B0/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">FastMCP 源码解析：目录结构、功能设计与底层实现</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/appbuilder-%E7%BB%84%E4%BB%B6mcp-%E4%B8%8E-skills-%E7%9A%84%E5%AF%B9%E6%AF%94%E5%AD%A6%E4%B9%A0/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AppBuilder 组件、MCP 与 Skills 的对比学习</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-skills%E6%A6%82%E5%BF%B5%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F%E5%BC%80%E5%8F%91%E6%96%B9%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/ai-agent-loop-%E4%B8%8E-react-%E6%A8%A1%E5%BC%8F%E8%AF%A6%E8%A7%A3%E6%80%9D%E8%80%83%E8%A1%8C%E5%8A%A8%E8%A7%82%E5%AF%9F%E5%81%9C%E6%AD%A2%E6%9D%A1%E4%BB%B6%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AI Agent Loop 与 ReAct 模式详解：思考、行动、观察、停止条件与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/ai-agent-memory-%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%B8%8E-langchain-1.0-%E6%BA%90%E7%A0%81%E5%89%96%E6%9E%90/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AI Agent Memory 深度解析：原理、实现机制与 LangChain 1.0&#43; 源码剖析</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>
