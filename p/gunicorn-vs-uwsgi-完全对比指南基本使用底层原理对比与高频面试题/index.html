@@ -1,0 +1,2489 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 在 Python Web 服务部署的话题里，Gunicorn 和 uWSGI 是绕不开的两个关键词。它们都是 WSGI 服务器，承担着相同的角色：把 HTTP 请求翻译成 Python 应用能理解的 WSGI 调用。但它们在实现语言、设计哲学、配置复杂度、社区现状上差异巨大。\n写过 Flask、Django 应用的开发者大多接触过其中一个，但很多人停留在&quot;gunicorn -w 4 app:app 跑起来&quot;或&quot;复制一份 uwsgi.ini 改改&quot;的层面，碰到下面这些问题就开始打问号：\nGunicorn 和 uWSGI 到底什么关系？为什么有人用前者、有人用后者？ 为什么 worker 数量推荐 2 × CPU + 1？两者的 worker 模型有什么区别？ sync / gthread / gevent 这些 worker class 到底差在哪？ uWSGI 的 emperor 模式、cheaper、master/worker 是什么？ 为什么所有官方文档都强调&quot;必须放在 nginx 后面&quot;？ --preload 加不加，到底有什么差别？lazy-apps 又是什么？ 服务死锁了，应该 kill 主进程发什么信号？ 2026 年了，新项目还该选 uWSGI 吗？ 这篇文章按&quot;基础概念、Gunicorn 篇、uWSGI 篇、深度对比、选型决策、生产部署、高频面试题&quot;的结构整理两个服务器的核心知识，所有事实分别对齐 Gunicorn 官方文档 与 uWSGI 官方文档，适合作为日常查阅和面试复习材料。\n">
+<title>Gunicorn vs uWSGI 完全对比指南：基本使用、底层原理、对比与高频面试题</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/gunicorn-vs-uwsgi-%E5%AE%8C%E5%85%A8%E5%AF%B9%E6%AF%94%E6%8C%87%E5%8D%97%E5%9F%BA%E6%9C%AC%E4%BD%BF%E7%94%A8%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%AF%B9%E6%AF%94%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="Gunicorn vs uWSGI 完全对比指南：基本使用、底层原理、对比与高频面试题">
+<meta property='og:description' content="写在前面 在 Python Web 服务部署的话题里，Gunicorn 和 uWSGI 是绕不开的两个关键词。它们都是 WSGI 服务器，承担着相同的角色：把 HTTP 请求翻译成 Python 应用能理解的 WSGI 调用。但它们在实现语言、设计哲学、配置复杂度、社区现状上差异巨大。\n写过 Flask、Django 应用的开发者大多接触过其中一个，但很多人停留在&quot;gunicorn -w 4 app:app 跑起来&quot;或&quot;复制一份 uwsgi.ini 改改&quot;的层面，碰到下面这些问题就开始打问号：\nGunicorn 和 uWSGI 到底什么关系？为什么有人用前者、有人用后者？ 为什么 worker 数量推荐 2 × CPU + 1？两者的 worker 模型有什么区别？ sync / gthread / gevent 这些 worker class 到底差在哪？ uWSGI 的 emperor 模式、cheaper、master/worker 是什么？ 为什么所有官方文档都强调&quot;必须放在 nginx 后面&quot;？ --preload 加不加，到底有什么差别？lazy-apps 又是什么？ 服务死锁了，应该 kill 主进程发什么信号？ 2026 年了，新项目还该选 uWSGI 吗？ 这篇文章按&quot;基础概念、Gunicorn 篇、uWSGI 篇、深度对比、选型决策、生产部署、高频面试题&quot;的结构整理两个服务器的核心知识，所有事实分别对齐 Gunicorn 官方文档 与 uWSGI 官方文档，适合作为日常查阅和面试复习材料。\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/gunicorn-vs-uwsgi-%E5%AE%8C%E5%85%A8%E5%AF%B9%E6%AF%94%E6%8C%87%E5%8D%97%E5%9F%BA%E6%9C%AC%E4%BD%BF%E7%94%A8%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%AF%B9%E6%AF%94%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='gunicorn' /><meta property='article:tag' content='uwsgi' /><meta property='article:tag' content='python' /><meta property='article:tag' content='wsgi' /><meta property='article:tag' content='deploy' /><meta property='article:published_time' content='2026-06-12T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-06-12T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="Gunicorn vs uWSGI 完全对比指南：基本使用、底层原理、对比与高频面试题">
+<meta name="twitter:description" content="写在前面 在 Python Web 服务部署的话题里，Gunicorn 和 uWSGI 是绕不开的两个关键词。它们都是 WSGI 服务器，承担着相同的角色：把 HTTP 请求翻译成 Python 应用能理解的 WSGI 调用。但它们在实现语言、设计哲学、配置复杂度、社区现状上差异巨大。\n写过 Flask、Django 应用的开发者大多接触过其中一个，但很多人停留在&quot;gunicorn -w 4 app:app 跑起来&quot;或&quot;复制一份 uwsgi.ini 改改&quot;的层面，碰到下面这些问题就开始打问号：\nGunicorn 和 uWSGI 到底什么关系？为什么有人用前者、有人用后者？ 为什么 worker 数量推荐 2 × CPU + 1？两者的 worker 模型有什么区别？ sync / gthread / gevent 这些 worker class 到底差在哪？ uWSGI 的 emperor 模式、cheaper、master/worker 是什么？ 为什么所有官方文档都强调&quot;必须放在 nginx 后面&quot;？ --preload 加不加，到底有什么差别？lazy-apps 又是什么？ 服务死锁了，应该 kill 主进程发什么信号？ 2026 年了，新项目还该选 uWSGI 吗？ 这篇文章按&quot;基础概念、Gunicorn 篇、uWSGI 篇、深度对比、选型决策、生产部署、高频面试题&quot;的结构整理两个服务器的核心知识，所有事实分别对齐 Gunicorn 官方文档 与 uWSGI 官方文档，适合作为日常查阅和面试复习材料。\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ol>
+    <li><a href="#目录">目录</a></li>
+    <li><a href="#1-概念背景wsgigunicornuwsgi-是什么">1. 概念背景：WSGI、Gunicorn、uWSGI 是什么</a>
+      <ol>
+        <li><a href="#11-wsgi-是接口规范不是软件">1.1 WSGI 是接口规范，不是软件</a></li>
+        <li><a href="#12-什么是-wsgi-服务器">1.2 什么是 WSGI 服务器</a></li>
+        <li><a href="#13-gunicorn-和-uwsgi-是两个-wsgi-服务器实现">1.3 Gunicorn 和 uWSGI 是两个 WSGI 服务器实现</a></li>
+        <li><a href="#13-部署架构里的位置">1.3 部署架构里的位置</a></li>
+        <li><a href="#14-名字坑uwsgi--uwsgi--wsgi">1.4 名字坑：uWSGI ≠ uwsgi ≠ WSGI</a></li>
+        <li><a href="#15-易混淆概念gunicorn-worker--celery-worker">1.5 易混淆概念：Gunicorn worker ≠ Celery worker</a></li>
+        <li><a href="#16-一张图看懂选型差异速览">1.6 一张图看懂选型差异（速览）</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-gunicorn-基础概念">2. Gunicorn 基础概念</a>
+      <ol>
+        <li><a href="#21-一句话定义">2.1 一句话定义</a></li>
+        <li><a href="#22-它在-python-web-部署里的位置">2.2 它在 Python Web 部署里的位置</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-gunicorn-基本使用">3. Gunicorn 基本使用</a>
+      <ol>
+        <li><a href="#31-安装">3.1 安装</a></li>
+        <li><a href="#32-最小可用命令">3.2 最小可用命令</a></li>
+        <li><a href="#33-常用启动姿势">3.3 常用启动姿势</a></li>
+        <li><a href="#34-生产环境-runsh-示例">3.4 生产环境 run.sh 示例</a></li>
+        <li><a href="#35-用配置文件">3.5 用配置文件</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-gunicorn-worker-模型与类型">4. Gunicorn Worker 模型与类型</a>
+      <ol>
+        <li><a href="#40-前置概念io-bound-vs-cpu-bound">4.0 前置概念：IO-bound vs CPU-bound</a></li>
+        <li><a href="#401-pre-fork-是进程管理策略不是并发模型">4.0.1 pre-fork 是进程管理策略，不是并发模型</a></li>
+        <li><a href="#402-对比-celery-的-pool-选项">4.0.2 对比 Celery 的 pool 选项</a></li>
+        <li><a href="#41-sync-worker默认">4.1 sync worker（默认）</a></li>
+        <li><a href="#42-gthread-worker">4.2 gthread worker</a></li>
+        <li><a href="#43-gevent-worker">4.3 gevent worker</a></li>
+        <li><a href="#44-用-gunicorn-跑-asgi-应用">4.4 用 Gunicorn 跑 ASGI 应用</a></li>
+        <li><a href="#45-worker-类型选择决策表">4.5 worker 类型选择决策表</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-gunicorn-核心配置项">5. Gunicorn 核心配置项</a>
+      <ol>
+        <li><a href="#51-进程与并发">5.1 进程与并发</a></li>
+        <li><a href="#52-超时与回收">5.2 超时与回收</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-gunicorn-底层原理">6. Gunicorn 底层原理</a>
+      <ol>
+        <li><a href="#61-pre-fork-worker-模型">6.1 Pre-fork worker 模型</a></li>
+        <li><a href="#62-preload_app-的取舍">6.2 preload_app 的取舍</a></li>
+        <li><a href="#63-max_requests-与内存泄漏">6.3 max_requests 与内存泄漏</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-gunicorn-信号处理与运维">7. Gunicorn 信号处理与运维</a>
+      <ol>
+        <li><a href="#71-主进程信号">7.1 主进程信号</a></li>
+        <li><a href="#72-systemd-集成">7.2 systemd 集成</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-uwsgi-基础概念">8. uWSGI 基础概念</a>
+      <ol>
+        <li><a href="#81-一句话定义">8.1 一句话定义</a></li>
+        <li><a href="#82-设计哲学">8.2 设计哲学</a></li>
+        <li><a href="#83-与-gunicorn-的核心差异">8.3 与 Gunicorn 的核心差异</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-uwsgi-基本使用">9. uWSGI 基本使用</a>
+      <ol>
+        <li><a href="#91-安装">9.1 安装</a></li>
+        <li><a href="#92-最小可用命令">9.2 最小可用命令</a></li>
+        <li><a href="#93-常用启动姿势">9.3 常用启动姿势</a></li>
+        <li><a href="#94-用-ini-配置文件推荐">9.4 用 INI 配置文件（推荐）</a></li>
+        <li><a href="#95-与-nginx-配合">9.5 与 nginx 配合</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-uwsgi-进程模型与并发">10. uWSGI 进程模型与并发</a>
+      <ol>
+        <li><a href="#101-master--worker-模型">10.1 master + worker 模型</a></li>
+        <li><a href="#102-并发模式">10.2 并发模式</a></li>
+        <li><a href="#103-emperor-模式">10.3 Emperor 模式</a></li>
+        <li><a href="#104-cheaper-子系统自动伸缩">10.4 Cheaper 子系统（自动伸缩）</a></li>
+      </ol>
+    </li>
+    <li><a href="#11-uwsgi-核心配置项">11. uWSGI 核心配置项</a>
+      <ol>
+        <li><a href="#111-进程与并发">11.1 进程与并发</a></li>
+        <li><a href="#112-网络">11.2 网络</a></li>
+        <li><a href="#113-应用加载">11.3 应用加载</a></li>
+        <li><a href="#114-运维">11.4 运维</a></li>
+      </ol>
+    </li>
+    <li><a href="#12-uwsgi-底层原理与协议">12. uWSGI 底层原理与协议</a>
+      <ol>
+        <li><a href="#121-uwsgi-二进制协议">12.1 uwsgi 二进制协议</a></li>
+        <li><a href="#122-与-gunicorn-pre-fork-的对比">12.2 与 Gunicorn pre-fork 的对比</a></li>
+        <li><a href="#123-lazy-apps-与-preload">12.3 lazy-apps 与 preload</a></li>
+      </ol>
+    </li>
+    <li><a href="#13-uwsgi-信号处理与运维">13. uWSGI 信号处理与运维</a>
+      <ol>
+        <li><a href="#131-信号对照">13.1 信号对照</a></li>
+        <li><a href="#132-graceful-reload-方式">13.2 Graceful reload 方式</a></li>
+        <li><a href="#133-systemd-集成">13.3 systemd 集成</a></li>
+      </ol>
+    </li>
+    <li><a href="#14-gunicorn-vs-uwsgi-全方位对比">14. Gunicorn vs uWSGI 全方位对比</a>
+      <ol>
+        <li><a href="#141-配置复杂度">14.1 配置复杂度</a></li>
+        <li><a href="#142-性能">14.2 性能</a></li>
+        <li><a href="#143-功能范围">14.3 功能范围</a></li>
+        <li><a href="#144-社区现状与维护风险">14.4 社区现状与维护风险</a></li>
+        <li><a href="#145-调试友好度">14.5 调试友好度</a></li>
+      </ol>
+    </li>
+    <li><a href="#15-选型决策与场景推荐">15. 选型决策与场景推荐</a>
+      <ol>
+        <li><a href="#151-选-gunicorn-的场景">15.1 选 Gunicorn 的场景</a></li>
+        <li><a href="#152-选-uwsgi-的场景">15.2 选 uWSGI 的场景</a></li>
+        <li><a href="#153-一句话建议">15.3 一句话建议</a></li>
+      </ol>
+    </li>
+    <li><a href="#16-生产部署建议">16. 生产部署建议</a>
+      <ol>
+        <li><a href="#161-worker-数量两者通用">16.1 worker 数量（两者通用）</a></li>
+        <li><a href="#162-一定要放在-nginx-后面两者通用">16.2 一定要放在 nginx 后面（两者通用）</a></li>
+        <li><a href="#163-gunicorn--nginx-配置">16.3 Gunicorn + nginx 配置</a></li>
+        <li><a href="#164-uwsgi--nginx-配置">16.4 uWSGI + nginx 配置</a></li>
+        <li><a href="#165-容器化部署">16.5 容器化部署</a></li>
+      </ol>
+    </li>
+    <li><a href="#17-常见高频面试题">17. 常见高频面试题</a>
+      <ol>
+        <li><a href="#171-gunicorn-和-uwsgi-的区别是什么">17.1 Gunicorn 和 uWSGI 的区别是什么？</a></li>
+        <li><a href="#172-为什么-worker-数推荐-2--cpu--1">17.2 为什么 worker 数推荐 <code>(2 × CPU) + 1</code>？</a></li>
+        <li><a href="#173-uwsgi-的-term-信号坑是什么">17.3 uWSGI 的 TERM 信号坑是什么？</a></li>
+        <li><a href="#174-uwsgi-协议比-http-快多少">17.4 uwsgi 协议比 HTTP 快多少？</a></li>
+        <li><a href="#175-sync-worker-为什么不能直接对外">17.5 sync worker 为什么不能直接对外？</a></li>
+        <li><a href="#176-emperor-模式是什么gunicorn-有等价方案吗">17.6 Emperor 模式是什么？Gunicorn 有等价方案吗？</a></li>
+        <li><a href="#177---preload--lazy-apps-该不该开">17.7 <code>--preload</code> / <code>lazy-apps</code> 该不该开？</a></li>
+        <li><a href="#178-2026-年新项目怎么选">17.8 2026 年新项目怎么选？</a></li>
+      </ol>
+    </li>
+    <li><a href="#18-附录进一步阅读">18. 附录：进一步阅读</a>
+      <ol>
+        <li><a href="#181-官方文档">18.1 官方文档</a></li>
+        <li><a href="#182-一句话总结">18.2 一句话总结</a></li>
+      </ol>
+    </li>
+  </ol>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/python/" >
+                Python
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/gunicorn-vs-uwsgi-%E5%AE%8C%E5%85%A8%E5%AF%B9%E6%AF%94%E6%8C%87%E5%8D%97%E5%9F%BA%E6%9C%AC%E4%BD%BF%E7%94%A8%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%AF%B9%E6%AF%94%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">Gunicorn vs uWSGI 完全对比指南：基本使用、底层原理、对比与高频面试题</a>
+        </h2>
+    
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">Jun 12, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h1 id="写在前面">写在前面
+</h1><p>在 Python Web 服务部署的话题里，<code>Gunicorn</code> 和 <code>uWSGI</code> 是绕不开的两个关键词。它们都是 <strong>WSGI 服务器</strong>，承担着相同的角色：把 HTTP 请求翻译成 Python 应用能理解的 WSGI 调用。但它们在实现语言、设计哲学、配置复杂度、社区现状上差异巨大。</p>
+<p>写过 Flask、Django 应用的开发者大多接触过其中一个，但很多人停留在&quot;<code>gunicorn -w 4 app:app</code> 跑起来&quot;或&quot;复制一份 uwsgi.ini 改改&quot;的层面，碰到下面这些问题就开始打问号：</p>
+<ul>
+<li>Gunicorn 和 uWSGI 到底什么关系？为什么有人用前者、有人用后者？</li>
+<li>为什么 worker 数量推荐 <code>2 × CPU + 1</code>？两者的 worker 模型有什么区别？</li>
+<li><code>sync</code> / <code>gthread</code> / <code>gevent</code> 这些 worker class 到底差在哪？</li>
+<li>uWSGI 的 emperor 模式、cheaper、master/worker 是什么？</li>
+<li>为什么所有官方文档都强调&quot;必须放在 nginx 后面&quot;？</li>
+<li><code>--preload</code> 加不加，到底有什么差别？lazy-apps 又是什么？</li>
+<li>服务死锁了，应该 <code>kill</code> 主进程发什么信号？</li>
+<li>2026 年了，新项目还该选 uWSGI 吗？</li>
+</ul>
+<p>这篇文章按&quot;基础概念、Gunicorn 篇、uWSGI 篇、深度对比、选型决策、生产部署、高频面试题&quot;的结构整理两个服务器的核心知识，所有事实分别对齐 <a class="link" href="https://docs.gunicorn.org/en/latest/"  target="_blank" rel="noopener"
+    >Gunicorn 官方文档</a> 与 <a class="link" href="https://uwsgi-docs.readthedocs.io/"  target="_blank" rel="noopener"
+    >uWSGI 官方文档</a>，适合作为日常查阅和面试复习材料。</p>
+<blockquote>
+<p>文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 WSGI（Web Server Gateway Interface，PEP 3333 定义的 Python Web 服务网关接口）、ASGI（Asynchronous Server Gateway Interface，异步 WSGI 后继）、TLS（Transport Layer Security）、CPU（Central Processing Unit）、IO（Input/Output）、SSL（Secure Sockets Layer）、PID（Process ID）、UID（User ID）、GID（Group ID）、IP（Internet Protocol）、CIDR（Classless Inter-Domain Routing）、HTTP（HyperText Transfer Protocol）、HTTPS（HTTP Secure）、DoS（Denial of Service）、GIL（Global Interpreter Lock）、COW（Copy-On-Write）。</p></blockquote>
+<h2 id="目录">目录
+</h2><ol>
+<li><a class="link" href="#1-%e6%a6%82%e5%bf%b5%e8%83%8c%e6%99%afwsgigunicornuwsgi-%e6%98%af%e4%bb%80%e4%b9%88" >概念背景：WSGI、Gunicorn、uWSGI 是什么</a></li>
+<li><a class="link" href="#2-gunicorn-%e5%9f%ba%e7%a1%80%e6%a6%82%e5%bf%b5" >Gunicorn 基础概念</a></li>
+<li><a class="link" href="#3-gunicorn-%e5%9f%ba%e6%9c%ac%e4%bd%bf%e7%94%a8" >Gunicorn 基本使用</a></li>
+<li><a class="link" href="#4-gunicorn-worker-%e6%a8%a1%e5%9e%8b%e4%b8%8e%e7%b1%bb%e5%9e%8b" >Gunicorn Worker 模型与类型</a></li>
+<li><a class="link" href="#5-gunicorn-%e6%a0%b8%e5%bf%83%e9%85%8d%e7%bd%ae%e9%a1%b9" >Gunicorn 核心配置项</a></li>
+<li><a class="link" href="#6-gunicorn-%e5%ba%95%e5%b1%82%e5%8e%9f%e7%90%86" >Gunicorn 底层原理</a></li>
+<li><a class="link" href="#7-gunicorn-%e4%bf%a1%e5%8f%b7%e5%a4%84%e7%90%86%e4%b8%8e%e8%bf%90%e7%bb%b4" >Gunicorn 信号处理与运维</a></li>
+<li><a class="link" href="#8-uwsgi-%e5%9f%ba%e7%a1%80%e6%a6%82%e5%bf%b5" >uWSGI 基础概念</a></li>
+<li><a class="link" href="#9-uwsgi-%e5%9f%ba%e6%9c%ac%e4%bd%bf%e7%94%a8" >uWSGI 基本使用</a></li>
+<li><a class="link" href="#10-uwsgi-%e8%bf%9b%e7%a8%8b%e6%a8%a1%e5%9e%8b%e4%b8%8e%e5%b9%b6%e5%8f%91" >uWSGI 进程模型与并发</a></li>
+<li><a class="link" href="#11-uwsgi-%e6%a0%b8%e5%bf%83%e9%85%8d%e7%bd%ae%e9%a1%b9" >uWSGI 核心配置项</a></li>
+<li><a class="link" href="#12-uwsgi-%e5%ba%95%e5%b1%82%e5%8e%9f%e7%90%86%e4%b8%8e%e5%8d%8f%e8%ae%ae" >uWSGI 底层原理与协议</a></li>
+<li><a class="link" href="#13-uwsgi-%e4%bf%a1%e5%8f%b7%e5%a4%84%e7%90%86%e4%b8%8e%e8%bf%90%e7%bb%b4" >uWSGI 信号处理与运维</a></li>
+<li><a class="link" href="#14-gunicorn-vs-uwsgi-%e5%85%a8%e6%96%b9%e4%bd%8d%e5%af%b9%e6%af%94" >Gunicorn vs uWSGI 全方位对比</a></li>
+<li><a class="link" href="#15-%e9%80%89%e5%9e%8b%e5%86%b3%e7%ad%96%e4%b8%8e%e5%9c%ba%e6%99%af%e6%8e%a8%e8%8d%90" >选型决策与场景推荐</a></li>
+<li><a class="link" href="#16-%e7%94%9f%e4%ba%a7%e9%83%a8%e7%bd%b2%e5%bb%ba%e8%ae%ae" >生产部署建议</a></li>
+<li><a class="link" href="#17-%e5%b8%b8%e8%a7%81%e9%ab%98%e9%a2%91%e9%9d%a2%e8%af%95%e9%a2%98" >常见高频面试题</a></li>
+<li><a class="link" href="#18-%e9%99%84%e5%bd%95%e8%bf%9b%e4%b8%80%e6%ad%a5%e9%98%85%e8%af%bb" >附录：进一步阅读</a></li>
+</ol>
+<hr>
+<h2 id="1-概念背景wsgigunicornuwsgi-是什么">1. 概念背景：WSGI、Gunicorn、uWSGI 是什么
+</h2><p>在深入两者细节之前，先把几个容易混淆的名词彻底理清楚。</p>
+<h3 id="11-wsgi-是接口规范不是软件">1.1 WSGI 是接口规范，不是软件
+</h3><p><code>WSGI</code>（Web Server Gateway Interface）是 <a class="link" href="https://peps.python.org/pep-3333/"  target="_blank" rel="noopener"
+    >PEP 3333</a> 定义的 <strong>Python Web 应用与 Web 服务器之间的接口规范</strong>。它不是软件、不是协议、也不是库——它就是一份&quot;约定&quot;：任何 Python Web 应用都应该是一个签名固定的可调用对象。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">application</span><span class="p">(</span><span class="n">environ</span><span class="p">,</span> <span class="n">start_response</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="n">start_response</span><span class="p">(</span><span class="s1">&#39;200 OK&#39;</span><span class="p">,</span> <span class="p">[(</span><span class="s1">&#39;Content-Type&#39;</span><span class="p">,</span> <span class="s1">&#39;text/plain&#39;</span><span class="p">)])</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="p">[</span><span class="sa">b</span><span class="s1">&#39;Hello, World!&#39;</span><span class="p">]</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>Flask、Django、Bottle 这些 Web 框架的本质就是&quot;按 WSGI 规范暴露一个 callable&quot;，所以它们能被任何 WSGI 服务器跑起来。</p>
+<h3 id="12-什么是-wsgi-服务器">1.2 什么是 WSGI 服务器
+</h3><p>WSGI 服务器是实现了 WSGI 规范的服务端程序，它是 <strong>HTTP 世界和 Python 应用之间的翻译层 + 进程管理器</strong>，核心职责：</p>
+<ol>
+<li><strong>监听网络连接</strong>（TCP 端口或 Unix socket）</li>
+<li><strong>接收 HTTP 请求</strong>，将其转换为 WSGI 规范定义的 <code>environ</code> 字典</li>
+<li><strong>调用 Python 应用</strong>的 callable（如 Flask 的 <code>app</code>），传入 <code>(environ, start_response)</code></li>
+<li><strong>将应用返回的响应</strong>翻译回 HTTP 响应写给客户端</li>
+<li><strong>管理 worker 生命周期</strong>（进程池、崩溃重启、超时回收）</li>
+</ol>
+<p>层级架构图（WSGI 服务器与上下游的关系）：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span><span class="lnt">28
+</span><span class="lnt">29
+</span><span class="lnt">30
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│                          客户端（浏览器 / App）                        │
+</span></span><span class="line"><span class="cl">└──────────────────────────────┬──────────────────────────────────────┘
+</span></span><span class="line"><span class="cl">                               │ HTTPS 请求
+</span></span><span class="line"><span class="cl">                               ▼
+</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│  第 1 层：反向代理 / 负载均衡（nginx / HAProxy / 云 LB）                 │
+</span></span><span class="line"><span class="cl">│                                                                     │
+</span></span><span class="line"><span class="cl">│  职责：TLS 终止、静态文件、请求 buffer、限流、负载分发                     │
+</span></span><span class="line"><span class="cl">└──────────────────────────────┬──────────────────────────────────────┘
+</span></span><span class="line"><span class="cl">                               │ HTTP 或 uwsgi 协议
+</span></span><span class="line"><span class="cl">                               ▼
+</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│  第 2 层：WSGI 服务器（Gunicorn 或 uWSGI，二选一）                      │
+</span></span><span class="line"><span class="cl">│                                                                     │
+</span></span><span class="line"><span class="cl">│  职责：监听 socket → 管理 worker 进程池 → 将 HTTP 请求翻译为             │
+</span></span><span class="line"><span class="cl">│       (environ, start_response) → 调用应用 → 响应回写                  │
+</span></span><span class="line"><span class="cl">└──────────────────────────────┬──────────────────────────────────────┘
+</span></span><span class="line"><span class="cl">                               │ WSGI 调用（Python 函数调用）
+</span></span><span class="line"><span class="cl">                               ▼
+</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│  第 3 层：Python Web 应用（Flask / Django / Bottle）                   │
+</span></span><span class="line"><span class="cl">│                                                                     │
+</span></span><span class="line"><span class="cl">│  职责：路由、业务逻辑、模板渲染、调用后端服务                              │
+</span></span><span class="line"><span class="cl">└──────────────────────────────┬──────────────────────────────────────┘
+</span></span><span class="line"><span class="cl">                               │ 数据库 / 缓存 / 外部 API 调用
+</span></span><span class="line"><span class="cl">                               ▼
+</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│  第 4 层：后端依赖（PostgreSQL / Redis / 第三方 API / 消息队列）         │
+</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>各层边界清晰：<strong>上游</strong>（nginx）负责安全和流量管控，<strong>WSGI 服务器</strong>负责进程管理和协议翻译，<strong>下游</strong>（应用）只关心业务逻辑。WSGI 服务器是中间的&quot;齿轮&quot;——上接 HTTP/uwsgi 协议，下接 Python callable。</p>
+<p>Python 自带的 <code>wsgiref.simple_server</code> 也是一个 WSGI 服务器，但仅用于开发。生产环境需要 Gunicorn / uWSGI 这类支持多 worker、信号管理、超时回收的实现。</p>
+<h3 id="13-gunicorn-和-uwsgi-是两个-wsgi-服务器实现">1.3 Gunicorn 和 uWSGI 是两个 WSGI 服务器实现
+</h3><blockquote>
+<p>Gunicorn 和 uWSGI 是<strong>竞品关系</strong>，不是依赖关系。</p></blockquote>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>项目</th>
+          <th>名称含义</th>
+          <th>实现语言</th>
+          <th>首次发布</th>
+          <th>作者</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><strong>Gunicorn</strong></td>
+          <td>Green Unicorn</td>
+          <td>纯 Python</td>
+          <td>2010 年</td>
+          <td>Benoît Chesneau</td>
+      </tr>
+      <tr>
+          <td><strong>uWSGI</strong></td>
+          <td>（取自 WSGI）</td>
+          <td>C</td>
+          <td>2009 年</td>
+          <td>Roberto De Ioanni</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>它们解决同一个问题——<strong>把 HTTP 请求翻译成 WSGI 调用</strong>——但走了不同的路。</p>
+<h3 id="13-部署架构里的位置">1.3 部署架构里的位置
+</h3><p>一个典型的 Python Web 应用上线，从客户端到代码大致经过这几层：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">客户端 ── HTTPS ── nginx（反向代理 + TLS 终止 + 静态文件） ──── HTTP / uwsgi 协议 ──── WSGI 服务器（Gunicorn 或 uWSGI 二选一）──── 调用 ──── 你的 Flask/Django 应用
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>WSGI 服务器处在第 3 层。它的职责是：</p>
+<ul>
+<li>监听 socket（TCP 端口或 Unix socket）</li>
+<li>派生 worker 进程池</li>
+<li>接收请求并按 WSGI 协议交给应用</li>
+<li>把应用返回的响应写回客户端</li>
+<li>管理 worker 生命周期（崩溃重启、超时回收、graceful reload）</li>
+</ul>
+<p><strong>Gunicorn 和 uWSGI 在这个架构里占据同一个位置，二选一即可</strong>，不需要也不应该同时存在。</p>
+<h3 id="14-名字坑uwsgi--uwsgi--wsgi">1.4 名字坑：uWSGI ≠ uwsgi ≠ WSGI
+</h3><p>这是初学者最容易翻车的地方：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>名字</th>
+          <th>指代</th>
+          <th>含义</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><strong>WSGI</strong></td>
+          <td>接口规范</td>
+          <td>PEP 3333，Python 与 Web 服务器之间的标准接口</td>
+      </tr>
+      <tr>
+          <td><strong>uWSGI</strong></td>
+          <td>软件名</td>
+          <td>一个具体的服务器项目（大写 W）</td>
+      </tr>
+      <tr>
+          <td><strong>uwsgi</strong></td>
+          <td>协议名</td>
+          <td>uWSGI 项目自创的二进制协议（全小写），常用于 nginx ↔ uWSGI 之间通信</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>所以 uWSGI 项目同时<strong>实现了</strong>两件事：</p>
+<ul>
+<li>实现 WSGI 接口规范（与 Python 应用对接）</li>
+<li>定义并实现了 uwsgi 二进制协议（与 nginx 等对接）</li>
+</ul>
+<h3 id="15-易混淆概念gunicorn-worker--celery-worker">1.5 易混淆概念：Gunicorn worker ≠ Celery worker
+</h3><p>两者都叫&quot;worker&quot;，但属于完全不同的系统：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>维度</th>
+          <th>Gunicorn worker</th>
+          <th>Celery worker</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>职责</td>
+          <td>处理 HTTP 请求</td>
+          <td>执行异步任务</td>
+      </tr>
+      <tr>
+          <td>触发方式</td>
+          <td>客户端发 HTTP 请求</td>
+          <td>从消息队列（Redis/RabbitMQ）取任务</td>
+      </tr>
+      <tr>
+          <td>生命周期</td>
+          <td>请求来了处理，处理完等下一个</td>
+          <td>持续轮询队列，取到任务就执行</td>
+      </tr>
+      <tr>
+          <td>进程管理</td>
+          <td>由 Gunicorn arbiter fork</td>
+          <td>由 Celery master fork</td>
+      </tr>
+      <tr>
+          <td>运行内容</td>
+          <td>Flask/Django 视图函数</td>
+          <td><code>@celery.task</code> 装饰的异步函数</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>典型架构里两者并存：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">客户端 → nginx → Gunicorn worker（处理 HTTP，快速返回）→ 发任务到 Redis
+</span></span><span class="line"><span class="cl">                                                            ↓
+</span></span><span class="line"><span class="cl">                                       Celery worker（从 Redis 取任务，后台执行）
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>Gunicorn worker 负责&quot;接请求、快速响应&quot;，Celery worker 负责&quot;后台跑耗时任务&quot;。不要把两者搞混。</p>
+<h3 id="16-一张图看懂选型差异速览">1.6 一张图看懂选型差异（速览）
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>维度</th>
+          <th>Gunicorn</th>
+          <th>uWSGI</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>实现语言</td>
+          <td>纯 Python</td>
+          <td>C</td>
+      </tr>
+      <tr>
+          <td>配置复杂度</td>
+          <td>低，二三十个核心选项</td>
+          <td>高，<strong>官方列出 1000+ 配置项</strong></td>
+      </tr>
+      <tr>
+          <td>启动方式</td>
+          <td><code>gunicorn app:app</code></td>
+          <td><code>uwsgi --ini uwsgi.ini</code></td>
+      </tr>
+      <tr>
+          <td>协议</td>
+          <td>仅 HTTP / WSGI</td>
+          <td>uwsgi、http、fastcgi、scgi、raw 等</td>
+      </tr>
+      <tr>
+          <td>ASGI 支持</td>
+          <td>通过 <code>uvicorn.workers.UvicornWorker</code></td>
+          <td>通过 ASGI 插件，不主流</td>
+      </tr>
+      <tr>
+          <td>多语言支持</td>
+          <td>仅 Python</td>
+          <td>Python、Perl、Ruby、Lua、Go 等</td>
+      </tr>
+      <tr>
+          <td>Emperor 模式</td>
+          <td>无</td>
+          <td>有（多 vassal 应用统一管理）</td>
+      </tr>
+      <tr>
+          <td>文档质量</td>
+          <td>简洁聚焦</td>
+          <td>全面但冗长</td>
+      </tr>
+      <tr>
+          <td>社区现状</td>
+          <td>活跃</td>
+          <td>维护放缓</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>下面正式进入两个服务器各自的细节。先讲 Gunicorn（章节 2-7），再讲 uWSGI（章节 8-13），最后做深度对比与选型（章节 14-15）。</p>
+<hr>
+<h2 id="2-gunicorn-基础概念">2. Gunicorn 基础概念
+</h2><h3 id="21-一句话定义">2.1 一句话定义
+</h3><p><code>Gunicorn</code>（Green Unicorn）是一个 Python WSGI HTTP Server，采用 <strong>pre-fork worker 模型</strong>：一个 arbiter（仲裁/主）进程负责管理一组 worker 进程，arbiter 不接触客户端 socket，所有请求都由 worker 处理。</p>
+<h3 id="22-它在-python-web-部署里的位置">2.2 它在 Python Web 部署里的位置
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">客户端 ── HTTPS ── nginx（反向代理 + TLS 终止 + 静态文件） ──── HTTP ──── Gunicorn（WSGI 服务器）──── 调用 ──── 你的 Flask/Django 应用
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>Gunicorn</code> 处在第 3 层。它的职责是：</p>
+<ul>
+<li>监听 socket（TCP 端口或 Unix socket）</li>
+<li>派生 worker 进程池</li>
+<li>接收 HTTP 请求并按 WSGI 协议交给应用</li>
+<li>把应用返回的响应写回客户端</li>
+<li>管理 worker 生命周期（崩溃重启、超时回收、graceful reload）</li>
+</ul>
+<p>它<strong>不</strong>做的事：TLS 终止、静态文件服务、抵御慢连接攻击（默认 <code>sync</code> worker <strong>必须</strong>放在 buffering proxy 后面）。</p>
+<hr>
+<h2 id="3-gunicorn-基本使用">3. Gunicorn 基本使用
+</h2><h3 id="31-安装">3.1 安装
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">pip install gunicorn
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="32-最小可用命令">3.2 最小可用命令
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">gunicorn myapp:app
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>myapp:app</code> 是 <code>&lt;模块名&gt;:&lt;WSGI 可调用对象名&gt;</code> 的格式。默认：监听 <code>127.0.0.1:8000</code>，1 个 sync worker，timeout 30 秒。</p>
+<h3 id="33-常用启动姿势">3.3 常用启动姿势
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 4 个 worker，监听所有网卡的 8000 端口</span>
+</span></span><span class="line"><span class="cl">gunicorn -w <span class="m">4</span> -b 0.0.0.0:8000 myapp:app
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 用 gthread worker，每个 worker 4 线程</span>
+</span></span><span class="line"><span class="cl">gunicorn -w <span class="m">2</span> -k gthread --threads <span class="m">4</span> myapp:app
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 用 Unix socket（推荐生产用法，配合 nginx）</span>
+</span></span><span class="line"><span class="cl">gunicorn -w <span class="m">4</span> -b unix:/tmp/gunicorn.sock myapp:app
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 后台运行</span>
+</span></span><span class="line"><span class="cl">gunicorn -w <span class="m">4</span> -D --pid /tmp/gunicorn.pid <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --access-logfile /var/log/myapp/access.log <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --error-logfile /var/log/myapp/error.log myapp:app
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="34-生产环境-runsh-示例">3.4 生产环境 run.sh 示例
+</h3><p>一个真实的容器化项目启动脚本，通过环境变量灵活控制各参数：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">gunicorn <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --bind <span class="s2">&#34;</span><span class="si">${</span><span class="nv">API_BIND_ADDRESS</span><span class="k">:-</span><span class="nv">0</span><span class="p">.0.0.0</span><span class="si">}</span><span class="s2">:</span><span class="si">${</span><span class="nv">cnapport</span><span class="k">:-</span><span class="nv">5001</span><span class="si">}</span><span class="s2">&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --workers <span class="si">${</span><span class="nv">SERVER_WORKER_AMOUNT</span><span class="k">:-</span><span class="nv">2</span><span class="si">}</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --worker-class <span class="si">${</span><span class="nv">SERVER_WORKER_CLASS</span><span class="k">:-</span><span class="nv">gevent</span><span class="si">}</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --worker-connections <span class="m">1000</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --timeout <span class="si">${</span><span class="nv">GUNICORN_TIMEOUT</span><span class="k">:-</span><span class="nv">600</span><span class="si">}</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --error-logfile <span class="si">${</span><span class="nv">GUNICORN_ERROR_LOG_FILE</span><span class="k">:-</span><span class="p">/app/api/log/gunicorn_error.log</span><span class="si">}</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --log-level <span class="si">${</span><span class="nv">GUNICORN_LOG_LEVEL</span><span class="k">:-</span><span class="nv">info</span><span class="si">}</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --max-requests <span class="si">${</span><span class="nv">MAX_REQUESTS</span><span class="k">:-</span><span class="nv">4000</span><span class="si">}</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --max-requests-jitter <span class="si">${</span><span class="nv">MAX_REQUESTS_JITTER</span><span class="k">:-</span><span class="nv">300</span><span class="si">}</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --keep-alive <span class="si">${</span><span class="nv">GUNICORN_KEEP_ALIVE</span><span class="k">:-</span><span class="nv">75</span><span class="si">}</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  app:app
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>要点解读：</p>
+<ul>
+<li><code>gevent</code> worker + <code>worker-connections 1000</code>：IO-bound 应用的标准组合，单 worker 可并发处理上千连接</li>
+<li><code>timeout 600</code>：业务有长耗时请求（如 AI 推理），远超默认 30 秒</li>
+<li><code>max-requests 4000</code> + <code>jitter 300</code>：防内存泄漏，错峰重启避免瞬间无可用 worker</li>
+<li><code>keep-alive 75</code>：配合 nginx 的 <code>keepalive_timeout</code>（nginx 默认 75s），保持长连接复用</li>
+<li>所有参数通过 <code>${VAR:-default}</code> 注入：一份镜像适配多个环境（dev/staging/prod）</li>
+</ul>
+<blockquote>
+<p><strong>Bash 变量默认值语法</strong>：<code>${VAR:-default}</code> 中 <code>:-</code> 是一个整体运算符，表示&quot;变量为空或未设置时使用 default&quot;。所以 <code>${cnapport:-5001}</code> 不是负数，而是&quot;cnapport 没设置就用 5001&quot;。相关语法：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>语法</th>
+          <th>含义</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>${VAR:-default}</code></td>
+          <td>变量为空或未设置时用 default</td>
+      </tr>
+      <tr>
+          <td><code>${VAR:=default}</code></td>
+          <td>同上，但同时把 default 赋给 VAR</td>
+      </tr>
+      <tr>
+          <td><code>${VAR:+alt}</code></td>
+          <td>变量<strong>有值</strong>时用 alt，否则为空</td>
+      </tr>
+      <tr>
+          <td><code>${VAR:?error}</code></td>
+          <td>变量为空时报错退出</td>
+      </tr>
+  </tbody>
+</table></div></blockquote>
+<h3 id="35-用配置文件">3.5 用配置文件
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># gunicorn_conf.py</span>
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">multiprocessing</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">bind</span> <span class="o">=</span> <span class="s2">&#34;unix:/tmp/gunicorn.sock&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="n">workers</span> <span class="o">=</span> <span class="n">multiprocessing</span><span class="o">.</span><span class="n">cpu_count</span><span class="p">()</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">+</span> <span class="mi">1</span>
+</span></span><span class="line"><span class="cl"><span class="n">worker_class</span> <span class="o">=</span> <span class="s2">&#34;gthread&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="n">threads</span> <span class="o">=</span> <span class="mi">4</span>
+</span></span><span class="line"><span class="cl"><span class="n">timeout</span> <span class="o">=</span> <span class="mi">30</span>
+</span></span><span class="line"><span class="cl"><span class="n">graceful_timeout</span> <span class="o">=</span> <span class="mi">30</span>
+</span></span><span class="line"><span class="cl"><span class="n">keepalive</span> <span class="o">=</span> <span class="mi">2</span>
+</span></span><span class="line"><span class="cl"><span class="n">max_requests</span> <span class="o">=</span> <span class="mi">1000</span>
+</span></span><span class="line"><span class="cl"><span class="n">max_requests_jitter</span> <span class="o">=</span> <span class="mi">50</span>
+</span></span><span class="line"><span class="cl"><span class="n">preload_app</span> <span class="o">=</span> <span class="kc">True</span>
+</span></span><span class="line"><span class="cl"><span class="n">accesslog</span> <span class="o">=</span> <span class="s2">&#34;/var/log/myapp/access.log&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="n">errorlog</span> <span class="o">=</span> <span class="s2">&#34;/var/log/myapp/error.log&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="n">loglevel</span> <span class="o">=</span> <span class="s2">&#34;info&#34;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>启动：<code>gunicorn -c gunicorn_conf.py myapp:app</code></p>
+<hr>
+<h2 id="4-gunicorn-worker-模型与类型">4. Gunicorn Worker 模型与类型
+</h2><h3 id="40-前置概念io-bound-vs-cpu-bound">4.0 前置概念：IO-bound vs CPU-bound
+</h3><p>选 worker 类型前，先理解两种负载类型：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>类型</th>
+          <th>瓶颈</th>
+          <th>典型场景</th>
+          <th>CPU 状态</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><strong>IO-bound</strong>（IO 密集型）</td>
+          <td>等待外部 IO 完成</td>
+          <td>数据库查询、调外部 API、读写文件、等 Redis</td>
+          <td>CPU 空闲，大部分时间在等</td>
+      </tr>
+      <tr>
+          <td><strong>CPU-bound</strong>（计算密集型）</td>
+          <td>CPU 运算本身</td>
+          <td>图像处理、加密计算、数据压缩、ML 推理</td>
+          <td>CPU 满载，没有等待</td>
+      </tr>
+  </tbody>
+</table></div>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">IO-bound：  CPU 空闲等着 ████████░░░░░░░░ IO 完成才继续
+</span></span><span class="line"><span class="cl">CPU-bound： CPU 一直满载  ████████████████ 没有等待
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>对 worker 选型的直接影响：</p>
+<ul>
+<li>IO-bound → 用 <code>gevent</code>/<code>gthread</code>，单 worker 可并发处理多请求（等 IO 时切换到别的请求）</li>
+<li>CPU-bound → 用 <code>sync</code>，多进程各自跑满一个 CPU 核</li>
+</ul>
+<h3 id="401-pre-fork-是进程管理策略不是并发模型">4.0.1 pre-fork 是进程管理策略，不是并发模型
+</h3><p>一个常见误解是&quot;pre-fork = CPU-bound&quot;。实际上 <strong>pre-fork 只负责提前 fork 出 worker 进程池</strong>，是所有 worker 类型的基础架构层，与 IO/CPU 无关：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">pre-fork（进程管理层）← 所有 worker 类型都建立在这个基础上
+</span></span><span class="line"><span class="cl">  ├── sync worker     ← 进程内串行处理，适合 CPU-bound
+</span></span><span class="line"><span class="cl">  ├── gthread worker  ← 进程内线程池，适合混合负载
+</span></span><span class="line"><span class="cl">  └── gevent worker   ← 进程内协程，适合 IO-bound
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>你选 <code>-k sync/gthread/gevent</code> 决定的是 <strong>fork 出来的 worker 内部怎么处理并发</strong>，而 pre-fork 本身是中立的：</p>
+<ul>
+<li>pre-fork + sync = 每进程串行跑满 CPU → 所谓&quot;pre-fork 适合 CPU-bound&quot;</li>
+<li>pre-fork + gevent = 每进程内协程并发 → IO-bound 利器</li>
+</ul>
+<p>Gunicorn <strong>始终是 pre-fork 模型</strong>，区别只在 worker 内部策略。</p>
+<h3 id="402-对比-celery-的-pool-选项">4.0.2 对比 Celery 的 pool 选项
+</h3><p>Celery 的 <code>--pool</code> 和 Gunicorn 的 <code>-k</code> 是同一层面的选择——worker 内部的并发策略：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>Celery <code>--pool</code></th>
+          <th>Gunicorn <code>-k</code></th>
+          <th>机制</th>
+          <th>适合</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>prefork</code>（默认）</td>
+          <td><code>sync</code>（默认）</td>
+          <td>多进程，每个进程串行执行</td>
+          <td>CPU-bound</td>
+      </tr>
+      <tr>
+          <td><code>gevent</code></td>
+          <td><code>gevent</code></td>
+          <td>协程并发</td>
+          <td>IO-bound</td>
+      </tr>
+      <tr>
+          <td><code>eventlet</code></td>
+          <td>—</td>
+          <td>另一个协程库</td>
+          <td>IO-bound</td>
+      </tr>
+      <tr>
+          <td><code>threads</code></td>
+          <td><code>gthread</code></td>
+          <td>线程池</td>
+          <td>混合负载</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>设计差异：Celery 把&quot;进程管理&quot;和&quot;并发模型&quot;合并为一个 <code>--pool</code> 选项（prefork 和 gevent 平级选择），而 Gunicorn 分成两层——pre-fork 永远在，worker class 另选。本质一样：都是在选&quot;进程隔离 + 串行&quot;还是&quot;协程 + 并发&quot;来处理工作单元。</p>
+<h3 id="41-sync-worker默认">4.1 sync worker（默认）
+</h3><p>每个 worker 是一个独立进程，<strong>串行</strong>处理请求。适合 CPU-bound 应用 + buffering proxy 后面。致命缺陷：慢连接攻击（slowloris）。</p>
+<h3 id="42-gthread-worker">4.2 gthread worker
+</h3><p>每个 worker 进程内有一个<strong>线程池</strong>，请求被分发到线程池。<code>gunicorn -w 2 -k gthread --threads 4</code> = 同时处理 8 个请求。</p>
+<h3 id="43-gevent-worker">4.3 gevent worker
+</h3><p>基于 gevent greenlet，单 worker 可并发处理大量连接。适合 IO-bound、长连接场景。需要 <code>pip install gevent</code>，且所有 IO 必须 monkey-patch 友好。</p>
+<h3 id="44-用-gunicorn-跑-asgi-应用">4.4 用 Gunicorn 跑 ASGI 应用
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">gunicorn -w <span class="m">4</span> -k uvicorn.workers.UvicornWorker myapp:app
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="45-worker-类型选择决策表">4.5 worker 类型选择决策表
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>场景</th>
+          <th>推荐 worker</th>
+          <th>关键配置</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>简单 Flask/Django，放 nginx 后面</td>
+          <td><code>sync</code></td>
+          <td><code>workers = (2 × CPU) + 1</code></td>
+      </tr>
+      <tr>
+          <td>突破串行但不改代码</td>
+          <td><code>gthread</code></td>
+          <td><code>workers = CPU</code>，<code>threads = 2-4</code></td>
+      </tr>
+      <tr>
+          <td>IO-bound 高并发</td>
+          <td><code>gevent</code></td>
+          <td><code>worker-connections = 1000+</code></td>
+      </tr>
+      <tr>
+          <td>FastAPI / ASGI</td>
+          <td><code>uvicorn.workers.UvicornWorker</code></td>
+          <td>—</td>
+      </tr>
+  </tbody>
+</table></div>
+<hr>
+<h2 id="5-gunicorn-核心配置项">5. Gunicorn 核心配置项
+</h2><h3 id="51-进程与并发">5.1 进程与并发
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>配置</th>
+          <th>CLI flag</th>
+          <th>默认值</th>
+          <th>说明</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>workers</code></td>
+          <td><code>-w</code></td>
+          <td><code>1</code></td>
+          <td>worker 进程数，推荐 <code>(2 × CPU) + 1</code></td>
+      </tr>
+      <tr>
+          <td><code>worker_class</code></td>
+          <td><code>-k</code></td>
+          <td><code>'sync'</code></td>
+          <td>worker 类型</td>
+      </tr>
+      <tr>
+          <td><code>threads</code></td>
+          <td><code>--threads</code></td>
+          <td><code>1</code></td>
+          <td>每 worker 线程数（仅 gthread）</td>
+      </tr>
+      <tr>
+          <td><code>worker_connections</code></td>
+          <td><code>--worker-connections</code></td>
+          <td><code>1000</code></td>
+          <td>单 worker 最大并发连接（gthread/gevent）</td>
+      </tr>
+      <tr>
+          <td><code>preload_app</code></td>
+          <td><code>--preload</code></td>
+          <td><code>False</code></td>
+          <td>fork 前先加载 app</td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="52-超时与回收">5.2 超时与回收
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>配置</th>
+          <th>默认值</th>
+          <th>说明</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>timeout</code></td>
+          <td><code>30</code></td>
+          <td>worker 静默超时秒数</td>
+      </tr>
+      <tr>
+          <td><code>graceful_timeout</code></td>
+          <td><code>30</code></td>
+          <td>reload 时等待 worker 完成的秒数</td>
+      </tr>
+      <tr>
+          <td><code>max_requests</code></td>
+          <td><code>0</code></td>
+          <td>worker 处理多少请求后自动重启</td>
+      </tr>
+      <tr>
+          <td><code>max_requests_jitter</code></td>
+          <td><code>0</code></td>
+          <td>随机抖动，避免同步重启</td>
+      </tr>
+  </tbody>
+</table></div>
+<hr>
+<h2 id="6-gunicorn-底层原理">6. Gunicorn 底层原理
+</h2><h3 id="61-pre-fork-worker-模型">6.1 Pre-fork worker 模型
+</h3><ol>
+<li><strong>主进程（arbiter）启动</strong> → 解析配置、绑定 socket、如果 <code>preload_app</code> 则 import 应用</li>
+<li><strong>fork worker 进程</strong> → 子进程继承监听 socket</li>
+<li><strong>多个 worker 同时 accept</strong> → 内核保证同一连接只被一个 worker 拿到</li>
+<li><strong>主进程不接触 socket</strong> → 只负责监控 worker 健康、崩溃时 fork 替补</li>
+</ol>
+<h3 id="62-preload_app-的取舍">6.2 preload_app 的取舍
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>维度</th>
+          <th>不开 preload</th>
+          <th>开 preload</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>启动时间</td>
+          <td>慢（每 worker 各 import）</td>
+          <td>快（只 import 1 次）</td>
+      </tr>
+      <tr>
+          <td>内存占用</td>
+          <td>高</td>
+          <td>低（COW 共享只读页面）</td>
+      </tr>
+      <tr>
+          <td>热重载</td>
+          <td><code>HUP</code> 后新 worker 用新代码</td>
+          <td>必须 <code>USR2</code> 或重启主进程</td>
+      </tr>
+  </tbody>
+</table></div>
+<p><strong>踩坑</strong>：开 <code>preload_app</code> 后需在 <code>post_fork</code> hook 里重新初始化数据库连接池，否则多进程共用同一 fd。</p>
+<h3 id="63-max_requests-与内存泄漏">6.3 max_requests 与内存泄漏
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="n">max_requests</span> <span class="o">=</span> <span class="mi">1000</span>
+</span></span><span class="line"><span class="cl"><span class="n">max_requests_jitter</span> <span class="o">=</span> <span class="mi">50</span>  <span class="c1"># 错峰重启，避免短暂 0 worker</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><hr>
+<h2 id="7-gunicorn-信号处理与运维">7. Gunicorn 信号处理与运维
+</h2><h3 id="71-主进程信号">7.1 主进程信号
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>信号</th>
+          <th>行为</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>TERM</code></td>
+          <td>graceful shutdown</td>
+      </tr>
+      <tr>
+          <td><code>QUIT</code>/<code>INT</code></td>
+          <td>quick shutdown</td>
+      </tr>
+      <tr>
+          <td><code>HUP</code></td>
+          <td>reload 配置 + 起新 worker + 优雅停老 worker</td>
+      </tr>
+      <tr>
+          <td><code>USR1</code></td>
+          <td>重新打开日志文件</td>
+      </tr>
+      <tr>
+          <td><code>USR2</code></td>
+          <td>二进制升级（fork 新主进程）</td>
+      </tr>
+      <tr>
+          <td><code>TTIN</code>/<code>TTOU</code></td>
+          <td>增/减一个 worker</td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="72-systemd-集成">7.2 systemd 集成
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="k">[Unit]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Description</span><span class="o">=</span><span class="s">myapp gunicorn</span>
+</span></span><span class="line"><span class="cl"><span class="na">After</span><span class="o">=</span><span class="s">network.target</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">User</span><span class="o">=</span><span class="s">www-data</span>
+</span></span><span class="line"><span class="cl"><span class="na">WorkingDirectory</span><span class="o">=</span><span class="s">/opt/myapp</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/opt/myapp/.venv/bin/gunicorn -c gunicorn_conf.py myapp:app</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecReload</span><span class="o">=</span><span class="s">/bin/kill -HUP $MAINPID</span>
+</span></span><span class="line"><span class="cl"><span class="na">KillSignal</span><span class="o">=</span><span class="s">SIGTERM</span>
+</span></span><span class="line"><span class="cl"><span class="na">TimeoutStopSec</span><span class="o">=</span><span class="s">60</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Install]</span>
+</span></span><span class="line"><span class="cl"><span class="na">WantedBy</span><span class="o">=</span><span class="s">multi-user.target</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><hr>
+<h2 id="8-uwsgi-基础概念">8. uWSGI 基础概念
+</h2><h3 id="81-一句话定义">8.1 一句话定义
+</h3><p><code>uWSGI</code> 是一个用 C 实现的<strong>全功能应用服务器</strong>，支持多种语言（Python、Ruby、Perl、Lua、Go）和多种协议（uwsgi、http、fastcgi、scgi）。Python WSGI 只是它众多功能中的一个。</p>
+<h3 id="82-设计哲学">8.2 设计哲学
+</h3><p>uWSGI 的设计理念是&quot;<strong>一个进程做所有事</strong>&quot;——它内置了 HTTP 路由、负载均衡、缓存、队列、cron、监控等，试图成为一个完整的应用托管平台。</p>
+<p>这导致了两个特征：</p>
+<ul>
+<li><strong>功能极其丰富</strong>：几乎任何你能想到的功能它都有</li>
+<li><strong>配置极其复杂</strong>：官方列出 1000+ 配置项</li>
+</ul>
+<h3 id="83-与-gunicorn-的核心差异">8.3 与 Gunicorn 的核心差异
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>维度</th>
+          <th>Gunicorn</th>
+          <th>uWSGI</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>定位</td>
+          <td>WSGI HTTP 服务器</td>
+          <td>全功能应用服务器</td>
+      </tr>
+      <tr>
+          <td>理念</td>
+          <td>做好一件事</td>
+          <td>做完所有事</td>
+      </tr>
+      <tr>
+          <td>学习曲线</td>
+          <td>30 分钟上手</td>
+          <td>数小时到数天</td>
+      </tr>
+  </tbody>
+</table></div>
+<hr>
+<h2 id="9-uwsgi-基本使用">9. uWSGI 基本使用
+</h2><h3 id="91-安装">9.1 安装
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">pip install uwsgi
+</span></span><span class="line"><span class="cl"><span class="c1"># 或源码编译（推荐，可定制插件）</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>注意：uWSGI 是 C 项目，pip install 时会编译，需要 <code>gcc</code>、<code>python-dev</code> 等依赖。</p>
+<h3 id="92-最小可用命令">9.2 最小可用命令
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">uwsgi --http :8000 --wsgi-file myapp.py --callable app
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="93-常用启动姿势">9.3 常用启动姿势
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 4 个 worker，HTTP 模式</span>
+</span></span><span class="line"><span class="cl">uwsgi --http :8000 --module myapp:app --processes <span class="m">4</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># Unix socket 模式（配合 nginx）</span>
+</span></span><span class="line"><span class="cl">uwsgi --socket /tmp/uwsgi.sock --module myapp:app --processes <span class="m">4</span> --chmod-socket<span class="o">=</span><span class="m">666</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># uwsgi 协议（nginx 用 uwsgi_pass 连接）</span>
+</span></span><span class="line"><span class="cl">uwsgi --socket :3031 --module myapp:app --processes <span class="m">4</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="94-用-ini-配置文件推荐">9.4 用 INI 配置文件（推荐）
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1">; uwsgi.ini</span>
+</span></span><span class="line"><span class="cl"><span class="k">[uwsgi]</span>
+</span></span><span class="line"><span class="cl"><span class="na">module</span> <span class="o">=</span> <span class="s">myapp:app</span>
+</span></span><span class="line"><span class="cl"><span class="na">master</span> <span class="o">=</span> <span class="s">true</span>
+</span></span><span class="line"><span class="cl"><span class="na">processes</span> <span class="o">=</span> <span class="s">4</span>
+</span></span><span class="line"><span class="cl"><span class="na">threads</span> <span class="o">=</span> <span class="s">2</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="na">socket</span> <span class="o">=</span> <span class="s">/tmp/uwsgi.sock</span>
+</span></span><span class="line"><span class="cl"><span class="na">chmod-socket</span> <span class="o">=</span> <span class="s">666</span>
+</span></span><span class="line"><span class="cl"><span class="na">vacuum</span> <span class="o">=</span> <span class="s">true</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="na">die-on-term</span> <span class="o">=</span> <span class="s">true</span>
+</span></span><span class="line"><span class="cl"><span class="na">harakiri</span> <span class="o">=</span> <span class="s">30</span>
+</span></span><span class="line"><span class="cl"><span class="na">max-requests</span> <span class="o">=</span> <span class="s">1000</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">; 日志</span>
+</span></span><span class="line"><span class="cl"><span class="na">logto</span> <span class="o">=</span> <span class="s">/var/log/myapp/uwsgi.log</span>
+</span></span><span class="line"><span class="cl"><span class="na">log-maxsize</span> <span class="o">=</span> <span class="s">10485760</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>启动：<code>uwsgi --ini uwsgi.ini</code></p>
+<h3 id="95-与-nginx-配合">9.5 与 nginx 配合
+</h3><p>nginx 配置（注意用 <code>uwsgi_pass</code> 而非 <code>proxy_pass</code>）：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">upstream</span> <span class="s">uwsgi_backend</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">server</span> <span class="s">unix:///tmp/uwsgi.sock</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">server</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">listen</span> <span class="mi">443</span> <span class="s">ssl</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">server_name</span> <span class="s">myapp.example.com</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="kn">location</span> <span class="s">/</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">uwsgi_pass</span> <span class="s">uwsgi_backend</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">include</span> <span class="s">uwsgi_params</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="kn">location</span> <span class="s">/static/</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">alias</span> <span class="s">/opt/myapp/static/</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里走的是 <strong>uwsgi 二进制协议</strong>，比 HTTP 协议少一次解析，理论上性能更高。</p>
+<hr>
+<h2 id="10-uwsgi-进程模型与并发">10. uWSGI 进程模型与并发
+</h2><h3 id="101-master--worker-模型">10.1 master + worker 模型
+</h3><p>与 Gunicorn 类似，uWSGI 也用 master 进程管 worker：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">master 进程（可选，--master 启用）
+</span></span><span class="line"><span class="cl">  ├── worker 1（进程，可含多线程）
+</span></span><span class="line"><span class="cl">  ├── worker 2
+</span></span><span class="line"><span class="cl">  ├── worker 3
+</span></span><span class="line"><span class="cl">  └── worker 4
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>差异在于 uWSGI 的 master 功能更重——它还负责内置 cron、spooler、信号路由等。</p>
+<h3 id="102-并发模式">10.2 并发模式
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>模式</th>
+          <th>配置</th>
+          <th>说明</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>多进程</td>
+          <td><code>processes = N</code></td>
+          <td>每 worker 串行处理（同 Gunicorn sync）</td>
+      </tr>
+      <tr>
+          <td>多进程 + 多线程</td>
+          <td><code>processes = N</code> + <code>threads = M</code></td>
+          <td>每 worker 内 M 线程并发</td>
+      </tr>
+      <tr>
+          <td>协程（gevent）</td>
+          <td><code>gevent = 100</code></td>
+          <td>需编译 gevent 插件</td>
+      </tr>
+      <tr>
+          <td>协程（greenlet）</td>
+          <td><code>async = 100</code> + <code>greenlet</code></td>
+          <td>—</td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="103-emperor-模式">10.3 Emperor 模式
+</h3><p>uWSGI 独有的<strong>多应用管理机制</strong>：一个 emperor 进程监控一个目录，目录里每个 .ini 文件代表一个 vassal（应用实例）。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">uwsgi --emperor /etc/uwsgi/vassals/
+</span></span></code></pre></td></tr></table>
+</div>
+</div><ul>
+<li>新增 .ini → 自动启动</li>
+<li>修改 .ini → 自动 graceful reload</li>
+<li>删除 .ini → 自动停止</li>
+</ul>
+<p>适合一台机器跑多个 Python 应用的场景。Gunicorn 没有等价功能，需要靠 systemd 多 service 或 supervisor 实现。</p>
+<h3 id="104-cheaper-子系统自动伸缩">10.4 Cheaper 子系统（自动伸缩）
+</h3><p>uWSGI 内置 worker 自动伸缩：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="k">[uwsgi]</span>
+</span></span><span class="line"><span class="cl"><span class="na">processes</span> <span class="o">=</span> <span class="s">8</span>
+</span></span><span class="line"><span class="cl"><span class="na">cheaper</span> <span class="o">=</span> <span class="s">2           ; 最少保留 2 个 worker</span>
+</span></span><span class="line"><span class="cl"><span class="na">cheaper-algo</span> <span class="o">=</span> <span class="s">spare  ; 算法：spare / busyness / backlog</span>
+</span></span><span class="line"><span class="cl"><span class="na">cheaper-step</span> <span class="o">=</span> <span class="s">1      ; 每次增加 1 个</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>类比 Gunicorn 的 <code>TTIN</code>/<code>TTOU</code> 信号，但 cheaper 是自动的，不需要外部脚本。</p>
+<hr>
+<h2 id="11-uwsgi-核心配置项">11. uWSGI 核心配置项
+</h2><p>uWSGI 配置项极多，下面只列日常最常用的：</p>
+<h3 id="111-进程与并发">11.1 进程与并发
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>配置</th>
+          <th>说明</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>master = true</code></td>
+          <td>启用 master 进程管理（<strong>强烈推荐</strong>）</td>
+      </tr>
+      <tr>
+          <td><code>processes</code> / <code>workers</code></td>
+          <td>worker 进程数</td>
+      </tr>
+      <tr>
+          <td><code>threads</code></td>
+          <td>每 worker 线程数</td>
+      </tr>
+      <tr>
+          <td><code>harakiri</code></td>
+          <td>请求超时秒数（超过则 kill worker）</td>
+      </tr>
+      <tr>
+          <td><code>max-requests</code></td>
+          <td>worker 处理 N 个请求后重启</td>
+      </tr>
+      <tr>
+          <td><code>reload-on-rss</code></td>
+          <td>worker 内存超过 N MB 后重启</td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="112-网络">11.2 网络
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>配置</th>
+          <th>说明</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>socket</code></td>
+          <td>监听地址（uwsgi 协议）</td>
+      </tr>
+      <tr>
+          <td><code>http</code> / <code>http-socket</code></td>
+          <td>监听地址（HTTP 协议）</td>
+      </tr>
+      <tr>
+          <td><code>chmod-socket</code></td>
+          <td>Unix socket 权限</td>
+      </tr>
+      <tr>
+          <td><code>listen</code></td>
+          <td>backlog 队列长度（默认 100）</td>
+      </tr>
+      <tr>
+          <td><code>buffer-size</code></td>
+          <td>请求 header 缓冲区（默认 4096）</td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="113-应用加载">11.3 应用加载
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>配置</th>
+          <th>说明</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>module</code></td>
+          <td>Python 模块路径（<code>myapp:app</code>）</td>
+      </tr>
+      <tr>
+          <td><code>wsgi-file</code></td>
+          <td>WSGI 文件路径</td>
+      </tr>
+      <tr>
+          <td><code>callable</code></td>
+          <td>WSGI callable 名（默认 <code>application</code>）</td>
+      </tr>
+      <tr>
+          <td><code>lazy-apps</code></td>
+          <td>每个 worker 独立加载应用（类似 Gunicorn 不开 preload）</td>
+      </tr>
+      <tr>
+          <td><code>virtualenv</code> / <code>home</code></td>
+          <td>virtualenv 路径</td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="114-运维">11.4 运维
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>配置</th>
+          <th>说明</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>vacuum = true</code></td>
+          <td>退出时清理 socket 文件</td>
+      </tr>
+      <tr>
+          <td><code>die-on-term = true</code></td>
+          <td>收到 TERM 信号时退出（而非 reload）</td>
+      </tr>
+      <tr>
+          <td><code>pidfile</code></td>
+          <td>PID 文件路径</td>
+      </tr>
+      <tr>
+          <td><code>daemonize</code></td>
+          <td>后台运行并指定日志路径</td>
+      </tr>
+      <tr>
+          <td><code>touch-reload</code></td>
+          <td>监控文件变化自动 reload</td>
+      </tr>
+      <tr>
+          <td><code>py-autoreload</code></td>
+          <td>开发模式下自动重载 Python 文件</td>
+      </tr>
+  </tbody>
+</table></div>
+<hr>
+<h2 id="12-uwsgi-底层原理与协议">12. uWSGI 底层原理与协议
+</h2><h3 id="121-uwsgi-二进制协议">12.1 uwsgi 二进制协议
+</h3><p>uWSGI 定义了自己的二进制协议（全小写 <code>uwsgi</code>），用于 nginx ↔ uWSGI 之间通信。协议结构：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">[1 byte modifier1] [2 bytes datasize] [1 byte modifier2] [key-value pairs...]
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>相比 HTTP 文本协议，uwsgi 协议的优势：</p>
+<ul>
+<li>解析更快（固定头部 + 预编码长度）</li>
+<li>减少 CPU 消耗（无需解析 HTTP header 文本）</li>
+</ul>
+<p>nginx 使用 <code>uwsgi_pass</code> 指令直接发送 uwsgi 协议包，省去了&quot;nginx 解析 HTTP → 重新编码 HTTP → uWSGI 再解析 HTTP&quot;的开销。</p>
+<p><strong>但实际性能差距很小</strong>——现代 CPU 解析 HTTP header 本身就很快，这点优化在大多数场景下可以忽略。</p>
+<h3 id="122-与-gunicorn-pre-fork-的对比">12.2 与 Gunicorn pre-fork 的对比
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>维度</th>
+          <th>Gunicorn</th>
+          <th>uWSGI</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>请求分发</td>
+          <td>内核级 accept() 竞争</td>
+          <td>可选 thunderherd 防护 + 内核分发</td>
+      </tr>
+      <tr>
+          <td>master 角色</td>
+          <td>纯管理，不接触 socket</td>
+          <td>管理 + 内置路由 + cron + spooler</td>
+      </tr>
+      <tr>
+          <td>代码热加载</td>
+          <td>HUP/USR2</td>
+          <td>touch-reload / <code>--py-autoreload</code></td>
+      </tr>
+      <tr>
+          <td>内存管理</td>
+          <td>max_requests 兜底</td>
+          <td>max-requests + <code>reload-on-rss</code>（按内存）</td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="123-lazy-apps-与-preload">12.3 lazy-apps 与 preload
+</h3><p>uWSGI 的 <code>lazy-apps = true</code> 等价于 Gunicorn 不开 <code>--preload</code>：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>模式</th>
+          <th>uWSGI</th>
+          <th>Gunicorn 等价</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>master 加载，fork 共享</td>
+          <td>默认行为</td>
+          <td><code>--preload</code></td>
+      </tr>
+      <tr>
+          <td>每 worker 独立加载</td>
+          <td><code>lazy-apps = true</code></td>
+          <td>默认行为（不加 preload）</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>同样的坑：不开 lazy-apps 时要注意数据库连接池在 fork 后的问题。uWSGI 提供 <code>@postfork</code> 装饰器来处理：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">uwsgidecorators</span> <span class="kn">import</span> <span class="n">postfork</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nd">@postfork</span>
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">reconnect_db</span><span class="p">():</span>
+</span></span><span class="line"><span class="cl">    <span class="n">db</span><span class="o">.</span><span class="n">engine</span><span class="o">.</span><span class="n">dispose</span><span class="p">()</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><hr>
+<h2 id="13-uwsgi-信号处理与运维">13. uWSGI 信号处理与运维
+</h2><h3 id="131-信号对照">13.1 信号对照
+</h3><p><strong>重要</strong>：uWSGI 默认信号语义和 Gunicorn <strong>不同</strong>。特别是 <code>TERM</code> 信号：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>信号</th>
+          <th>uWSGI 默认行为</th>
+          <th>Gunicorn 行为</th>
+          <th>差异</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>TERM</code></td>
+          <td><strong>brutal reload</strong>（不是停止！）</td>
+          <td>graceful shutdown</td>
+          <td><strong>大坑</strong></td>
+      </tr>
+      <tr>
+          <td><code>INT</code></td>
+          <td>quick shutdown</td>
+          <td>quick shutdown</td>
+          <td>一致</td>
+      </tr>
+      <tr>
+          <td><code>QUIT</code></td>
+          <td>graceful shutdown</td>
+          <td>quick shutdown</td>
+          <td>反的</td>
+      </tr>
+      <tr>
+          <td><code>HUP</code></td>
+          <td>graceful reload</td>
+          <td>graceful reload</td>
+          <td>一致</td>
+      </tr>
+      <tr>
+          <td><code>USR1</code></td>
+          <td>打印统计信息</td>
+          <td>重新打开日志</td>
+          <td>不同</td>
+      </tr>
+      <tr>
+          <td><code>USR2</code></td>
+          <td>—</td>
+          <td>binary upgrade</td>
+          <td>—</td>
+      </tr>
+  </tbody>
+</table></div>
+<p><strong>这是 uWSGI 最大的坑之一</strong>：systemd 默认发 <code>TERM</code> 停服务，但 uWSGI 收到 <code>TERM</code> 会 reload 而不是停止！解决办法：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">die-on-term</span> <span class="o">=</span> <span class="s">true  ; 让 TERM 信号正确停止进程</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="132-graceful-reload-方式">13.2 Graceful reload 方式
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 方式1：发 HUP</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> -HUP <span class="k">$(</span>cat /tmp/uwsgi.pid<span class="k">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 方式2：touch-reload（配置了 touch-reload = /tmp/reload 时）</span>
+</span></span><span class="line"><span class="cl">touch /tmp/reload
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 方式3：master-fifo（高级，支持链式 reload）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> r &gt; /tmp/uwsgi-fifo
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="133-systemd-集成">13.3 systemd 集成
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="k">[Unit]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Description</span><span class="o">=</span><span class="s">myapp uWSGI</span>
+</span></span><span class="line"><span class="cl"><span class="na">After</span><span class="o">=</span><span class="s">network.target</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">User</span><span class="o">=</span><span class="s">www-data</span>
+</span></span><span class="line"><span class="cl"><span class="na">WorkingDirectory</span><span class="o">=</span><span class="s">/opt/myapp</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/opt/myapp/.venv/bin/uwsgi --ini uwsgi.ini</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecReload</span><span class="o">=</span><span class="s">/bin/kill -HUP $MAINPID</span>
+</span></span><span class="line"><span class="cl"><span class="na">KillSignal</span><span class="o">=</span><span class="s">SIGQUIT</span>
+</span></span><span class="line"><span class="cl"><span class="na">TimeoutStopSec</span><span class="o">=</span><span class="s">60</span>
+</span></span><span class="line"><span class="cl"><span class="na">Restart</span><span class="o">=</span><span class="s">on-failure</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Install]</span>
+</span></span><span class="line"><span class="cl"><span class="na">WantedBy</span><span class="o">=</span><span class="s">multi-user.target</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>注意 <code>KillSignal=SIGQUIT</code>（uWSGI graceful stop）而不是 SIGTERM（uWSGI 会 reload）。或者在 ini 里加 <code>die-on-term = true</code> 后用 SIGTERM。</p>
+<hr>
+<h2 id="14-gunicorn-vs-uwsgi-全方位对比">14. Gunicorn vs uWSGI 全方位对比
+</h2><h3 id="141-配置复杂度">14.1 配置复杂度
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>维度</th>
+          <th>Gunicorn</th>
+          <th>uWSGI</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>核心配置项</td>
+          <td>~25 个</td>
+          <td>1000+ 个</td>
+      </tr>
+      <tr>
+          <td>最小启动命令</td>
+          <td><code>gunicorn app:app</code></td>
+          <td><code>uwsgi --http :8000 --module app:app</code></td>
+      </tr>
+      <tr>
+          <td>配置格式</td>
+          <td>Python 文件（直觉）</td>
+          <td>INI/XML/YAML/JSON/命令行（选择困难）</td>
+      </tr>
+      <tr>
+          <td>上手时间</td>
+          <td>30 分钟</td>
+          <td>数小时</td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="142-性能">14.2 性能
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>维度</th>
+          <th>Gunicorn</th>
+          <th>uWSGI</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>请求处理开销</td>
+          <td>稍高（Python 层面）</td>
+          <td>稍低（C 实现）</td>
+      </tr>
+      <tr>
+          <td>nginx 连接方式</td>
+          <td>HTTP proxy_pass</td>
+          <td>uwsgi 协议（理论更快）</td>
+      </tr>
+      <tr>
+          <td>实际差距</td>
+          <td><strong>几乎可忽略</strong>（瓶颈在应用代码）</td>
+          <td>—</td>
+      </tr>
+      <tr>
+          <td>启动速度</td>
+          <td>快（纯 Python）</td>
+          <td>稍慢（加载插件）</td>
+      </tr>
+  </tbody>
+</table></div>
+<p><strong>结论</strong>：对于绝大多数 Python Web 应用，两者性能差距在噪音范围内。应用代码本身才是瓶颈。</p>
+<h3 id="143-功能范围">14.3 功能范围
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>功能</th>
+          <th>Gunicorn</th>
+          <th>uWSGI</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>WSGI 服务</td>
+          <td>✅</td>
+          <td>✅</td>
+      </tr>
+      <tr>
+          <td>多语言支持</td>
+          <td>❌（仅 Python）</td>
+          <td>✅（Python/Ruby/Perl/Lua/Go）</td>
+      </tr>
+      <tr>
+          <td>Emperor 多应用管理</td>
+          <td>❌</td>
+          <td>✅</td>
+      </tr>
+      <tr>
+          <td>内置缓存</td>
+          <td>❌</td>
+          <td>✅</td>
+      </tr>
+      <tr>
+          <td>内置任务队列（Spooler）</td>
+          <td>❌</td>
+          <td>✅</td>
+      </tr>
+      <tr>
+          <td>内置 Cron</td>
+          <td>❌</td>
+          <td>✅</td>
+      </tr>
+      <tr>
+          <td>内置负载均衡</td>
+          <td>❌</td>
+          <td>✅</td>
+      </tr>
+      <tr>
+          <td>自动伸缩 worker</td>
+          <td>手动（TTIN/TTOU）</td>
+          <td>✅（cheaper 子系统）</td>
+      </tr>
+      <tr>
+          <td>按内存重启</td>
+          <td>❌</td>
+          <td>✅（reload-on-rss）</td>
+      </tr>
+      <tr>
+          <td>二进制协议</td>
+          <td>❌</td>
+          <td>✅（uwsgi protocol）</td>
+      </tr>
+      <tr>
+          <td>ASGI 支持</td>
+          <td>通过 Uvicorn worker</td>
+          <td>有限</td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="144-社区现状与维护风险">14.4 社区现状与维护风险
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>维度</th>
+          <th>Gunicorn</th>
+          <th>uWSGI</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>GitHub stars</td>
+          <td>~10k</td>
+          <td>~3.4k</td>
+      </tr>
+      <tr>
+          <td>最近发布</td>
+          <td>活跃</td>
+          <td>2022 年后显著放缓</td>
+      </tr>
+      <tr>
+          <td>核心维护者</td>
+          <td>多人</td>
+          <td>原作者退出日常维护</td>
+      </tr>
+      <tr>
+          <td>Python 3.12+ 兼容</td>
+          <td>及时跟进</td>
+          <td>社区补丁延迟</td>
+      </tr>
+      <tr>
+          <td>安全修复响应</td>
+          <td>及时</td>
+          <td>不确定</td>
+      </tr>
+  </tbody>
+</table></div>
+<p><strong>uWSGI 的维护风险是选型时必须考虑的</strong>。原作者 Roberto De Ioanni 已基本退出，社区 fork（如 <code>uwsgi-ng</code>）尚未成熟。</p>
+<h3 id="145-调试友好度">14.5 调试友好度
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>维度</th>
+          <th>Gunicorn</th>
+          <th>uWSGI</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>日志可读性</td>
+          <td>高（Python 标准 logging）</td>
+          <td>中（自有格式，冗长）</td>
+      </tr>
+      <tr>
+          <td>错误信息</td>
+          <td>直观</td>
+          <td>经常是 C 层报错，初学者难懂</td>
+      </tr>
+      <tr>
+          <td>配置错误提示</td>
+          <td>明确</td>
+          <td>&ldquo;unrecognized option&rdquo; 然后启动失败</td>
+      </tr>
+      <tr>
+          <td>信号语义</td>
+          <td>直觉一致</td>
+          <td>TERM 不停而是 reload（大坑）</td>
+      </tr>
+  </tbody>
+</table></div>
+<hr>
+<h2 id="15-选型决策与场景推荐">15. 选型决策与场景推荐
+</h2><h3 id="151-选-gunicorn-的场景">15.1 选 Gunicorn 的场景
+</h3><ul>
+<li>✅ 新项目，没有历史包袱</li>
+<li>✅ 团队 Python 为主，不需要多语言</li>
+<li>✅ 追求简单可维护</li>
+<li>✅ 容器化部署（k8s / Docker）</li>
+<li>✅ 需要长期维护保障</li>
+</ul>
+<h3 id="152-选-uwsgi-的场景">15.2 选 uWSGI 的场景
+</h3><ul>
+<li>✅ 一台机器跑多个应用（Emperor 模式）</li>
+<li>✅ 需要内置 cron / spooler / 缓存（不想引入 Celery 等外部组件）</li>
+<li>✅ 多语言混合部署（Python + Ruby + Perl）</li>
+<li>✅ 团队已有成熟的 uWSGI 运维经验</li>
+<li>✅ 需要 uwsgi 协议（极端性能场景）</li>
+</ul>
+<h3 id="153-一句话建议">15.3 一句话建议
+</h3><blockquote>
+<p><strong>2026 年新项目默认选 Gunicorn</strong>。除非你有明确的 uWSGI 独有功能需求（Emperor、多语言、内置 spooler），否则 Gunicorn 的简单性和社区活跃度是更安全的选择。</p></blockquote>
+<hr>
+<h2 id="16-生产部署建议">16. 生产部署建议
+</h2><h3 id="161-worker-数量两者通用">16.1 worker 数量（两者通用）
+</h3><p>公式：<code>workers = (2 × CPU cores) + 1</code>（起点，不是上限）。实际：4-12 个 worker 足够应对大多数场景。</p>
+<h3 id="162-一定要放在-nginx-后面两者通用">16.2 一定要放在 nginx 后面（两者通用）
+</h3><p>两者的 sync worker 都不能直接暴露给公网。nginx 的 buffering 能力保护应用免受慢连接攻击。</p>
+<h3 id="163-gunicorn--nginx-配置">16.3 Gunicorn + nginx 配置
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">upstream</span> <span class="s">app_server</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">server</span> <span class="s">unix:/tmp/gunicorn.sock</span> <span class="s">fail_timeout=0</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">server</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">listen</span> <span class="mi">443</span> <span class="s">ssl</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">location</span> <span class="s">/</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">proxy_set_header</span> <span class="s">X-Forwarded-For</span> <span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">proxy_set_header</span> <span class="s">X-Forwarded-Proto</span> <span class="nv">$scheme</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">proxy_set_header</span> <span class="s">Host</span> <span class="nv">$http_host</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">proxy_redirect</span> <span class="no">off</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">proxy_pass</span> <span class="s">http://app_server</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="164-uwsgi--nginx-配置">16.4 uWSGI + nginx 配置
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">upstream</span> <span class="s">uwsgi_backend</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">server</span> <span class="s">unix:///tmp/uwsgi.sock</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">server</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">listen</span> <span class="mi">443</span> <span class="s">ssl</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">location</span> <span class="s">/</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">uwsgi_pass</span> <span class="s">uwsgi_backend</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">include</span> <span class="s">uwsgi_params</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="165-容器化部署">16.5 容器化部署
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># gunicorn_conf.py for k8s</span>
+</span></span><span class="line"><span class="cl"><span class="n">bind</span> <span class="o">=</span> <span class="s2">&#34;0.0.0.0:8000&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="n">workers</span> <span class="o">=</span> <span class="mi">2</span>               <span class="c1"># 每 pod 少 worker，靠水平扩 pod</span>
+</span></span><span class="line"><span class="cl"><span class="n">worker_class</span> <span class="o">=</span> <span class="s2">&#34;gthread&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="n">threads</span> <span class="o">=</span> <span class="mi">4</span>
+</span></span><span class="line"><span class="cl"><span class="n">preload_app</span> <span class="o">=</span> <span class="kc">True</span>
+</span></span><span class="line"><span class="cl"><span class="n">accesslog</span> <span class="o">=</span> <span class="s2">&#34;-&#34;</span>           <span class="c1"># stdout，让容器 runtime 收集</span>
+</span></span><span class="line"><span class="cl"><span class="n">errorlog</span> <span class="o">=</span> <span class="s2">&#34;-&#34;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1">; uwsgi.ini for k8s</span>
+</span></span><span class="line"><span class="cl"><span class="k">[uwsgi]</span>
+</span></span><span class="line"><span class="cl"><span class="na">http</span> <span class="o">=</span> <span class="s">0.0.0.0:8000</span>
+</span></span><span class="line"><span class="cl"><span class="na">module</span> <span class="o">=</span> <span class="s">myapp:app</span>
+</span></span><span class="line"><span class="cl"><span class="na">master</span> <span class="o">=</span> <span class="s">true</span>
+</span></span><span class="line"><span class="cl"><span class="na">processes</span> <span class="o">=</span> <span class="s">2</span>
+</span></span><span class="line"><span class="cl"><span class="na">threads</span> <span class="o">=</span> <span class="s">4</span>
+</span></span><span class="line"><span class="cl"><span class="na">die-on-term</span> <span class="o">=</span> <span class="s">true</span>
+</span></span><span class="line"><span class="cl"><span class="na">harakiri</span> <span class="o">=</span> <span class="s">30</span>
+</span></span><span class="line"><span class="cl"><span class="c1">; 不要 daemonize，容器需要前台进程</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><hr>
+<h2 id="17-常见高频面试题">17. 常见高频面试题
+</h2><h3 id="171-gunicorn-和-uwsgi-的区别是什么">17.1 Gunicorn 和 uWSGI 的区别是什么？
+</h3><p><strong>答：</strong> 核心区别在设计哲学。Gunicorn 是纯 Python 实现的轻量 WSGI 服务器，只做好&quot;请求转发 + 进程管理&quot;一件事；uWSGI 是 C 实现的全功能应用服务器，内置缓存、cron、多语言支持等。Gunicorn 配置简单（~25 个核心项），uWSGI 配置复杂（1000+ 项）。性能差距在实际应用中可忽略。2026 年新项目推荐 Gunicorn，因为社区活跃度和维护保障更好。</p>
+<h3 id="172-为什么-worker-数推荐-2--cpu--1">17.2 为什么 worker 数推荐 <code>(2 × CPU) + 1</code>？
+</h3><p><strong>答：</strong> 假设典型 Web 负载 CPU 时间和 IO 等待各占一半，2 倍 CPU 数让一个 worker 等 IO 时另一个能用 CPU，<code>+1</code> 保证不卡在超线程上。这是起点，不是上限——IO-bound 应用用 gthread/gevent 后 worker 数可以更少。</p>
+<h3 id="173-uwsgi-的-term-信号坑是什么">17.3 uWSGI 的 TERM 信号坑是什么？
+</h3><p><strong>答：</strong> uWSGI 默认收到 TERM 信号会 <strong>reload 而非停止</strong>，与 Unix 惯例和 systemd 预期相反。必须配置 <code>die-on-term = true</code> 或在 systemd 里用 <code>KillSignal=SIGQUIT</code>。这是 uWSGI 最常见的运维事故来源之一。</p>
+<h3 id="174-uwsgi-协议比-http-快多少">17.4 uwsgi 协议比 HTTP 快多少？
+</h3><p><strong>答：</strong> 理论上 uwsgi 二进制协议比 HTTP 文本协议解析更快，但实际差距几乎可忽略。现代 CPU 解析 HTTP header 耗时在微秒级，瓶颈永远在应用代码。选 uwsgi 协议的真正理由是 nginx 原生支持 <code>uwsgi_pass</code>，配置规范，不是性能。</p>
+<h3 id="175-sync-worker-为什么不能直接对外">17.5 sync worker 为什么不能直接对外？
+</h3><p><strong>答：</strong> sync worker 一次处理一个请求且直接读客户端 socket。攻击者用慢连接（每秒几字节）就能独占 worker。100 个慢连接占满 100 个 worker，正常用户全部 503。nginx 的事件驱动模型先 buffer 完整请求再转发，慢客户端只占 epoll 事件（极廉价），保护了后端 worker。两个服务器都有这个问题。</p>
+<h3 id="176-emperor-模式是什么gunicorn-有等价方案吗">17.6 Emperor 模式是什么？Gunicorn 有等价方案吗？
+</h3><p><strong>答：</strong> Emperor 是 uWSGI 的多应用管理机制：一个 emperor 进程监控目录，每个 .ini 代表一个应用实例（vassal），自动启停和 reload。Gunicorn 没有内置等价功能，需要 systemd 多 unit / supervisor / k8s 多 deployment 实现。</p>
+<h3 id="177---preload--lazy-apps-该不该开">17.7 <code>--preload</code> / <code>lazy-apps</code> 该不该开？
+</h3><p><strong>答：</strong> 建议开（Gunicorn <code>--preload</code> 或 uWSGI 默认不加 <code>lazy-apps</code>）：启动快、内存省（COW）。但必须在 fork 后重新初始化数据库连接池——Gunicorn 用 <code>post_fork</code> hook，uWSGI 用 <code>@postfork</code> 装饰器。热重载需要用 USR2/HUP 而非简单 HUP。</p>
+<h3 id="178-2026-年新项目怎么选">17.8 2026 年新项目怎么选？
+</h3><p><strong>答：</strong> 默认 Gunicorn。理由：配置简单、社区活跃、与 k8s/Docker 生态天然契合、维护有保障。只有在需要 Emperor（一机多应用）、内置 spooler/cron（不想引入 Celery）、或多语言部署时才考虑 uWSGI。如果是 ASGI 应用（FastAPI），直接用 Uvicorn 或 Gunicorn + UvicornWorker。</p>
+<hr>
+<h2 id="18-附录进一步阅读">18. 附录：进一步阅读
+</h2><h3 id="181-官方文档">18.1 官方文档
+</h3><ul>
+<li><a class="link" href="https://docs.gunicorn.org/en/latest/"  target="_blank" rel="noopener"
+    >Gunicorn Documentation</a></li>
+<li><a class="link" href="https://gunicorn.org/design/"  target="_blank" rel="noopener"
+    >Gunicorn Design</a></li>
+<li><a class="link" href="https://gunicorn.org/deploy/"  target="_blank" rel="noopener"
+    >Gunicorn Deploy</a></li>
+<li><a class="link" href="https://gunicorn.org/signals/"  target="_blank" rel="noopener"
+    >Gunicorn Signals</a></li>
+<li><a class="link" href="https://uwsgi-docs.readthedocs.io/en/latest/"  target="_blank" rel="noopener"
+    >uWSGI Documentation</a></li>
+<li><a class="link" href="https://uwsgi-docs.readthedocs.io/en/latest/Options.html"  target="_blank" rel="noopener"
+    >uWSGI Options</a></li>
+<li><a class="link" href="https://uwsgi-docs.readthedocs.io/en/latest/Emperor.html"  target="_blank" rel="noopener"
+    >uWSGI Emperor</a></li>
+<li><a class="link" href="https://uwsgi-docs.readthedocs.io/en/latest/articles/TheArtOfGracefulReloading.html"  target="_blank" rel="noopener"
+    >uWSGI The Art of Graceful Reloading</a></li>
+<li><a class="link" href="https://peps.python.org/pep-3333/"  target="_blank" rel="noopener"
+    >PEP 3333: WSGI v1.0.1</a></li>
+</ul>
+<h3 id="182-一句话总结">18.2 一句话总结
+</h3><p>Gunicorn 是&quot;简单可靠的 pre-fork WSGI 服务器&quot;，uWSGI 是&quot;功能全面但复杂的应用服务器平台&quot;。两者性能接近，差异在设计哲学和运维成本。新项目选 Gunicorn，老系统有 uWSGI 经验则继续用。</p>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/gunicorn/">Gunicorn</a>
+        
+            <a href="/tags/uwsgi/">Uwsgi</a>
+        
+            <a href="/tags/python/">Python</a>
+        
+            <a href="/tags/wsgi/">Wsgi</a>
+        
+            <a href="/tags/deploy/">Deploy</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>
