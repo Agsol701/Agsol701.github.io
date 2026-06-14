@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="🎯 AI Agent 工程师每日一题 · 2026年05月20日 题目 请设计一个基于 ReAct (Reasoning + Acting) 框架的 Agent 系统,用于自动化处理用户的复杂查询任务(如&quot;帮我分析最近一周的销售数据并生成报告&quot;)。要求:\n描述 ReAct 框架的核心思想和执行流程 设计该 Agent 的 Prompt 结构(包括 System Prompt 和 Few-shot 示例) 如何处理工具调用失败和推理陷入循环的情况? 用伪代码实现 ReAct 的主循环逻辑 题解 核心要点 ReAct 核心思想: 将推理(Reasoning)和行动(Acting)交织进行,让 LLM 在执行动作前先进行思考,并在行动后观察结果再继续推理,形成 Thought → Action → Observation 的循环 提示词设计: 需要明确定义可用工具列表、输出格式规范、示例对话,引导模型按固定格式输出思考和动作 错误处理: 设置最大重试次数、检测循环模式、提供错误反馈给 LLM 让其调整策略 循环控制: 设置最大迭代次数、检测任务完成标志(如 Final Answer)、监控重复动作 Prompt 结构示例 System Prompt: 你是一个智能助手,可以使用工具来回答用户问题。请按照以下格式思考和行动:\nThought: [你的推理过程,分析当前情况和下一步计划] Action: [工具名称] Action Input: [工具参数,JSON格式]\n观察结果后继续思考,直到能给出最终答案。\n可用工具:\nquery_database: 查询销售数据库,参数 {&ldquo;sql&rdquo;: &ldquo;SQL语句&rdquo;, &ldquo;date_range&rdquo;: &ldquo;日期范围&rdquo;} generate_chart: 生成图表,参数 {&ldquo;data&rdquo;: [&hellip;], &ldquo;chart_type&rdquo;: &ldquo;bar/line/pie&rdquo;} create_report: 生成报告文档,参数 {&ldquo;title&rdquo;: &ldquo;标题&rdquo;, &ldquo;content&rdquo;: &ldquo;内容&rdquo;} 当你准备好最终答案时,使用: Final Answer: [你的最终回答]\n">
+<title>AI Agent 工程师每日一题：ReAct Agent 系统设计</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/ai-agent-%E5%B7%A5%E7%A8%8B%E5%B8%88%E6%AF%8F%E6%97%A5%E4%B8%80%E9%A2%98react-agent-%E7%B3%BB%E7%BB%9F%E8%AE%BE%E8%AE%A1/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="AI Agent 工程师每日一题：ReAct Agent 系统设计">
+<meta property='og:description' content="🎯 AI Agent 工程师每日一题 · 2026年05月20日 题目 请设计一个基于 ReAct (Reasoning + Acting) 框架的 Agent 系统,用于自动化处理用户的复杂查询任务(如&quot;帮我分析最近一周的销售数据并生成报告&quot;)。要求:\n描述 ReAct 框架的核心思想和执行流程 设计该 Agent 的 Prompt 结构(包括 System Prompt 和 Few-shot 示例) 如何处理工具调用失败和推理陷入循环的情况? 用伪代码实现 ReAct 的主循环逻辑 题解 核心要点 ReAct 核心思想: 将推理(Reasoning)和行动(Acting)交织进行,让 LLM 在执行动作前先进行思考,并在行动后观察结果再继续推理,形成 Thought → Action → Observation 的循环 提示词设计: 需要明确定义可用工具列表、输出格式规范、示例对话,引导模型按固定格式输出思考和动作 错误处理: 设置最大重试次数、检测循环模式、提供错误反馈给 LLM 让其调整策略 循环控制: 设置最大迭代次数、检测任务完成标志(如 Final Answer)、监控重复动作 Prompt 结构示例 System Prompt: 你是一个智能助手,可以使用工具来回答用户问题。请按照以下格式思考和行动:\nThought: [你的推理过程,分析当前情况和下一步计划] Action: [工具名称] Action Input: [工具参数,JSON格式]\n观察结果后继续思考,直到能给出最终答案。\n可用工具:\nquery_database: 查询销售数据库,参数 {&ldquo;sql&rdquo;: &ldquo;SQL语句&rdquo;, &ldquo;date_range&rdquo;: &ldquo;日期范围&rdquo;} generate_chart: 生成图表,参数 {&ldquo;data&rdquo;: [&hellip;], &ldquo;chart_type&rdquo;: &ldquo;bar/line/pie&rdquo;} create_report: 生成报告文档,参数 {&ldquo;title&rdquo;: &ldquo;标题&rdquo;, &ldquo;content&rdquo;: &ldquo;内容&rdquo;} 当你准备好最终答案时,使用: Final Answer: [你的最终回答]\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/ai-agent-%E5%B7%A5%E7%A8%8B%E5%B8%88%E6%AF%8F%E6%97%A5%E4%B8%80%E9%A2%98react-agent-%E7%B3%BB%E7%BB%9F%E8%AE%BE%E8%AE%A1/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='interview' /><meta property='article:published_time' content='2026-05-20T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-20T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="AI Agent 工程师每日一题：ReAct Agent 系统设计">
+<meta name="twitter:description" content="🎯 AI Agent 工程师每日一题 · 2026年05月20日 题目 请设计一个基于 ReAct (Reasoning + Acting) 框架的 Agent 系统,用于自动化处理用户的复杂查询任务(如&quot;帮我分析最近一周的销售数据并生成报告&quot;)。要求:\n描述 ReAct 框架的核心思想和执行流程 设计该 Agent 的 Prompt 结构(包括 System Prompt 和 Few-shot 示例) 如何处理工具调用失败和推理陷入循环的情况? 用伪代码实现 ReAct 的主循环逻辑 题解 核心要点 ReAct 核心思想: 将推理(Reasoning)和行动(Acting)交织进行,让 LLM 在执行动作前先进行思考,并在行动后观察结果再继续推理,形成 Thought → Action → Observation 的循环 提示词设计: 需要明确定义可用工具列表、输出格式规范、示例对话,引导模型按固定格式输出思考和动作 错误处理: 设置最大重试次数、检测循环模式、提供错误反馈给 LLM 让其调整策略 循环控制: 设置最大迭代次数、检测任务完成标志(如 Final Answer)、监控重复动作 Prompt 结构示例 System Prompt: 你是一个智能助手,可以使用工具来回答用户问题。请按照以下格式思考和行动:\nThought: [你的推理过程,分析当前情况和下一步计划] Action: [工具名称] Action Input: [工具参数,JSON格式]\n观察结果后继续思考,直到能给出最终答案。\n可用工具:\nquery_database: 查询销售数据库,参数 {&ldquo;sql&rdquo;: &ldquo;SQL语句&rdquo;, &ldquo;date_range&rdquo;: &ldquo;日期范围&rdquo;} generate_chart: 生成图表,参数 {&ldquo;data&rdquo;: [&hellip;], &ldquo;chart_type&rdquo;: &ldquo;bar/line/pie&rdquo;} create_report: 生成报告文档,参数 {&ldquo;title&rdquo;: &ldquo;标题&rdquo;, &ldquo;content&rdquo;: &ldquo;内容&rdquo;} 当你准备好最终答案时,使用: Final Answer: [你的最终回答]\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/ai/" >
+                Ai
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/ai-agent-%E5%B7%A5%E7%A8%8B%E5%B8%88%E6%AF%8F%E6%97%A5%E4%B8%80%E9%A2%98react-agent-%E7%B3%BB%E7%BB%9F%E8%AE%BE%E8%AE%A1/">AI Agent 工程师每日一题：ReAct Agent 系统设计</a>
+        </h2>
+    
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">May 20, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <p>🎯 AI Agent 工程师每日一题 · 2026年05月20日
+题目
+请设计一个基于 ReAct (Reasoning + Acting) 框架的 Agent 系统,用于自动化处理用户的复杂查询任务(如&quot;帮我分析最近一周的销售数据并生成报告&quot;)。要求:</p>
+<ol>
+<li>描述 ReAct 框架的核心思想和执行流程</li>
+<li>设计该 Agent 的 Prompt 结构(包括 System Prompt 和 Few-shot 示例)</li>
+<li>如何处理工具调用失败和推理陷入循环的情况?</li>
+<li>用伪代码实现 ReAct 的主循环逻辑
+题解
+核心要点</li>
+<li>ReAct 核心思想: 将推理(Reasoning)和行动(Acting)交织进行,让 LLM 在执行动作前先进行思考,并在行动后观察结果再继续推理,形成 Thought → Action → Observation 的循环</li>
+<li>提示词设计: 需要明确定义可用工具列表、输出格式规范、示例对话,引导模型按固定格式输出思考和动作</li>
+<li>错误处理: 设置最大重试次数、检测循环模式、提供错误反馈给 LLM 让其调整策略</li>
+<li>循环控制: 设置最大迭代次数、检测任务完成标志(如 Final Answer)、监控重复动作</li>
+</ol>
+<p>Prompt 结构示例
+System Prompt:
+你是一个智能助手,可以使用工具来回答用户问题。请按照以下格式思考和行动:</p>
+<p>Thought: [你的推理过程,分析当前情况和下一步计划]
+Action: [工具名称]
+Action Input: [工具参数,JSON格式]</p>
+<p>观察结果后继续思考,直到能给出最终答案。</p>
+<p>可用工具:</p>
+<ul>
+<li>query_database: 查询销售数据库,参数 {&ldquo;sql&rdquo;: &ldquo;SQL语句&rdquo;, &ldquo;date_range&rdquo;: &ldquo;日期范围&rdquo;}</li>
+<li>generate_chart: 生成图表,参数 {&ldquo;data&rdquo;: [&hellip;], &ldquo;chart_type&rdquo;: &ldquo;bar/line/pie&rdquo;}</li>
+<li>create_report: 生成报告文档,参数 {&ldquo;title&rdquo;: &ldquo;标题&rdquo;, &ldquo;content&rdquo;: &ldquo;内容&rdquo;}</li>
+</ul>
+<p>当你准备好最终答案时,使用:
+Final Answer: [你的最终回答]</p>
+<p>Few-shot 示例:
+用户: 帮我查询昨天的订单总数
+Thought: 用户想知道昨天的订单总数,我需要先查询数据库
+Action: query_database
+Action Input: {&ldquo;sql&rdquo;: &ldquo;SELECT COUNT(*) FROM orders WHERE date = &lsquo;2026-05-19&rsquo;&rdquo;, &ldquo;date_range&rdquo;: &ldquo;2026-05-19&rdquo;}
+Observation: 查询结果: 1250 条订单</p>
+<p>Thought: 已获取数据,可以直接回答用户
+Final Answer: 昨天(2026-05-19)共有 1250 条订单。</p>
+<p>伪代码实现
+def react_agent(user_query, max_iterations=10):
+&ldquo;&ldquo;&ldquo;ReAct Agent 主循环&rdquo;&rdquo;&rdquo;
+history = []
+iteration = 0
+action_history = []  # 记录动作历史,用于检测循环</p>
+<pre><code>while iteration &lt; max_iterations:
+    # 构造 prompt (system + few-shot + history + user_query)
+    prompt = build_prompt(user_query, history)
+    # 调用 LLM 生成响应
+    response = llm.generate(prompt)
+    # 解析响应
+    thought, action, action_input = parse_response(response)
+
+    # 检测是否完成
+    if &quot;Final Answer&quot; in response:
+        return extract_final_answer(response)
+
+    # 检测循环: 如果连续3次执行相同动作,介入处理
+    if is_repeated_action(action, action_input, action_history, threshold=3):
+        error_feedback = &quot;你似乎陷入了循环,请尝试不同的方法或使用其他工具&quot;
+        history.append({&quot;role&quot;: &quot;system&quot;, &quot;content&quot;: error_feedback})
+        iteration += 1
+        continue
+
+    # 执行动作
+    try:
+        observation = execute_tool(action, action_input)
+        if observation.error:
+            observation_text = f&quot;错误: {observation.error}。请检查参数或尝试其他方法&quot;
+        else:
+            observation_text = f&quot;成功: {observation.result}&quot;
+    except Exception as e:
+        observation_text = f&quot;工具执行异常: {str(e)}&quot;
+
+    # 更新历史
+    history.append({&quot;thought&quot;: thought, &quot;action&quot;: action, &quot;action_input&quot;: action_input, &quot;observation&quot;: observation_text})
+    action_history.append((action, action_input))
+    iteration += 1
+
+return &quot;抱歉,任务过于复杂,未能在限定步骤内完成&quot;
+</code></pre>
+<p>原理
+ReAct 的理论基础
+ReAct 结合了两种互补的能力:</p>
+<ol>
+<li>推理(Reasoning): 帮助 Agent 规划、追踪进度、处理异常,类似于人类的&quot;内心独白&quot;</li>
+<li>行动(Acting): 与外部环境交互,获取信息或改变状态
+关键创新在于将二者**交织(interleave)*<em>而非分离,形成推理指导行动、行动结果反馈推理的闭环。
+数学建模(MDP 视角)
+可以将 ReAct 建模为部分可观测马尔可夫决策过程(POMDP):
+• 状态空间 S: 环境的完整状态(Agent 不完全可见)
+• 动作空间 A: 可用工具集合 + 特殊动作(如 Final Answer)
+• 观测空间 O: 工具返回的结果
+• 策略 π: LLM 的生成策略,基于历史 (thought, action, observation) 序列决定下一步
+ReAct 的目标是最大化任务完成概率:
+π</em> = argmax_π P(达成目标 | π, 用户查询)</li>
+</ol>
+<p>通过 Thought 这一&quot;内部动作&quot;,Agent 能够:
+• 规划: 分解复杂任务为子目标序列
+• 反思: 检测错误并调整策略
+• 泛化: 将少样本示例的模式应用到新场景
+为什么 Thought 很重要?
+研究表明,移除 Thought 后,Agent 性能显著下降:
+• 无 Thought: Action 选择缺乏连贯性,容易陷入局部最优
+• 有 Thought: 模型能显式推理因果关系,提前规划多步路径
+类比: Thought 类似于人类的&quot;工作记忆&quot;,帮助维持任务上下文和中间结果。</p>
+<p>延伸</p>
+<ol>
+<li>
+<p>ReAct vs. Plan-and-Execute,如何选择?
+ReAct (交织式):
+• 优势: 灵活应对动态环境,可根据中间结果调整计划
+• 劣势: 可能频繁切换工具,效率较低
+• 适用: 信息不完整、需要探索式搜索的任务(如调试、研究)
+Plan-and-Execute (分离式):
+• 优势: 一次性生成完整计划,执行效率高,可并行调用工具
+• 劣势: 计划一旦确定难以调整,对初始信息依赖高
+• 适用: 任务结构清晰、环境可预测的场景(如数据分析流水线)
+混合策略: 高层用 Plan-and-Execute 规划阶段,每个阶段内用 ReAct 处理细节。</p>
+</li>
+<li>
+<p>如何在生产环境中监控 ReAct Agent 的质量?
+关键指标:
+• 任务完成率: 成功给出 Final Answer 的比例
+• 平均迭代次数: 反映效率,过高说明规划能力不足
+• 工具调用成功率: 监控参数错误率、超时率
+• 循环检测触发率: 高触发率说明 Prompt 或工具设计有问题
+• 用户满意度: 通过反馈收集人类评价
+可视化手段:
+• 记录每个 session 的 Thought-Action-Observation 序列
+• 构建工具调用图,分析常见路径和异常分支
+• A/B 测试不同 Prompt 版本</p>
+</li>
+<li>
+<p>实际项目中如何防止 Agent &ldquo;幻觉&quot;影响工具调用?
+技术手段:</p>
+</li>
+<li>
+<p>结构化输出: 强制 LLM 输出 JSON,用 Pydantic 校验格式和类型</p>
+</li>
+<li>
+<p>工具参数校验: 在执行前检查参数合法性(如 SQL 注入检测、文件路径校验)</p>
+</li>
+<li>
+<p>输出过滤: 对工具返回结果做清洗,移除敏感信息或噪声</p>
+</li>
+<li>
+<p>置信度评估: 要求 LLM 输出置信度分数,低于阈值时要求人工审核
+Prompt 技巧:
+• 明确告知&quot;如果不确定,优先使用搜索工具而非猜测&rdquo;
+• Few-shot 中包含&quot;承认不知道&quot;的示例
+• 引入 self-consistency: 多次采样并投票选择最一致的动作
+每日坚持学习,面试稳稳拿下!💪</p>
+</li>
+</ol>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/ai/">AI</a>
+        
+            <a href="/tags/agent/">Agent</a>
+        
+            <a href="/tags/interview/">Interview</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/multica-%E9%A1%B9%E7%9B%AE%E8%A7%A3%E6%9E%90%E9%83%A8%E7%BD%B2%E4%BD%BF%E7%94%A8%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1%E4%B8%8E%E6%8A%80%E6%9C%AF%E4%BA%AE%E7%82%B9/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">Multica 项目解析：部署、使用、架构设计与技术亮点</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/multi-agent-%E7%B3%BB%E7%BB%9F%E5%AD%A6%E4%B9%A0%E6%8C%87%E5%8D%97%E5%8F%91%E5%B1%95%E8%84%89%E7%BB%9C%E6%A0%B8%E5%BF%83%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">Multi-Agent 系统学习指南：发展脉络、核心原理、实现模式与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-skills%E6%A6%82%E5%BF%B5%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F%E5%BC%80%E5%8F%91%E6%96%B9%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/agent-hub-%E9%A1%B9%E7%9B%AE%E7%9F%A5%E8%AF%86%E5%8D%A1%E7%89%87/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">agent-hub 项目知识卡片</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/ai-agent-loop-%E4%B8%8E-react-%E6%A8%A1%E5%BC%8F%E8%AF%A6%E8%A7%A3%E6%80%9D%E8%80%83%E8%A1%8C%E5%8A%A8%E8%A7%82%E5%AF%9F%E5%81%9C%E6%AD%A2%E6%9D%A1%E4%BB%B6%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AI Agent Loop 与 ReAct 模式详解：思考、行动、观察、停止条件与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>

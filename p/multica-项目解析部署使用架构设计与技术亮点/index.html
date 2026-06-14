@@ -1,0 +1,1661 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 multica-ai/multica 是一个开源的 managed agents platform。\n如果用一句话概括：\nMultica 不是再造一个 Coding Agent，而是给 Claude Code、Codex、GitHub Copilot CLI、OpenCode、Gemini、Cursor Agent 等已有 Agent 提供一套“任务分配、运行时管理、进度跟踪、团队协作和能力沉淀”的平台。\n很多 Agent 工具解决的是“单次任务怎么执行”。Multica 关注的是另一个层面：\n谁来接这个任务 在哪台机器上跑 任务状态怎么流转 运行过程怎么实时展示 多个 Agent 怎么像团队成员一样被管理 做过的事情如何沉淀成可复用技能 所以它更像一个面向 AI Agent 的轻量研发协作系统，而不是单纯的命令行代理封装。\n这篇文章按“部署、使用、技术解析、技术亮点”四个角度整理 Multica。\n目录 Multica 解决什么问题 部署方式 基本使用流程 项目结构与技术栈 核心架构解析 关键模块拆解 技术亮点 生产部署注意点 适合场景与局限 参考资料 1. Multica 解决什么问题 1.1 从“工具”到“队友” 传统 Coding Agent 的使用方式通常是：\n">
+<title>Multica 项目解析：部署、使用、架构设计与技术亮点</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/multica-%E9%A1%B9%E7%9B%AE%E8%A7%A3%E6%9E%90%E9%83%A8%E7%BD%B2%E4%BD%BF%E7%94%A8%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1%E4%B8%8E%E6%8A%80%E6%9C%AF%E4%BA%AE%E7%82%B9/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="Multica 项目解析：部署、使用、架构设计与技术亮点">
+<meta property='og:description' content="写在前面 multica-ai/multica 是一个开源的 managed agents platform。\n如果用一句话概括：\nMultica 不是再造一个 Coding Agent，而是给 Claude Code、Codex、GitHub Copilot CLI、OpenCode、Gemini、Cursor Agent 等已有 Agent 提供一套“任务分配、运行时管理、进度跟踪、团队协作和能力沉淀”的平台。\n很多 Agent 工具解决的是“单次任务怎么执行”。Multica 关注的是另一个层面：\n谁来接这个任务 在哪台机器上跑 任务状态怎么流转 运行过程怎么实时展示 多个 Agent 怎么像团队成员一样被管理 做过的事情如何沉淀成可复用技能 所以它更像一个面向 AI Agent 的轻量研发协作系统，而不是单纯的命令行代理封装。\n这篇文章按“部署、使用、技术解析、技术亮点”四个角度整理 Multica。\n目录 Multica 解决什么问题 部署方式 基本使用流程 项目结构与技术栈 核心架构解析 关键模块拆解 技术亮点 生产部署注意点 适合场景与局限 参考资料 1. Multica 解决什么问题 1.1 从“工具”到“队友” 传统 Coding Agent 的使用方式通常是：\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/multica-%E9%A1%B9%E7%9B%AE%E8%A7%A3%E6%9E%90%E9%83%A8%E7%BD%B2%E4%BD%BF%E7%94%A8%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1%E4%B8%8E%E6%8A%80%E6%9C%AF%E4%BA%AE%E7%82%B9/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='multi-agent' /><meta property='article:tag' content='coding-agent' /><meta property='article:tag' content='multica' /><meta property='article:published_time' content='2026-06-14T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-06-14T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="Multica 项目解析：部署、使用、架构设计与技术亮点">
+<meta name="twitter:description" content="写在前面 multica-ai/multica 是一个开源的 managed agents platform。\n如果用一句话概括：\nMultica 不是再造一个 Coding Agent，而是给 Claude Code、Codex、GitHub Copilot CLI、OpenCode、Gemini、Cursor Agent 等已有 Agent 提供一套“任务分配、运行时管理、进度跟踪、团队协作和能力沉淀”的平台。\n很多 Agent 工具解决的是“单次任务怎么执行”。Multica 关注的是另一个层面：\n谁来接这个任务 在哪台机器上跑 任务状态怎么流转 运行过程怎么实时展示 多个 Agent 怎么像团队成员一样被管理 做过的事情如何沉淀成可复用技能 所以它更像一个面向 AI Agent 的轻量研发协作系统，而不是单纯的命令行代理封装。\n这篇文章按“部署、使用、技术解析、技术亮点”四个角度整理 Multica。\n目录 Multica 解决什么问题 部署方式 基本使用流程 项目结构与技术栈 核心架构解析 关键模块拆解 技术亮点 生产部署注意点 适合场景与局限 参考资料 1. Multica 解决什么问题 1.1 从“工具”到“队友” 传统 Coding Agent 的使用方式通常是：\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ol>
+    <li><a href="#目录">目录</a></li>
+    <li><a href="#1-multica-解决什么问题">1. Multica 解决什么问题</a>
+      <ol>
+        <li><a href="#11-从工具到队友">1.1 从“工具”到“队友”</a></li>
+        <li><a href="#12-它不是替代-agent而是编排-agent">1.2 它不是替代 Agent，而是编排 Agent</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-部署方式">2. 部署方式</a>
+      <ol>
+        <li><a href="#21-方式一使用-cloud">2.1 方式一：使用 Cloud</a></li>
+        <li><a href="#22-方式二docker-compose-自托管">2.2 方式二：Docker Compose 自托管</a></li>
+        <li><a href="#23-登录验证码配置">2.3 登录验证码配置</a></li>
+        <li><a href="#24-kubernetes-部署">2.4 Kubernetes 部署</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-基本使用流程">3. 基本使用流程</a>
+      <ol>
+        <li><a href="#31-启动-daemon">3.1 启动 daemon</a></li>
+        <li><a href="#32-创建-agent">3.2 创建 Agent</a></li>
+        <li><a href="#33-创建并分配-issue">3.3 创建并分配 Issue</a></li>
+        <li><a href="#34-查看执行历史">3.4 查看执行历史</a></li>
+        <li><a href="#35-autopilot">3.5 Autopilot</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-项目结构与技术栈">4. 项目结构与技术栈</a></li>
+    <li><a href="#5-核心架构解析">5. 核心架构解析</a>
+      <ol>
+        <li><a href="#51-整体架构">5.1 整体架构</a></li>
+        <li><a href="#52-server-负责什么">5.2 Server 负责什么</a></li>
+        <li><a href="#53-daemon-负责什么">5.3 Daemon 负责什么</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-关键模块拆解">6. 关键模块拆解</a>
+      <ol>
+        <li><a href="#61-serverinternaldaemon">6.1 <code>server/internal/daemon</code></a></li>
+        <li><a href="#62-serverinternaldaemonws">6.2 <code>server/internal/daemonws</code></a></li>
+        <li><a href="#63-serverinternalservice">6.3 <code>server/internal/service</code></a></li>
+        <li><a href="#64-serverinternalhandler">6.4 <code>server/internal/handler</code></a></li>
+        <li><a href="#65-serverinternalscheduler">6.5 <code>server/internal/scheduler</code></a></li>
+        <li><a href="#66-serverinternalskill">6.6 <code>server/internal/skill</code></a></li>
+        <li><a href="#67-serverinternalauth">6.7 <code>server/internal/auth</code></a></li>
+        <li><a href="#68-servermigrations-与-sqlc">6.8 <code>server/migrations</code> 与 <code>sqlc</code></a></li>
+      </ol>
+    </li>
+    <li><a href="#7-技术亮点">7. 技术亮点</a>
+      <ol>
+        <li><a href="#71-把-agent-设计成一等团队成员">7.1 把 Agent 设计成一等团队成员</a></li>
+        <li><a href="#72-runtime-和-agent-解耦">7.2 Runtime 和 Agent 解耦</a></li>
+        <li><a href="#73-本地-daemon-复用用户环境">7.3 本地 daemon 复用用户环境</a></li>
+        <li><a href="#74-多-agent-cli-适配">7.4 多 Agent CLI 适配</a></li>
+        <li><a href="#75-issue--run-的双层记录">7.5 Issue + Run 的双层记录</a></li>
+        <li><a href="#76-autopilot-把-agent-变成定时工作流">7.6 Autopilot 把 Agent 变成定时工作流</a></li>
+        <li><a href="#77-skill-让经验复利化">7.7 Skill 让经验复利化</a></li>
+        <li><a href="#78-生产部署思路比较完整">7.8 生产部署思路比较完整</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-生产部署注意点">8. 生产部署注意点</a>
+      <ol>
+        <li><a href="#81-一定要修改密钥">8.1 一定要修改密钥</a></li>
+        <li><a href="#82-邮件认证要提前配置">8.2 邮件认证要提前配置</a></li>
+        <li><a href="#83-私有实例要限制注册和-workspace-创建">8.3 私有实例要限制注册和 workspace 创建</a></li>
+        <li><a href="#84-daemon-所在机器就是执行边界">8.4 daemon 所在机器就是执行边界</a></li>
+        <li><a href="#85-websocket-origin-和反向代理">8.5 WebSocket Origin 和反向代理</a></li>
+        <li><a href="#86-文件存储">8.6 文件存储</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-适合场景与局限">9. 适合场景与局限</a>
+      <ol>
+        <li><a href="#91-适合场景">9.1 适合场景</a></li>
+        <li><a href="#92-可能的局限">9.2 可能的局限</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-参考资料">10. 参考资料</a></li>
+  </ol>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/ai/" >
+                Ai
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/multica-%E9%A1%B9%E7%9B%AE%E8%A7%A3%E6%9E%90%E9%83%A8%E7%BD%B2%E4%BD%BF%E7%94%A8%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1%E4%B8%8E%E6%8A%80%E6%9C%AF%E4%BA%AE%E7%82%B9/">Multica 项目解析：部署、使用、架构设计与技术亮点</a>
+        </h2>
+    
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">Jun 14, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h1 id="写在前面">写在前面
+</h1><p><a class="link" href="https://github.com/multica-ai/multica"  target="_blank" rel="noopener"
+    ><code>multica-ai/multica</code></a> 是一个开源的 <code>managed agents platform</code>。</p>
+<p>如果用一句话概括：</p>
+<blockquote>
+<p>Multica 不是再造一个 Coding Agent，而是给 Claude Code、Codex、GitHub Copilot CLI、OpenCode、Gemini、Cursor Agent 等已有 Agent 提供一套“任务分配、运行时管理、进度跟踪、团队协作和能力沉淀”的平台。</p></blockquote>
+<p>很多 Agent 工具解决的是“单次任务怎么执行”。Multica 关注的是另一个层面：</p>
+<ul>
+<li>谁来接这个任务</li>
+<li>在哪台机器上跑</li>
+<li>任务状态怎么流转</li>
+<li>运行过程怎么实时展示</li>
+<li>多个 Agent 怎么像团队成员一样被管理</li>
+<li>做过的事情如何沉淀成可复用技能</li>
+</ul>
+<p>所以它更像一个面向 AI Agent 的轻量研发协作系统，而不是单纯的命令行代理封装。</p>
+<p>这篇文章按“部署、使用、技术解析、技术亮点”四个角度整理 Multica。</p>
+<h2 id="目录">目录
+</h2><ol>
+<li><a class="link" href="#1-multica-%e8%a7%a3%e5%86%b3%e4%bb%80%e4%b9%88%e9%97%ae%e9%a2%98" >Multica 解决什么问题</a></li>
+<li><a class="link" href="#2-%e9%83%a8%e7%bd%b2%e6%96%b9%e5%bc%8f" >部署方式</a></li>
+<li><a class="link" href="#3-%e5%9f%ba%e6%9c%ac%e4%bd%bf%e7%94%a8%e6%b5%81%e7%a8%8b" >基本使用流程</a></li>
+<li><a class="link" href="#4-%e9%a1%b9%e7%9b%ae%e7%bb%93%e6%9e%84%e4%b8%8e%e6%8a%80%e6%9c%af%e6%a0%88" >项目结构与技术栈</a></li>
+<li><a class="link" href="#5-%e6%a0%b8%e5%bf%83%e6%9e%b6%e6%9e%84%e8%a7%a3%e6%9e%90" >核心架构解析</a></li>
+<li><a class="link" href="#6-%e5%85%b3%e9%94%ae%e6%a8%a1%e5%9d%97%e6%8b%86%e8%a7%a3" >关键模块拆解</a></li>
+<li><a class="link" href="#7-%e6%8a%80%e6%9c%af%e4%ba%ae%e7%82%b9" >技术亮点</a></li>
+<li><a class="link" href="#8-%e7%94%9f%e4%ba%a7%e9%83%a8%e7%bd%b2%e6%b3%a8%e6%84%8f%e7%82%b9" >生产部署注意点</a></li>
+<li><a class="link" href="#9-%e9%80%82%e5%90%88%e5%9c%ba%e6%99%af%e4%b8%8e%e5%b1%80%e9%99%90" >适合场景与局限</a></li>
+<li><a class="link" href="#10-%e5%8f%82%e8%80%83%e8%b5%84%e6%96%99" >参考资料</a></li>
+</ol>
+<hr>
+<h2 id="1-multica-解决什么问题">1. Multica 解决什么问题
+</h2><h3 id="11-从工具到队友">1.1 从“工具”到“队友”
+</h3><p>传统 Coding Agent 的使用方式通常是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">打开终端
+</span></span><span class="line"><span class="cl">输入 prompt
+</span></span><span class="line"><span class="cl">等待执行
+</span></span><span class="line"><span class="cl">人工观察进度
+</span></span><span class="line"><span class="cl">复制结果
+</span></span><span class="line"><span class="cl">人工继续下一步
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这在个人实验里很自然，但在团队协作里会遇到几个问题：</p>
+<ul>
+<li>Agent 运行在哪台机器上不清楚</li>
+<li>多个任务并行时缺少统一队列</li>
+<li>Agent 执行过程缺少统一状态</li>
+<li>失败、阻塞、重试没有工作流</li>
+<li>运行经验无法沉淀给团队复用</li>
+<li>人和 Agent 不在同一个任务面板里协作</li>
+</ul>
+<p>Multica 的定位就是把这些零散能力平台化。</p>
+<p>它把 Agent 抽象成团队成员，把本地机器或云端环境抽象成 Runtime，把工作抽象成 Issue，把重复任务抽象成 Autopilot，把可复用经验抽象成 Skill。</p>
+<h3 id="12-它不是替代-agent而是编排-agent">1.2 它不是替代 Agent，而是编排 Agent
+</h3><p>Multica 支持多种 Agent CLI，包括：</p>
+<ul>
+<li>Claude Code</li>
+<li>Codex</li>
+<li>GitHub Copilot CLI</li>
+<li>OpenClaw</li>
+<li>OpenCode</li>
+<li>Hermes</li>
+<li>Gemini</li>
+<li>Pi</li>
+<li>Cursor Agent</li>
+<li>Kimi</li>
+<li>Kiro CLI</li>
+</ul>
+<p>这说明它的核心价值不在模型调用本身，而在“管理不同 Agent 的执行生命周期”。</p>
+<p>可以把它理解成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Multica = Issue Board + Agent Runtime Registry + Task Queue + Realtime Logs + Skills + Autopilot
+</span></span></code></pre></td></tr></table>
+</div>
+</div><hr>
+<h2 id="2-部署方式">2. 部署方式
+</h2><p>Multica 有两类使用方式：</p>
+<ul>
+<li>使用官方 Cloud</li>
+<li>自托管部署</li>
+</ul>
+<p>如果只是想快速体验，可以直接安装 CLI 并连接 Cloud。如果要控制数据、账号、运行环境和内部工作流，建议自托管。</p>
+<h3 id="21-方式一使用-cloud">2.1 方式一：使用 Cloud
+</h3><p>macOS / Linux 推荐用 Homebrew 安装 CLI：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">brew install multica-ai/tap/multica
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>然后执行：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">multica setup
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这个命令会完成三件事：</p>
+<ol>
+<li>配置 Multica Cloud 地址</li>
+<li>打开浏览器完成登录</li>
+<li>启动本地 agent daemon</li>
+</ol>
+<p>本地 daemon 会自动检测机器上的 Agent CLI，例如 <code>claude</code>、<code>codex</code>、<code>opencode</code>、<code>gemini</code> 等。</p>
+<h3 id="22-方式二docker-compose-自托管">2.2 方式二：Docker Compose 自托管
+</h3><p>官方推荐的自托管方式是安装脚本：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh <span class="p">|</span> bash -s -- --with-server
+</span></span><span class="line"><span class="cl">multica setup self-host
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这会做几件事：</p>
+<ul>
+<li>安装 <code>multica</code> CLI</li>
+<li>拉取自托管部署资源</li>
+<li>从 GHCR 拉取官方镜像</li>
+<li>启动 backend、frontend、PostgreSQL</li>
+<li>配置 CLI 指向本地服务</li>
+<li>登录并启动本地 daemon</li>
+</ul>
+<p>启动后默认地址是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Frontend: http://localhost:3000
+</span></span><span class="line"><span class="cl">Backend:  http://localhost:8080
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果想手动部署：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">git clone https://github.com/multica-ai/multica.git
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> multica
+</span></span><span class="line"><span class="cl">make selfhost
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>make selfhost</code> 会自动创建 <code>.env</code>，生成随机 <code>JWT_SECRET</code> 和 <code>POSTGRES_PASSWORD</code>，然后通过 <code>docker-compose.selfhost.yml</code> 启动服务。</p>
+<p>如果官方镜像还没发布，或者想基于当前源码构建：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">make selfhost-build
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="23-登录验证码配置">2.3 登录验证码配置
+</h3><p>自托管默认按生产模式运行，没有固定验证码。登录方式有三种：</p>
+<ol>
+<li>配置 <code>RESEND_API_KEY</code>，通过邮件发送验证码</li>
+<li>不配置邮件服务，从 backend 日志里复制验证码</li>
+<li>私有测试环境设置 <code>APP_ENV=development</code> 和 <code>MULTICA_DEV_VERIFICATION_CODE=888888</code></li>
+</ol>
+<p>注意：公开环境不要启用固定验证码。否则知道邮箱的人都可能登录。</p>
+<h3 id="24-kubernetes-部署">2.4 Kubernetes 部署
+</h3><p>如果团队已有 Kubernetes，可以使用 OCI Helm Chart：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">helm install multica oci://ghcr.io/multica-ai/charts/multica <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --version &lt;chart-version&gt; <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -n multica
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>Chart 默认会创建：</p>
+<ul>
+<li><code>multica-postgres</code></li>
+<li><code>multica-backend</code></li>
+<li><code>multica-frontend</code></li>
+<li>frontend / backend 两个 Ingress</li>
+<li><code>multica-config</code> ConfigMap</li>
+</ul>
+<p>敏感配置不由 Chart 直接管理，需要先创建 Secret：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">kubectl -n multica create secret generic multica-secrets <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --from-literal<span class="o">=</span><span class="nv">JWT_SECRET</span><span class="o">=</span><span class="s2">&#34;</span><span class="k">$(</span>openssl rand -hex 32<span class="k">)</span><span class="s2">&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --from-literal<span class="o">=</span><span class="nv">POSTGRES_PASSWORD</span><span class="o">=</span><span class="s2">&#34;</span><span class="k">$(</span>openssl rand -hex 16<span class="k">)</span><span class="s2">&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --from-literal<span class="o">=</span><span class="nv">RESEND_API_KEY</span><span class="o">=</span><span class="s2">&#34;&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --from-literal<span class="o">=</span><span class="nv">GOOGLE_CLIENT_SECRET</span><span class="o">=</span><span class="s2">&#34;&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --from-literal<span class="o">=</span><span class="nv">CLOUDFRONT_PRIVATE_KEY</span><span class="o">=</span><span class="s2">&#34;&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --from-literal<span class="o">=</span><span class="nv">MULTICA_DEV_VERIFICATION_CODE</span><span class="o">=</span><span class="s2">&#34;&#34;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>有一个部署细节要注意：官方预构建 web 镜像里默认 baked <code>REMOTE_API_URL=http://backend:8080</code>，Chart 会创建一个名为 <code>backend</code> 的兼容 Service。因此默认建议一个 namespace 只部署一个 Multica 实例。</p>
+<hr>
+<h2 id="3-基本使用流程">3. 基本使用流程
+</h2><h3 id="31-启动-daemon">3.1 启动 daemon
+</h3><p>安装并登录后：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">multica daemon start
+</span></span><span class="line"><span class="cl">multica daemon status
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>daemon 是本地 Agent Runtime，负责：</p>
+<ul>
+<li>检测本机可用的 Agent CLI</li>
+<li>向 Multica Server 注册 runtime</li>
+<li>轮询任务</li>
+<li>创建隔离工作目录</li>
+<li>启动 Agent CLI</li>
+<li>将执行过程、日志、状态回传到平台</li>
+</ul>
+<p>默认 daemon 日志在：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">~/.multica/daemon.log
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>查看日志：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">multica daemon logs
+</span></span><span class="line"><span class="cl">multica daemon logs -f
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="32-创建-agent">3.2 创建 Agent
+</h3><p>进入 Web UI：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Settings -&gt; Runtimes
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>确认你的机器已经作为 Runtime 出现。</p>
+<p>然后进入：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Settings -&gt; Agents
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>创建一个 Agent，选择：</p>
+<ul>
+<li>runtime</li>
+<li>provider，例如 Codex / Claude Code / OpenCode</li>
+<li>agent name</li>
+</ul>
+<p>这个 Agent 会出现在看板、评论、任务分配器里。</p>
+<h3 id="33-创建并分配-issue">3.3 创建并分配 Issue
+</h3><p>可以在 Web UI 创建，也可以用 CLI：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">multica issue create <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --title <span class="s2">&#34;Fix login bug&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --description <span class="s2">&#34;Reproduce and fix the login redirect issue&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --priority high <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --assignee <span class="s2">&#34;Lambda&#34;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>Agent 被分配任务后，daemon 会自动领取并执行。</p>
+<p>常用 Issue 命令：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">multica issue list
+</span></span><span class="line"><span class="cl">multica issue get &lt;issue-id&gt;
+</span></span><span class="line"><span class="cl">multica issue status &lt;issue-id&gt; in_progress
+</span></span><span class="line"><span class="cl">multica issue assign &lt;issue-id&gt; --to <span class="s2">&#34;Agent Name&#34;</span>
+</span></span><span class="line"><span class="cl">multica issue comment add &lt;issue-id&gt; --content <span class="s2">&#34;Please check edge cases&#34;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="34-查看执行历史">3.4 查看执行历史
+</h3><p>Multica 不只记录 Issue 状态，也记录 Agent 执行 run。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">multica issue runs &lt;issue-id&gt;
+</span></span><span class="line"><span class="cl">multica issue run-messages &lt;task-id&gt;
+</span></span><span class="line"><span class="cl">multica issue run-messages &lt;task-id&gt; --since <span class="m">42</span> --output json
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这对排查 Agent 行为很有用。因为很多失败不是“最终结果错了”，而是中途工具调用、权限、环境、prompt 约束、上下文选择出了问题。</p>
+<h3 id="35-autopilot">3.5 Autopilot
+</h3><p>Autopilot 用来跑周期性或触发式任务。</p>
+<p>例如创建一个每天自动巡检的任务：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">multica autopilot create <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --title <span class="s2">&#34;Nightly bug triage&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --description <span class="s2">&#34;Scan todo issues and prioritize.&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --agent <span class="s2">&#34;Lambda&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --mode create_issue
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>添加 cron trigger：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">multica autopilot trigger-add &lt;autopilot-id&gt; <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --cron <span class="s2">&#34;0 9 * * 1-5&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --timezone <span class="s2">&#34;Asia/Shanghai&#34;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>Autopilot 有两种模式：</p>
+<ul>
+<li><code>create_issue</code>：每次运行创建 Issue 并分配给 Agent</li>
+<li><code>run_only</code>：直接入队执行，不创建 Issue</li>
+</ul>
+<hr>
+<h2 id="4-项目结构与技术栈">4. 项目结构与技术栈
+</h2><p>从仓库结构看，Multica 是一个典型 monorepo：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">multica/
+</span></span><span class="line"><span class="cl">├── apps/
+</span></span><span class="line"><span class="cl">│   ├── web/
+</span></span><span class="line"><span class="cl">│   ├── docs/
+</span></span><span class="line"><span class="cl">│   ├── desktop/
+</span></span><span class="line"><span class="cl">│   └── mobile/
+</span></span><span class="line"><span class="cl">├── packages/
+</span></span><span class="line"><span class="cl">│   ├── core/
+</span></span><span class="line"><span class="cl">│   ├── ui/
+</span></span><span class="line"><span class="cl">│   ├── views/
+</span></span><span class="line"><span class="cl">│   ├── eslint-config/
+</span></span><span class="line"><span class="cl">│   └── tsconfig/
+</span></span><span class="line"><span class="cl">├── server/
+</span></span><span class="line"><span class="cl">│   ├── cmd/
+</span></span><span class="line"><span class="cl">│   ├── internal/
+</span></span><span class="line"><span class="cl">│   ├── migrations/
+</span></span><span class="line"><span class="cl">│   ├── pkg/
+</span></span><span class="line"><span class="cl">│   └── sqlc.yaml
+</span></span><span class="line"><span class="cl">├── deploy/
+</span></span><span class="line"><span class="cl">│   └── helm/
+</span></span><span class="line"><span class="cl">├── docker/
+</span></span><span class="line"><span class="cl">├── scripts/
+</span></span><span class="line"><span class="cl">├── docker-compose.selfhost.yml
+</span></span><span class="line"><span class="cl">├── SELF_HOSTING.md
+</span></span><span class="line"><span class="cl">├── CLI_AND_DAEMON.md
+</span></span><span class="line"><span class="cl">└── Makefile
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>官方 README 给出的核心技术栈是：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>层</th>
+          <th>技术</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Frontend</td>
+          <td>Next.js 16 App Router</td>
+      </tr>
+      <tr>
+          <td>Backend</td>
+          <td>Go、Chi router、sqlc、gorilla/websocket</td>
+      </tr>
+      <tr>
+          <td>Database</td>
+          <td>PostgreSQL 17、pgvector</td>
+      </tr>
+      <tr>
+          <td>Agent Runtime</td>
+          <td>本地 daemon，执行 Claude Code、Codex、OpenCode 等 CLI</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>开发环境依赖：</p>
+<ul>
+<li>Node.js v20+</li>
+<li>pnpm v10.28+</li>
+<li>Go v1.26+</li>
+<li>Docker</li>
+</ul>
+<p>本地开发一键启动：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">make dev
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>完整检查：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">make check
+</span></span></code></pre></td></tr></table>
+</div>
+</div><hr>
+<h2 id="5-核心架构解析">5. 核心架构解析
+</h2><h3 id="51-整体架构">5.1 整体架构
+</h3><p>可以把 Multica 分成四层：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">┌──────────────────────┐
+</span></span><span class="line"><span class="cl">│      Web / App UI     │
+</span></span><span class="line"><span class="cl">│  Issue Board / Agent  │
+</span></span><span class="line"><span class="cl">└──────────┬───────────┘
+</span></span><span class="line"><span class="cl">           │ HTTP / WebSocket
+</span></span><span class="line"><span class="cl">┌──────────▼───────────┐
+</span></span><span class="line"><span class="cl">│      Go Backend       │
+</span></span><span class="line"><span class="cl">│ API / WS / Scheduler  │
+</span></span><span class="line"><span class="cl">└──────────┬───────────┘
+</span></span><span class="line"><span class="cl">           │ SQL
+</span></span><span class="line"><span class="cl">┌──────────▼───────────┐
+</span></span><span class="line"><span class="cl">│ PostgreSQL + pgvector │
+</span></span><span class="line"><span class="cl">└──────────┬───────────┘
+</span></span><span class="line"><span class="cl">           │ Task claim / heartbeat / logs
+</span></span><span class="line"><span class="cl">┌──────────▼───────────┐
+</span></span><span class="line"><span class="cl">│    Agent Daemon       │
+</span></span><span class="line"><span class="cl">│ local / cloud runtime │
+</span></span><span class="line"><span class="cl">└──────────┬───────────┘
+</span></span><span class="line"><span class="cl">           │ spawn process
+</span></span><span class="line"><span class="cl">┌──────────▼───────────┐
+</span></span><span class="line"><span class="cl">│ Claude / Codex / etc. │
+</span></span><span class="line"><span class="cl">└──────────────────────┘
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里最重要的是：Agent 不是跑在 Web Server 里，而是跑在 runtime 上。</p>
+<p>runtime 可以是你的本地机器，也可以是云端机器。这样做的好处是：</p>
+<ul>
+<li>复用开发者本地已有的 Agent CLI 和认证状态</li>
+<li>避免服务端直接持有所有模型供应商凭证</li>
+<li>每个团队成员可以贡献自己的计算环境</li>
+<li>Agent 对代码仓库、ssh key、本地工具链的访问更自然</li>
+</ul>
+<h3 id="52-server-负责什么">5.2 Server 负责什么
+</h3><p>Go Backend 主要承担控制面职责：</p>
+<ul>
+<li>用户认证</li>
+<li>Workspace 管理</li>
+<li>Agent / Runtime 管理</li>
+<li>Issue 生命周期</li>
+<li>Task 入队、领取、完成、失败</li>
+<li>评论、订阅、执行历史</li>
+<li>WebSocket 实时推送</li>
+<li>Autopilot 调度</li>
+<li>Usage rollup</li>
+<li>上传与附件存储</li>
+</ul>
+<p>它不是把 Agent 逻辑写死，而是把 Agent 执行抽象成可调度任务。</p>
+<h3 id="53-daemon-负责什么">5.3 Daemon 负责什么
+</h3><p>daemon 是执行面。</p>
+<p>官方 CLI 文档里描述的执行流程可以整理成：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">daemon start
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">检测本机 Agent CLI
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">向 server 注册 runtime
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">定时 heartbeat
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">轮询可执行任务
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">创建隔离 workspace
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">启动对应 Agent CLI
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">流式回传状态、日志、结果
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">任务完成后清理或保留工作目录
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>daemon 默认配置里有几个关键参数：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>参数</th>
+          <th style="text-align: right">默认值</th>
+          <th>作用</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>MULTICA_DAEMON_POLL_INTERVAL</code></td>
+          <td style="text-align: right"><code>3s</code></td>
+          <td>轮询任务间隔</td>
+      </tr>
+      <tr>
+          <td><code>MULTICA_DAEMON_HEARTBEAT_INTERVAL</code></td>
+          <td style="text-align: right"><code>15s</code></td>
+          <td>runtime 心跳</td>
+      </tr>
+      <tr>
+          <td><code>MULTICA_DAEMON_MAX_CONCURRENT_TASKS</code></td>
+          <td style="text-align: right"><code>20</code></td>
+          <td>最大并发任务</td>
+      </tr>
+      <tr>
+          <td><code>MULTICA_WORKSPACES_ROOT</code></td>
+          <td style="text-align: right"><code>~/multica_workspaces</code></td>
+          <td>本地任务工作目录</td>
+      </tr>
+      <tr>
+          <td><code>MULTICA_GC_TTL</code></td>
+          <td style="text-align: right"><code>24h</code></td>
+          <td>完成任务目录清理 TTL</td>
+      </tr>
+      <tr>
+          <td><code>MULTICA_GC_ARTIFACT_PATTERNS</code></td>
+          <td style="text-align: right"><code>node_modules,.next,.turbo</code></td>
+          <td>可清理构建产物</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>这些参数说明 Multica 把 Agent 执行当成长期运行的本地工作负载，而不是一次性命令。</p>
+<hr>
+<h2 id="6-关键模块拆解">6. 关键模块拆解
+</h2><h3 id="61-serverinternaldaemon">6.1 <code>server/internal/daemon</code>
+</h3><p>这个模块对应本地 daemon 的核心执行逻辑。</p>
+<p>它要解决的问题包括：</p>
+<ul>
+<li>检测本机有哪些 Agent CLI</li>
+<li>管理 daemon 进程状态</li>
+<li>处理任务并发</li>
+<li>创建工作目录</li>
+<li>调用外部 CLI</li>
+<li>收集执行结果</li>
+<li>处理超时与中断</li>
+</ul>
+<p>在 Agent 平台里，daemon 是最容易出问题的部分。因为它要接触真实文件系统、真实 Git 仓库、真实依赖安装、真实命令执行和真实网络环境。</p>
+<h3 id="62-serverinternaldaemonws">6.2 <code>server/internal/daemonws</code>
+</h3><p>这个模块从命名看是 daemon 和 server 之间的 WebSocket 通信层。</p>
+<p>Agent 执行不是瞬时动作，前端需要看到实时状态，例如：</p>
+<ul>
+<li>agent 已领取任务</li>
+<li>正在分析</li>
+<li>正在调用工具</li>
+<li>输出日志</li>
+<li>遇到 blocker</li>
+<li>完成或失败</li>
+</ul>
+<p>WebSocket 比单纯 HTTP polling 更适合这类长任务状态同步。</p>
+<h3 id="63-serverinternalservice">6.3 <code>server/internal/service</code>
+</h3><p><code>service</code> 通常承载业务用例层。</p>
+<p>在 Multica 里可以理解为把底层 repository、auth、runtime、issue、comment、task 等能力组织成业务动作：</p>
+<ul>
+<li>创建 issue</li>
+<li>分配 issue</li>
+<li>task claim</li>
+<li>更新状态</li>
+<li>写入评论</li>
+<li>记录 run message</li>
+<li>触发订阅通知</li>
+</ul>
+<p>这是平台的业务中枢。</p>
+<h3 id="64-serverinternalhandler">6.4 <code>server/internal/handler</code>
+</h3><p><code>handler</code> 是 HTTP API 层，负责：</p>
+<ul>
+<li>参数解析</li>
+<li>认证上下文读取</li>
+<li>调用 service</li>
+<li>返回 JSON</li>
+<li>处理 WebSocket upgrade</li>
+</ul>
+<p>Go Backend 使用 Chi router，整体会比较接近传统 REST API 项目。</p>
+<h3 id="65-serverinternalscheduler">6.5 <code>server/internal/scheduler</code>
+</h3><p>调度模块和 Autopilot、Usage rollup 有关。</p>
+<p>Multica 自托管文档提到，Usage Dashboard 的 <code>task_usage_hourly</code> 由 backend 进程内 scheduler 定期维护，并通过数据库唯一键避免多副本重复执行。</p>
+<p>这点很重要：在多 backend replica 下，定时任务如果没有协调机制，很容易重复写入或重复触发。</p>
+<p>Multica 使用 DB-backed scheduler 的好处是：</p>
+<ul>
+<li>不额外依赖 <code>pg_cron</code></li>
+<li>不需要单独 Kubernetes CronJob</li>
+<li>多副本部署下可以通过数据库约束抢占任务</li>
+<li>调度执行记录可审计</li>
+</ul>
+<h3 id="66-serverinternalskill">6.6 <code>server/internal/skill</code>
+</h3><p>Skill 是 Multica 的能力沉淀层。</p>
+<p>普通 Agent 运行容易变成一次性消耗：这次修好了，下次还要重新 prompt、重新探索、重新踩坑。</p>
+<p>Skill 的意义在于把可复用流程沉淀下来，例如：</p>
+<ul>
+<li>项目部署步骤</li>
+<li>代码评审规范</li>
+<li>数据迁移流程</li>
+<li>线上排障清单</li>
+<li>某个仓库的特殊约束</li>
+</ul>
+<p>这和“团队知识库”类似，但更面向 Agent 执行。</p>
+<h3 id="67-serverinternalauth">6.7 <code>server/internal/auth</code>
+</h3><p>Multica 支持浏览器登录、token 登录、Google OAuth、邮件验证码等模式。</p>
+<p>CLI 文档提到 <code>multica login</code> 会创建 90 天 personal access token，并自动发现用户所属 workspace。</p>
+<p>对于 Agent 平台来说，认证不只是用户登录问题，还涉及：</p>
+<ul>
+<li>CLI 如何安全持有 token</li>
+<li>daemon 如何代表用户或 workspace 执行任务</li>
+<li>多 workspace 如何隔离</li>
+<li>自托管如何限制 signup</li>
+<li>私有部署如何避免任意用户创建 workspace</li>
+</ul>
+<h3 id="68-servermigrations-与-sqlc">6.8 <code>server/migrations</code> 与 <code>sqlc</code>
+</h3><p>Multica 使用 PostgreSQL，并通过 <code>sqlc</code> 生成类型安全的 Go 数据访问代码。</p>
+<p>这种组合的特点是：</p>
+<ul>
+<li>SQL 仍然是显式的</li>
+<li>Go 代码有类型检查</li>
+<li>复杂查询不用绕 ORM</li>
+<li>迁移脚本可审计</li>
+</ul>
+<p>对于任务系统、评论线程、执行日志、usage rollup 这类关系强、查询复杂的业务，<code>PostgreSQL + sqlc</code> 是比较务实的选择。</p>
+<hr>
+<h2 id="7-技术亮点">7. 技术亮点
+</h2><h3 id="71-把-agent-设计成一等团队成员">7.1 把 Agent 设计成一等团队成员
+</h3><p>Multica 的产品抽象不是“后台任务”，而是“Agent teammate”。</p>
+<p>这带来一组很自然的协作模型：</p>
+<ul>
+<li>Agent 可以被 assign</li>
+<li>Agent 可以评论</li>
+<li>Agent 可以上报 blocker</li>
+<li>Agent 有执行历史</li>
+<li>Agent 出现在 board 和 activity timeline 里</li>
+</ul>
+<p>这个抽象很重要。因为真正落地 Agent 时，团队最缺的不是“再多一个模型调用”，而是“把 Agent 放进现有协作节奏里”。</p>
+<h3 id="72-runtime-和-agent-解耦">7.2 Runtime 和 Agent 解耦
+</h3><p>Multica 区分：</p>
+<ul>
+<li>Agent：一个可被分配任务的角色</li>
+<li>Runtime：实际执行任务的计算环境</li>
+<li>Provider：底层 Agent CLI 类型</li>
+</ul>
+<p>这个拆分让系统具备扩展性：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">同一个团队可以有多个 runtime
+</span></span><span class="line"><span class="cl">同一个 runtime 可以检测多个 CLI
+</span></span><span class="line"><span class="cl">同一个 workspace 可以有多个 agent
+</span></span><span class="line"><span class="cl">不同 agent 可以绑定不同 provider
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这比把“Agent = 某个机器上的某个 CLI”写死更灵活。</p>
+<h3 id="73-本地-daemon-复用用户环境">7.3 本地 daemon 复用用户环境
+</h3><p>很多企业内部仓库并不适合直接交给云端 Agent 执行，因为涉及：</p>
+<ul>
+<li>私有代码</li>
+<li>内网服务</li>
+<li>本地证书</li>
+<li>SSH key</li>
+<li>私有包仓库</li>
+<li>数据库访问权限</li>
+</ul>
+<p>Multica 的 daemon 模式让执行发生在本地或自有 runtime 上，平台只负责任务控制和状态同步。</p>
+<p>这种架构更适合渐进式引入 Agent。</p>
+<h3 id="74-多-agent-cli-适配">7.4 多 Agent CLI 适配
+</h3><p>Multica 支持多个 Agent CLI，本质上把不同供应商的工具变成统一 runtime 能力。</p>
+<p>这带来两个好处：</p>
+<ul>
+<li>避免锁死某个模型或 Agent 供应商</li>
+<li>团队可以根据任务类型选择不同 Agent</li>
+</ul>
+<p>例如：</p>
+<ul>
+<li>Claude Code 处理长上下文代码理解</li>
+<li>Codex 处理编码任务</li>
+<li>OpenCode / OpenClaw 处理开源可控场景</li>
+<li>Gemini 或 Kimi 作为补充 provider</li>
+</ul>
+<p>Multica 站在更上层做调度，而不是押注某一个底层 Agent。</p>
+<h3 id="75-issue--run-的双层记录">7.5 Issue + Run 的双层记录
+</h3><p>Issue 是业务层记录，Run 是执行层记录。</p>
+<p>这个设计很关键：</p>
+<ul>
+<li>一个 Issue 可能经历多次 Agent 执行</li>
+<li>一次执行可能失败、重试、被取消</li>
+<li>人类评论和 Agent 输出需要分开理解</li>
+<li>排查问题时需要看到每次 run 的消息流</li>
+</ul>
+<p>如果只记录 Issue 最终状态，就很难复盘 Agent 为什么失败。</p>
+<h3 id="76-autopilot-把-agent-变成定时工作流">7.6 Autopilot 把 Agent 变成定时工作流
+</h3><p>Autopilot 让 Agent 不只是被动接任务，也可以处理周期性工作：</p>
+<ul>
+<li>每日 standup 汇总</li>
+<li>每周依赖升级</li>
+<li>定期安全扫描</li>
+<li>自动 issue triage</li>
+<li>周期性文档同步</li>
+<li>发布前检查</li>
+</ul>
+<p>这类任务以前通常是 cron + 脚本。引入 Agent 后，任务内容可以更开放，但仍需要调度、记录、失败处理和权限控制。</p>
+<h3 id="77-skill-让经验复利化">7.7 Skill 让经验复利化
+</h3><p>如果每次 Agent 执行都从零开始，团队收益会被上下文构建成本吃掉。</p>
+<p>Skill 的价值在于把经验变成可复用资产：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">一次解决问题
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">沉淀为 Skill
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">后续 Agent 复用
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">团队整体能力提升
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这也是 Multica README 里强调 <code>compound skills</code> 的原因。</p>
+<h3 id="78-生产部署思路比较完整">7.8 生产部署思路比较完整
+</h3><p>从自托管文档可以看出，Multica 不只是提供 demo：</p>
+<ul>
+<li>Docker Compose 快速部署</li>
+<li>Helm Chart 部署</li>
+<li>生产模式验证码</li>
+<li>signup 控制</li>
+<li>workspace 创建限制</li>
+<li>S3 / CloudFront 文件存储</li>
+<li>Prometheus metrics</li>
+<li>CORS 和 WebSocket Origin 配置</li>
+<li>Usage rollup 自动调度</li>
+<li>多 backend replica 协调</li>
+</ul>
+<p>这些都是平台工程里真正会遇到的问题。</p>
+<hr>
+<h2 id="8-生产部署注意点">8. 生产部署注意点
+</h2><h3 id="81-一定要修改密钥">8.1 一定要修改密钥
+</h3><p>自托管时至少要确认：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">JWT_SECRET
+</span></span><span class="line"><span class="cl">POSTGRES_PASSWORD
+</span></span><span class="line"><span class="cl">DATABASE_URL
+</span></span><span class="line"><span class="cl">FRONTEND_ORIGIN
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>JWT_SECRET</code> 必须是随机长字符串：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">openssl rand -hex <span class="m">32</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="82-邮件认证要提前配置">8.2 邮件认证要提前配置
+</h3><p>公开或团队部署建议配置：</p>
+<ul>
+<li><code>RESEND_API_KEY</code></li>
+<li>或 SMTP 相关变量</li>
+</ul>
+<p>不配置邮件时，验证码会出现在 backend 日志里，这只适合临时测试。</p>
+<h3 id="83-私有实例要限制注册和-workspace-创建">8.3 私有实例要限制注册和 workspace 创建
+</h3><p>建议流程：</p>
+<ol>
+<li>初始部署时允许创建 workspace</li>
+<li>管理员登录并创建共享 workspace</li>
+<li>设置 <code>DISABLE_WORKSPACE_CREATION=true</code></li>
+<li>根据需要设置 <code>ALLOW_SIGNUP=false</code></li>
+<li>后续用户通过邀请加入</li>
+</ol>
+<p>否则用户即使登录受控，也可能创建自己的 workspace，导致平台管理员不可见。</p>
+<h3 id="84-daemon-所在机器就是执行边界">8.4 daemon 所在机器就是执行边界
+</h3><p>Agent 真正执行代码的是 daemon 所在机器。</p>
+<p>因此需要关注：</p>
+<ul>
+<li>机器权限</li>
+<li>工作目录隔离</li>
+<li>SSH key 和 token 泄露风险</li>
+<li>私有仓库访问权限</li>
+<li>Agent CLI 的 sandbox 能力</li>
+<li>最大并发任务数</li>
+<li>磁盘清理策略</li>
+</ul>
+<p>默认最大并发任务是 <code>20</code>，小机器上建议调低：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">export</span> <span class="nv">MULTICA_DAEMON_MAX_CONCURRENT_TASKS</span><span class="o">=</span><span class="m">3</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="85-websocket-origin-和反向代理">8.5 WebSocket Origin 和反向代理
+</h3><p>Multica 依赖 WebSocket 做实时状态更新。</p>
+<p>如果前端和后端域名不同，要正确配置：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">FRONTEND_ORIGIN
+</span></span><span class="line"><span class="cl">CORS_ALLOWED_ORIGINS
+</span></span><span class="line"><span class="cl">COOKIE_DOMAIN
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>反向代理也要支持 WebSocket upgrade。否则界面可能能打开，但实时日志和任务状态不会更新。</p>
+<h3 id="86-文件存储">8.6 文件存储
+</h3><p>如果有上传附件、执行产物、截图等需求，生产环境建议配置 S3 或兼容对象存储。</p>
+<p>相关变量包括：</p>
+<ul>
+<li><code>S3_BUCKET</code></li>
+<li><code>S3_REGION</code></li>
+<li><code>AWS_ACCESS_KEY_ID</code></li>
+<li><code>AWS_SECRET_ACCESS_KEY</code></li>
+<li><code>AWS_ENDPOINT_URL</code></li>
+<li><code>ATTACHMENT_DOWNLOAD_MODE</code></li>
+<li><code>CLOUDFRONT_DOMAIN</code></li>
+</ul>
+<p>如果对象存储只在内网可访问，可以考虑 <code>proxy</code> 下载模式。</p>
+<hr>
+<h2 id="9-适合场景与局限">9. 适合场景与局限
+</h2><h3 id="91-适合场景">9.1 适合场景
+</h3><p>Multica 比较适合：</p>
+<ul>
+<li>已经在团队里使用 Claude Code / Codex / OpenCode 等 CLI</li>
+<li>希望把 Agent 纳入 Issue 流程</li>
+<li>有多个 Agent 或多个执行机器</li>
+<li>需要自托管，代码和凭证不希望交给第三方运行</li>
+<li>希望沉淀团队 Agent 使用经验</li>
+<li>想把周期性研发任务交给 Agent</li>
+</ul>
+<p>典型任务包括：</p>
+<ul>
+<li>bug 修复</li>
+<li>issue triage</li>
+<li>文档更新</li>
+<li>依赖升级</li>
+<li>代码审查初筛</li>
+<li>测试补齐</li>
+<li>发布检查</li>
+<li>安全巡检</li>
+</ul>
+<h3 id="92-可能的局限">9.2 可能的局限
+</h3><p>Multica 不是银弹。</p>
+<p>使用前要理解几个限制：</p>
+<ul>
+<li>它依赖底层 Agent CLI 的能力和稳定性</li>
+<li>daemon 执行环境需要认真治理</li>
+<li>多 Agent 并行会放大权限、成本和冲突问题</li>
+<li>自托管需要维护 PostgreSQL、对象存储、邮件、反向代理等基础设施</li>
+<li>Agent 生成代码仍需要人类 review</li>
+<li>Skill 沉淀需要团队纪律，否则会变成另一堆没人维护的文档</li>
+</ul>
+<p>一句话：Multica 能把 Agent 管起来，但不能替你定义好工程边界。</p>
+<hr>
+<h2 id="10-参考资料">10. 参考资料
+</h2><ul>
+<li>GitHub 仓库：<a class="link" href="https://github.com/multica-ai/multica"  target="_blank" rel="noopener"
+    >https://github.com/multica-ai/multica</a></li>
+<li>README：<a class="link" href="https://github.com/multica-ai/multica/blob/main/README.md"  target="_blank" rel="noopener"
+    >https://github.com/multica-ai/multica/blob/main/README.md</a></li>
+<li>自托管文档：<a class="link" href="https://github.com/multica-ai/multica/blob/main/SELF_HOSTING.md"  target="_blank" rel="noopener"
+    >https://github.com/multica-ai/multica/blob/main/SELF_HOSTING.md</a></li>
+<li>高级配置：<a class="link" href="https://github.com/multica-ai/multica/blob/main/SELF_HOSTING_ADVANCED.md"  target="_blank" rel="noopener"
+    >https://github.com/multica-ai/multica/blob/main/SELF_HOSTING_ADVANCED.md</a></li>
+<li>CLI 和 Daemon 文档：<a class="link" href="https://github.com/multica-ai/multica/blob/main/CLI_AND_DAEMON.md"  target="_blank" rel="noopener"
+    >https://github.com/multica-ai/multica/blob/main/CLI_AND_DAEMON.md</a></li>
+</ul>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/ai/">AI</a>
+        
+            <a href="/tags/agent/">Agent</a>
+        
+            <a href="/tags/multi-agent/">Multi-Agent</a>
+        
+            <a href="/tags/coding-agent/">Coding-Agent</a>
+        
+            <a href="/tags/multica/">Multica</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/multi-agent-%E7%B3%BB%E7%BB%9F%E5%AD%A6%E4%B9%A0%E6%8C%87%E5%8D%97%E5%8F%91%E5%B1%95%E8%84%89%E7%BB%9C%E6%A0%B8%E5%BF%83%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">Multi-Agent 系统学习指南：发展脉络、核心原理、实现模式与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-skills%E6%A6%82%E5%BF%B5%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F%E5%BC%80%E5%8F%91%E6%96%B9%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/agent-hub-%E9%A1%B9%E7%9B%AE%E7%9F%A5%E8%AF%86%E5%8D%A1%E7%89%87/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">agent-hub 项目知识卡片</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/ai-agent-%E5%B7%A5%E7%A8%8B%E5%B8%88%E6%AF%8F%E6%97%A5%E4%B8%80%E9%A2%98react-agent-%E7%B3%BB%E7%BB%9F%E8%AE%BE%E8%AE%A1/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AI Agent 工程师每日一题：ReAct Agent 系统设计</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/ai-agent-loop-%E4%B8%8E-react-%E6%A8%A1%E5%BC%8F%E8%AF%A6%E8%A7%A3%E6%80%9D%E8%80%83%E8%A1%8C%E5%8A%A8%E8%A7%82%E5%AF%9F%E5%81%9C%E6%AD%A2%E6%9D%A1%E4%BB%B6%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AI Agent Loop 与 ReAct 模式详解：思考、行动、观察、停止条件与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>

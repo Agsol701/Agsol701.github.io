@@ -1,0 +1,648 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+    <channel>
+        <title>Appbuilder on Agsol Blog</title>
+        <link>https://Agsol701.github.io/tags/appbuilder/</link>
+        <description>Recent content in Appbuilder on Agsol Blog</description>
+        <generator>Hugo -- gohugo.io</generator>
+        <language>en</language>
+        <copyright>Agsol</copyright>
+        <lastBuildDate>Fri, 22 May 2026 00:00:00 +0000</lastBuildDate><atom:link href="https://Agsol701.github.io/tags/appbuilder/index.xml" rel="self" type="application/rss+xml" /><item>
+        <title>agent-hub 项目知识卡片</title>
+        <link>https://Agsol701.github.io/p/agent-hub-%E9%A1%B9%E7%9B%AE%E7%9F%A5%E8%AF%86%E5%8D%A1%E7%89%87/</link>
+        <pubDate>Fri, 22 May 2026 00:00:00 +0000</pubDate>
+        
+        <guid>https://Agsol701.github.io/p/agent-hub-%E9%A1%B9%E7%9B%AE%E7%9F%A5%E8%AF%86%E5%8D%A1%E7%89%87/</guid>
+        <description>&lt;h1 id=&#34;agent-hub-项目知识卡片&#34;&gt;agent-hub 项目知识卡片
+&lt;/h1&gt;&lt;blockquote&gt;
+&lt;p&gt;智能体编排引擎，AppBuilder 核心子系统之一&lt;/p&gt;&lt;/blockquote&gt;
+&lt;h2 id=&#34;项目概述&#34;&gt;项目概述
+&lt;/h2&gt;&lt;p&gt;agent-hub 是百度千帆 AppBuilder 平台的智能体编排引擎，负责 Agent 的创建、调度和执行。包含四种智能体：single_agent（单 Agent ReAct）、multi_agent（多 Agent 协同）、ai_assistant（AI 助手+深度思考）、deepresearch（深度研究），通过 api-server 统一对外暴露 API。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;技术栈&lt;/strong&gt;：Go 1.24+ / Gin / Eino（cloudwego 图编排框架） / MongoDB / SSE&lt;/p&gt;
+&lt;h2 id=&#34;整体架构&#34;&gt;整体架构
+&lt;/h2&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;用户请求 → api-server(网关聚合)
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;              ├── single_agent     → ReAct 循环（Planner → Executor → Generator）
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;              ├── multi_agent      → HostAgent(Plan) → ToolAgent(Execute) → Replan/Summary
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;              ├── ai_assistant     → Router → Executor → Generator（四阶段管线）
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;              └── deepresearch    → Parser → Coordinator → Outliner → Planner → Executor → Reporter
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;&lt;strong&gt;关键依赖&lt;/strong&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;agent-core&lt;/strong&gt;：Agent 引擎核心（compose.DynamicGraph、master.Agent）&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;agent-infra&lt;/strong&gt;：基础设施（dte、console、memory、ce/model、safety 等）&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;CopilotEngine&lt;/strong&gt;：LLM 调用服务，通过 AppToken 区分不同 prompt 应用&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;DTE (next-gen-dte)&lt;/strong&gt;：组件执行引擎&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;一single-agentreact-模式&#34;&gt;一、Single-Agent（ReAct 模式）
+&lt;/h2&gt;&lt;h3 id=&#34;架构&#34;&gt;架构
+&lt;/h3&gt;&lt;p&gt;single_agent 是基于 agent-core &lt;code&gt;master.Agent&lt;/code&gt; 引擎的 &lt;strong&gt;ReAct 模式单智能体实现&lt;/strong&gt;，是 DTE Python AgentPro 的 Go 重写版，修复了 DTE 的多个 bug。&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;HTTP POST /v3/function_call/integrated
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  → SingleAgentAPI (streaming/blocking 双模式)
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  → NewReactAgentWithRequest()
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    → PrepareContexts(): Request → RunInput + AppConfig
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    → 知识干预搜索 + 行业术语改写 + 规则干预检查
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    → (命中干预则直接推送答案，跳过 LLM)
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  → ReactAgent.Run()
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    → 创建 AgentEngine (engine_config.yaml)
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    → agentEngine.Run(ctx, input, WithMaxIteration, WithUserState)
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      → ReAct 循环: Planner → Executor → (检查退出) → 下一轮或 Generator
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h3 id=&#34;核心设计&#34;&gt;核心设计
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;1. ReAct 循环&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;默认最大迭代 3 次，可通过 &lt;code&gt;AppConfig.MaxThoughtRound&lt;/code&gt; 覆盖（上限 100，默认赋 4）&lt;/li&gt;
+&lt;li&gt;每轮：Planner 思考 → Executor 执行工具 → 检查是否提前退出&lt;/li&gt;
+&lt;li&gt;提前退出条件：Planner 输出 &lt;code&gt;subtask_type=generation&lt;/code&gt; / 工具在 StopTools 列表中&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;2. Router 是静态路由&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;engine_config.yaml&lt;/code&gt; 中 &lt;code&gt;jmes-path-rule: &amp;quot;true&amp;quot;&lt;/code&gt; 恒为真，所有请求直接命中 planner，不经过 Router LLM 调用，节省一次模型调用。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;3. 三路组件执行&lt;/strong&gt;&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;类型&lt;/th&gt;
+          &lt;th&gt;判断条件&lt;/th&gt;
+          &lt;th&gt;执行方式&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;MCP&lt;/td&gt;
+          &lt;td&gt;&lt;code&gt;impl.IsMCPComponent(tool.Type)&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;HTTP POST 到 MCP &lt;code&gt;/mcp/api/v1/tool/call&lt;/code&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Workflow&lt;/td&gt;
+          &lt;td&gt;&lt;code&gt;tool.ToolName == &amp;quot;Workflow&amp;quot;&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;HTTP POST 到 workflow engine&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;DTE 组件&lt;/td&gt;
+          &lt;td&gt;默认&lt;/td&gt;
+          &lt;td&gt;HTTP POST 到 DTE &lt;code&gt;/dte/api/v2/components/&amp;lt;name&amp;gt;/version/latest?action=tool_eval&lt;/code&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;&lt;strong&gt;4. 两阶段 Function Calling&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Planner 阶段&lt;/strong&gt;：CE 模型输出 thought + actions（含 tool_name）&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;抽参阶段&lt;/strong&gt;：调用 CE 抽参模型 &lt;code&gt;ab-online-ai-assistant-tool-parameter-builder&lt;/code&gt;，输入工具定义 + Planner 输出，输出具体 arguments&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这种设计解耦了&amp;quot;选工具&amp;quot;和&amp;quot;填参数&amp;quot;，让 Planner 专注意图理解，抽参模型专注参数提取。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;5. 干预机制（三层）&lt;/strong&gt;&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;层级&lt;/th&gt;
+          &lt;th&gt;实现&lt;/th&gt;
+          &lt;th&gt;场景&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;规则干预&lt;/td&gt;
+          &lt;td&gt;Redis 关键词匹配&lt;/td&gt;
+          &lt;td&gt;精确匹配的 FAQ&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;知识干预&lt;/td&gt;
+          &lt;td&gt;向量搜索 + Rerank&lt;/td&gt;
+          &lt;td&gt;语义相似的知识库内容&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;行业术语&lt;/td&gt;
+          &lt;td&gt;术语搜索 + LLM Query 改写&lt;/td&gt;
+          &lt;td&gt;专业术语理解&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;命中干预后直接推送答案，跳过所有 LLM 调用，降低延迟和成本。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;6. ReActState 三层嵌入结构&lt;/strong&gt;&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;ReActState
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ├── UIRenderingState    # 运行时频繁更新：事件推送、防重复、状态机
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  ├── DataCacheState      # 初始化一次只读：请求、配置、历史、组件工厂
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  └── BusinessFlowState   # 业务控制流：重试、中断、轮次控制
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;&lt;strong&gt;7. 软错误处理&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;所有 DTE/MCP 硬错误转为软错误（SoftErrorIterator），避免 graph 中断。工具执行失败不会导致整个 ReAct 循环崩溃，而是将错误信息返回给 Planner 重新决策。&lt;/p&gt;
+&lt;h3 id=&#34;和-multi_agent-的核心区别&#34;&gt;和 multi_agent 的核心区别
+&lt;/h3&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;维度&lt;/th&gt;
+          &lt;th&gt;single_agent&lt;/th&gt;
+          &lt;th&gt;multi_agent&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;架构模式&lt;/td&gt;
+          &lt;td&gt;单 Agent ReAct 循环&lt;/td&gt;
+          &lt;td&gt;多 Agent Plan-and-Execute&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;工具决策&lt;/td&gt;
+          &lt;td&gt;每轮选一个工具执行&lt;/td&gt;
+          &lt;td&gt;一次性规划多个并行任务&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;并行能力&lt;/td&gt;
+          &lt;td&gt;无（串行 ReAct）&lt;/td&gt;
+          &lt;td&gt;DynamicGraph 并行执行&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;适用场景&lt;/td&gt;
+          &lt;td&gt;简单对话、单步工具调用&lt;/td&gt;
+          &lt;td&gt;复杂任务、多组件协同&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;API 端点&lt;/td&gt;
+          &lt;td&gt;&lt;code&gt;/v3/function_call/integrated&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;&lt;code&gt;/v3/function_call/multiagent_integrated/inner&lt;/code&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;对齐目标&lt;/td&gt;
+          &lt;td&gt;DTE Python AgentPro&lt;/td&gt;
+          &lt;td&gt;DTE Python MultiAgent&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h3 id=&#34;关键文件&#34;&gt;关键文件
+&lt;/h3&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;文件&lt;/th&gt;
+          &lt;th&gt;职责&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;single_agent/internal/flow/react_agent.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;ReactAgent 主入口&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;single_agent/internal/flow/ce_planner.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;CEPlanner 规划器&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;single_agent/internal/flow/ce_executor.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;CustomToolExecutor 三路执行&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;single_agent/internal/flow/ce_executor_processor.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;抽参 PreProcessor + MCPResult PostProcessor&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;single_agent/internal/flow/ce_generator.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;CEGenerator 最终回答生成&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;single_agent/internal/state/react_state.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;ReActState 三层状态&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;single_agent/internal/flow/knowledge_intervention.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;知识干预（向量搜索+Rerank）&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;single_agent/internal/flow/rule_intervention.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;规则干预（Redis关键词匹配）&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;single_agent/pkg/components/manifest_registry.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;60+ 组件 Manifest 注册表&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;二multi-agentplan-and-execute-模式&#34;&gt;二、Multi-Agent（Plan-and-Execute 模式）
+&lt;/h2&gt;&lt;h3 id=&#34;架构-1&#34;&gt;架构
+&lt;/h3&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;MultiAgent.Run()
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  1. SafetyCheck(文本安全检测)
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  2. NewHostAgent(初始化主控)
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  3. compose.NewDynamicGraph(hostAgent, eventChannel) -- 动态图执行
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;     -&amp;gt; HostAgent.Orchestrate() -- 生成 Plan
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        -&amp;gt; cePlan() / ceReplan() -- 调用 CopilotEngine 生成计划
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;     -&amp;gt; 动态图并行执行 ToolAgent 节点
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        -&amp;gt; DefaultAgentRun() -- 调用 DTE
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        -&amp;gt; UserAgentRun()    -- 调用 Console
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        -&amp;gt; ReportAgentRun()  -- 报告生成
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  4. HostAgent.outputMessage() -- 返回结果
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h3 id=&#34;核心设计-1&#34;&gt;核心设计
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;1. Plan-and-Execute 而非 ReAct&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;为什么选择 Plan-and-Execute？因为 multi-agent 场景需要一次性规划多个并行任务，ReAct 的单步决策无法支持并行。Plan 结果包含任务间依赖关系（Requires），DynamicGraph 据此调度并行/串行执行。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;2. 多轮规划容错&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;currentIteration == 0&lt;/code&gt;：cePlan（首次规划）&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;currentIteration &amp;lt; maxIterations(3)&lt;/code&gt;：ceReplan（重新规划）&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;currentIteration == maxIterations &amp;amp;&amp;amp; 有失败任务&lt;/code&gt;：ceChatSummary（兜底总结）&lt;/li&gt;
+&lt;li&gt;最多迭代 3 次&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;3. 任务依赖&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;ToolAgent 通过 &lt;code&gt;task.Requires&lt;/code&gt; 字段实现任务间依赖：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;前置任务失败 → 取消后续&lt;/li&gt;
+&lt;li&gt;前置任务未完成 → 跳过&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;RequiredContext&lt;/code&gt; 将前置任务结果注入当前任务参数&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;4. 三种执行路径&lt;/strong&gt;&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;执行路径&lt;/th&gt;
+          &lt;th&gt;调用目标&lt;/th&gt;
+          &lt;th&gt;场景&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;DefaultAgentRun&lt;/td&gt;
+          &lt;td&gt;DTE (dte.RunAgent)&lt;/td&gt;
+          &lt;td&gt;标准组件执行&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;UserAgentRun&lt;/td&gt;
+          &lt;td&gt;Console (console.RunAgent)&lt;/td&gt;
+          &lt;td&gt;用户自定义 Agent&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;ReportAgentRun&lt;/td&gt;
+          &lt;td&gt;DTE (ToolChoice 强制 ReportAgent)&lt;/td&gt;
+          &lt;td&gt;报告生成&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h3 id=&#34;关键文件-1&#34;&gt;关键文件
+&lt;/h3&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;文件&lt;/th&gt;
+          &lt;th&gt;职责&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;multi_agent/pkg/flow/multi_agent.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;MultiAgent 入口&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;multi_agent/pkg/flow/host_agent.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;主控 Agent（Plan/Replan/Summary）&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;multi_agent/pkg/flow/tool_agent.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;工具 Agent（DTE/Console/Report）&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;multi_agent/pkg/schema/state/state.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;运行时状态定义&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;multi_agent/pkg/utils/convert/inputs_converter.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;请求转换+AppConfig 准备&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;二ai-assistantrouter-executor-generator-管线&#34;&gt;二、AI Assistant（Router-Executor-Generator 管线）
+&lt;/h2&gt;&lt;h3 id=&#34;架构-2&#34;&gt;架构
+&lt;/h3&gt;&lt;p&gt;基于 agent-core 的 &lt;code&gt;master.Agent&lt;/code&gt;，四阶段管线：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Router(意图路由) → Planner(推理规划) → Executor(工具执行) → Generator(回答生成)
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;每阶段通过 Hook 机制注入自定义逻辑。&lt;/p&gt;
+&lt;h3 id=&#34;核心设计-2&#34;&gt;核心设计
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;1. Hook 扩展机制&lt;/strong&gt;&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;Hook&lt;/th&gt;
+          &lt;th&gt;作用&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;RouterHook&lt;/td&gt;
+          &lt;td&gt;注入用户画像、设置深度思考标志&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;ExecutorHook&lt;/td&gt;
+          &lt;td&gt;为不同执行器配置 PreProcessor/PostProcessor&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;GeneratorHook&lt;/td&gt;
+          &lt;td&gt;配置人设约束、追问生成、MCP 结果处理&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;&lt;strong&gt;2. 深度思考 (Deep Think)&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;通过 &lt;code&gt;Thinking&lt;/code&gt; 参数控制，影响：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Router 决策&lt;/li&gt;
+&lt;li&gt;搜索参数（enable_reasoning）&lt;/li&gt;
+&lt;li&gt;输出格式（推理步骤渲染）&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;3. 引擎配置驱动&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;从 &lt;code&gt;engine_config.yaml&lt;/code&gt; 加载完整 Agent 配置，包括 Router rules、Tools、ActionExecutors、Generators 等。&lt;/p&gt;
+&lt;h3 id=&#34;关键文件-2&#34;&gt;关键文件
+&lt;/h3&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;文件&lt;/th&gt;
+          &lt;th&gt;职责&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;ai_assistant/pkg/engine/engine.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;Agent 引擎创建+事件消费&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;ai_assistant/pkg/hook/executor_hook.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;执行器 Hook&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;ai_assistant/pkg/hook/generator_hook.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;生成器 Hook&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;ai_assistant/api/handler_v1.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;API 入口&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;三deepresearch多阶段有状态工作流&#34;&gt;三、DeepResearch（多阶段有状态工作流）
+&lt;/h2&gt;&lt;h3 id=&#34;架构-3&#34;&gt;架构
+&lt;/h3&gt;&lt;p&gt;基于 Eino &lt;code&gt;compose.Graph&lt;/code&gt; 的状态机工作流：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;START → Parser → Coordinator → CoordinatorHuman → Preparer → Outliner
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;→ OutlinerHuman → Planner → Executor → Reporter → END
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;支持 &lt;code&gt;compose.Interrupt&lt;/code&gt; 实现人机交互（大纲确认、澄清问答）。&lt;/p&gt;
+&lt;h3 id=&#34;核心设计-3&#34;&gt;核心设计
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;1. Human-in-the-Loop&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;使用 &lt;code&gt;compose.Interrupt&lt;/code&gt; 抛出中断&lt;/li&gt;
+&lt;li&gt;中断信息持久化到 MongoDB (&lt;code&gt;interrupt_events&lt;/code&gt; 集合)&lt;/li&gt;
+&lt;li&gt;恢复时通过 CheckpointID + StateModifier 注入用户反馈&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;2. 并行执行&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Executor 为每个 Step 启动 goroutine 并行执行：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;sync.Mutex&lt;/code&gt; 保护 EventChannel push 和 ReferenceMapping 更新&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;sync.WaitGroup&lt;/code&gt; 等待所有步骤完成&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;3. 多阶段节点&lt;/strong&gt;&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;节点&lt;/th&gt;
+          &lt;th&gt;职责&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Parser&lt;/td&gt;
+          &lt;td&gt;解析上传文件，获取摘要&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Coordinator&lt;/td&gt;
+          &lt;td&gt;多轮澄清对话 + 背景调研 query 生成&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Preparer&lt;/td&gt;
+          &lt;td&gt;调用 DTE DeepResearchPreparer 组件&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Outliner&lt;/td&gt;
+          &lt;td&gt;调用 DTE DeepResearchOutliner 组件生成大纲&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Planner&lt;/td&gt;
+          &lt;td&gt;基于大纲生成研究计划（Steps）&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Executor&lt;/td&gt;
+          &lt;td&gt;并行执行研究步骤，调用 SearchAgent/DeepSearch&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Reporter&lt;/td&gt;
+          &lt;td&gt;生成最终报告，流式输出&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h3 id=&#34;关键文件-3&#34;&gt;关键文件
+&lt;/h3&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;文件&lt;/th&gt;
+          &lt;th&gt;职责&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;deepresearch/internal/flow/agent.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;图构建+启动&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;deepresearch/internal/flow/builder.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;图结构定义&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;deepresearch/internal/flow/coordinator.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;协调者（澄清+背景调研）&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;deepresearch/internal/flow/executor.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;执行器（含并行版）&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;deepresearch/internal/flow/state/state.go&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;状态定义&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;四api-server网关聚合层&#34;&gt;四、API-Server（网关聚合层）
+&lt;/h2&gt;&lt;h3 id=&#34;核心职责&#34;&gt;核心职责
+&lt;/h3&gt;&lt;ol&gt;
+&lt;li&gt;接收外部 OpenAPI 请求&lt;/li&gt;
+&lt;li&gt;从 Console 获取 Agent 元数据&lt;/li&gt;
+&lt;li&gt;聚合请求转发给 Workflow / ai_assistant / deepresearch&lt;/li&gt;
+&lt;li&gt;SSE 流式代理，消息合并后写入 Memory&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3 id=&#34;streamingmerger&#34;&gt;StreamingMerger
+&lt;/h3&gt;&lt;p&gt;流式消息合并器，按四维匹配键合并：&lt;code&gt;event.id + event.name + content.type + content.name&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;支持：text 累积、references 聚合、plan 状态更新（preparing→running→done）、code 片段拼接、browser 状态管理。&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;五组件工具调用链路&#34;&gt;五、组件/工具调用链路
+&lt;/h2&gt;&lt;h3 id=&#34;multi-agent-调用链路&#34;&gt;Multi-Agent 调用链路
+&lt;/h3&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;HostAgent.cePlan() → CopilotEngine Planner App
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  → DynamicGraph 执行 ToolAgent
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    → DefaultAgentRun → dte.RunAgent() → DTE HTTP API
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    → UserAgentRun   → console.RunAgent() → Console HTTP API
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    → ReportAgentRun → dte.RunAgent() + ToolChoice 强制
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h3 id=&#34;deepresearch-调用链路&#34;&gt;DeepResearch 调用链路
+&lt;/h3&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Preparer  → DTEComponentClient.Run(DeepResearchPreparer)
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Outliner  → DTEComponentClient.Run(DeepResearchOutliner)
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Executor  → DTEComponentClient.Run(SearchAgent/DeepSearch)
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Reporter  → DTEComponentClient.Run(DeepResearchReporter)
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h3 id=&#34;两种-dte-调用方式的区别&#34;&gt;两种 DTE 调用方式的区别
+&lt;/h3&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;方式&lt;/th&gt;
+          &lt;th&gt;模块&lt;/th&gt;
+          &lt;th&gt;调用方式&lt;/th&gt;
+          &lt;th&gt;语义&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;dte.RunAgent&lt;/td&gt;
+          &lt;td&gt;multi_agent&lt;/td&gt;
+          &lt;td&gt;传入任务描述+工具列表&lt;/td&gt;
+          &lt;td&gt;&amp;ldquo;给你一个任务，你决策用什么工具&amp;rdquo;&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;components.Run&lt;/td&gt;
+          &lt;td&gt;deepresearch&lt;/td&gt;
+          &lt;td&gt;指定组件+参数&lt;/td&gt;
+          &lt;td&gt;&amp;ldquo;用这个组件执行这些参数&amp;rdquo;&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;六面试-qa&#34;&gt;六、面试 Q&amp;amp;A
+&lt;/h2&gt;&lt;h3 id=&#34;q0-single-agent-和-multi-agent-分别适合什么场景为什么需要两种架构&#34;&gt;Q0: Single-Agent 和 Multi-Agent 分别适合什么场景？为什么需要两种架构？
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;A&lt;/strong&gt;: Single-Agent（ReAct）适合简单对话和单步工具调用场景——用户问一个问题、调一个组件就完成。它的优势是延迟低、成本低、逻辑简单。Multi-Agent（Plan-and-Execute）适合复杂任务场景——用户一个请求需要多个组件协同完成，比如同时搜索多个知识库、调用多个 API、生成报告。它的优势是支持并行执行和任务依赖管理。两种架构并存是因为实际业务中简单场景和复杂场景并存，用 ReAct 处理简单请求可以避免 Plan-and-Execute 的开销，用 Plan-and-Execute 处理复杂请求可以弥补 ReAct 无法并行的短板。&lt;/p&gt;
+&lt;h3 id=&#34;q01-single-agent-的两阶段-function-calling-是怎么设计的为什么不直接一步到位&#34;&gt;Q0.1: Single-Agent 的两阶段 Function Calling 是怎么设计的？为什么不直接一步到位？
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;A&lt;/strong&gt;: 分两步：第一步 Planner 只负责意图理解和工具选择，输出 thought + actions（含 tool_name）；第二步抽参模型专门负责参数提取，输入工具定义 + Planner 输出，输出具体 arguments。这样设计的好处是解耦了&amp;quot;选工具&amp;quot;和&amp;quot;填参数&amp;quot;——Planner 专注意图理解不需要关心每个工具的参数细节，抽参模型专注参数提取可以利用工具的完整 schema 做精确提取。如果一步到位，Planner 的 prompt 会非常长（需要包含所有工具的完整参数定义），而且意图理解和参数提取互相干扰，准确率下降。&lt;/p&gt;
+&lt;h3 id=&#34;q02-干预机制的三层设计是怎么考虑的&#34;&gt;Q0.2: 干预机制的三层设计是怎么考虑的？
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;A&lt;/strong&gt;: 规则干预（Redis 关键词匹配）最轻量，适合精确匹配的 FAQ，延迟最低；知识干预（向量搜索+Rerank）适合语义相似的知识库内容，覆盖面更广但延迟稍高；行业术语（术语搜索+LLM Query 改写）不是直接回答，而是改写用户 query 让 LLM 更好理解。三层各有分工：规则干预做精确拦截，知识干预做语义兜底，行业术语做输入优化。命中干预后直接推送答案跳过所有 LLM 调用，既降低延迟又节省成本。&lt;/p&gt;
+&lt;h3 id=&#34;q03-软错误处理的设计思路是什么&#34;&gt;Q0.3: 软错误处理的设计思路是什么？
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;A&lt;/strong&gt;: 所有 DTE/MCP 执行的硬错误转为软错误（SoftErrorIterator），不会导致 ReAct 图中断。工具执行失败时，错误信息会作为工具结果返回给 Planner，Planner 可以选择换一个工具重试、调整参数再试、或者直接让 Generator 生成回答。这比硬中断更合理，因为实际场景中工具调用失败是常态（网络超时、参数错误等），不应该因为一个工具失败就整个对话崩溃。&lt;/p&gt;
+&lt;h3 id=&#34;q1-为什么-multi-agent-选择-plan-and-execute-而不是-react&#34;&gt;Q1: 为什么 Multi-Agent 选择 Plan-and-Execute 而不是 ReAct？
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;A&lt;/strong&gt;: ReAct 是单步决策，每次只选择一个工具执行，无法支持并行。Multi-Agent 场景下，用户一个复杂请求可能需要多个组件同时执行（比如同时搜索多个知识库、调用多个 API）。Plan-and-Execute 允许 HostAgent 一次性生成包含多个并行任务的 Plan，DynamicGraph 根据任务间的依赖关系（Requires）调度并行/串行执行，大幅提升执行效率。同时支持 Replan 机制，如果执行结果不理想可以重新规划，兼具效率和容错能力。&lt;/p&gt;
+&lt;h3 id=&#34;q2-dynamicgraph-是怎么工作的&#34;&gt;Q2: DynamicGraph 是怎么工作的？
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;A&lt;/strong&gt;: DynamicGraph 来自 agent-core 的 compose 包。HostAgent 实现了 Orchestrate 和 Judge 两个接口方法。每次 Orchestrate 返回 &lt;code&gt;compose.Plan{Nodes: []compose.Node}&lt;/code&gt;，每个 Node 是一个 Callable（ToolAgent）。DynamicGraph 根据节点间的依赖关系构建执行图，无依赖的节点并行执行，有依赖的节点串行执行。执行完所有节点后，如果 Judge 判断需要继续，会再次调用 Orchestrate 生成新的 Plan（Replan）。&lt;/p&gt;
+&lt;h3 id=&#34;q3-人机交互-hitl-是怎么实现的&#34;&gt;Q3: 人机交互 (HITL) 是怎么实现的？
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;A&lt;/strong&gt;: 基于 Eino 框架的 &lt;code&gt;compose.Interrupt&lt;/code&gt; 机制。当 DeepResearch 执行到需要用户确认的节点（如大纲确认），会调用 &lt;code&gt;compose.Interrupt&lt;/code&gt; 抛出中断，前端收到 interrupt 事件后展示确认界面。中断信息（包括当前状态、待确认内容）持久化到 MongoDB 的 interrupt_events 集合。用户确认后，通过 CheckpointID 恢复执行，使用 StateModifier 注入用户反馈，继续后续流程。&lt;/p&gt;
+&lt;h3 id=&#34;q4-流式消息合并器-streamingmerger-是怎么设计的&#34;&gt;Q4: 流式消息合并器 StreamingMerger 是怎么设计的？
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;A&lt;/strong&gt;: StreamingMerger 是一个精密的流式消息合并器，解决的问题是：Agent 执行过程中会产生大量 SSE 事件（文本分片、工具调用结果、引用信息等），需要按逻辑维度合并后推送给前端。设计了一个四维匹配键：&lt;code&gt;event.id + event.name + content.type + content.name&lt;/code&gt;，同一匹配键的事件会被合并处理。text 类型做累积拼接，references 做去重聚合，plan 有状态机（preparing→running→done），code 片段做拼接。这样前端只需根据合并后的事件更新 UI，避免了频繁重渲染。&lt;/p&gt;
+&lt;h3 id=&#34;q5-prompt-是怎么管理的&#34;&gt;Q5: Prompt 是怎么管理的？
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;A&lt;/strong&gt;: 所有核心 prompt（Planner、Replanner、Router 等）托管在 CopilotEngine 上，通过 AppToken 区分不同功能。agent-hub 不直接管理 prompt 模板，而是通过 Inputs 参数注入变量（instruction、history_talk、upload_file_content 等）。好处是 prompt 迭代不需要重新部署 agent-hub 服务，只需在 CE 端更新。另外 &lt;code&gt;memory.GenerateInstructionFromTemplate&lt;/code&gt; 支持从记忆变量中生成指令，实现用户级定制化。&lt;/p&gt;
+&lt;h3 id=&#34;q6-dte-的两种调用方式有什么区别为什么这么设计&#34;&gt;Q6: DTE 的两种调用方式有什么区别？为什么这么设计？
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;A&lt;/strong&gt;: multi_agent 使用 &lt;code&gt;dte.RunAgent()&lt;/code&gt;，传入任务描述和工具列表，由 DTE 自行决策调用哪个工具——这是&amp;quot;Agent 模式&amp;quot;，适合需要 LLM 做决策的场景。deepresearch 使用 &lt;code&gt;components.DTEComponentClient.Run()&lt;/code&gt;，直接指定组件和参数——这是&amp;quot;工具模式&amp;quot;，适合流程确定、不需要 LLM 决策的场景。这样设计的原因是 deepresearch 的工作流是预定义的（Parser→Coordinator→Outliner→&amp;hellip;），每个阶段该调用什么组件是确定的，不需要 DTE 再做决策，减少 LLM 调用开销，提高确定性和效率。&lt;/p&gt;
+&lt;h3 id=&#34;q7-记忆系统是怎么设计的&#34;&gt;Q7: 记忆系统是怎么设计的？
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;A&lt;/strong&gt;: 多层级记忆：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;历史对话&lt;/strong&gt;：&lt;code&gt;memory.GetHistoryDialogues()&lt;/code&gt; 按 conversation_id + rounds 获取&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;记忆变量&lt;/strong&gt;：&lt;code&gt;appConfig.Memory.Variable&lt;/code&gt; 支持长期变量存储（跨会话）&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;记忆表格&lt;/strong&gt;：&lt;code&gt;MemoryTableAgent&lt;/code&gt; 支持结构化数据记忆&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;任务间上下文传递&lt;/strong&gt;：ToolAgent 的 RequiredContext 机制将前置任务结果注入后续任务参数&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;q8-如果-plan-生成的任务全部失败了怎么办&#34;&gt;Q8: 如果 Plan 生成的任务全部失败了怎么办？
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;A&lt;/strong&gt;: 有多级容错：1）单次 Plan 内，HostAgent 会判断失败任务，如果有失败则触发 Replan，将失败信息和新需求一起发给 CopilotEngine 重新规划；2）最多 Replan 3 次（maxIterations=3）；3）如果超过最大迭代次数仍有失败任务，执行 ceChatSummary，让 LLM 基于已有的部分结果生成一个总结性回答作为兜底；4）HostAgent.cePlan 本身还有 3 次重试逻辑，应对 CopilotEngine 调用不稳定的情况。&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;七与-agent-岗位的相关性&#34;&gt;七、与 Agent 岗位的相关性
+&lt;/h2&gt;&lt;p&gt;&lt;strong&gt;相关性评分：★★★★★（5/5）&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;agent-hub 是最核心的项目，直接体现 Agent 架构设计能力：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Plan-and-Execute 多 Agent 协同架构&lt;/li&gt;
+&lt;li&gt;Router-Executor-Generator 管线设计&lt;/li&gt;
+&lt;li&gt;多阶段有状态工作流 + Human-in-the-Loop&lt;/li&gt;
+&lt;li&gt;Function Calling / Tool Use 实践&lt;/li&gt;
+&lt;li&gt;流式消息处理与合并&lt;/li&gt;
+&lt;li&gt;Checkpoint + 中断恢复机制&lt;/li&gt;
+&lt;/ul&gt;
+</description>
+        </item>
+        
+    </channel>
+</rss>

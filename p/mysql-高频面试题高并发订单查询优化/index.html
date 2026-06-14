@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="mysql 🗄️ 中间件每日一题 · 2026年05月21日 方向：MySQL（索引、事务、锁、主从复制、优化） 题目 在一个高并发的电商系统中，订单表 orders 有 5000 万条记录。现有如下查询经常执行，但响应时间超过 2 秒： SELECT * FROM orders WHERE user_id = 12345 AND status IN (&lsquo;pending&rsquo;, &lsquo;paid&rsquo;) AND created_at &gt;= &lsquo;2026-01-01&rsquo; ORDER BY created_at DESC LIMIT 20;\n表结构如下： CREATE TABLE orders ( id BIGINT PRIMARY KEY AUTO_INCREMENT, user_id INT NOT NULL, status VARCHAR(20) NOT NULL, amount DECIMAL(10,2), created_at DATETIME NOT NULL, updated_at DATETIME, INDEX idx_user (user_id), INDEX idx_status (status), INDEX idx_created (created_at) );\n">
+<title>MySQL 高频面试题：高并发订单查询优化</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/mysql-%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98%E9%AB%98%E5%B9%B6%E5%8F%91%E8%AE%A2%E5%8D%95%E6%9F%A5%E8%AF%A2%E4%BC%98%E5%8C%96/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="MySQL 高频面试题：高并发订单查询优化">
+<meta property='og:description' content="mysql 🗄️ 中间件每日一题 · 2026年05月21日 方向：MySQL（索引、事务、锁、主从复制、优化） 题目 在一个高并发的电商系统中，订单表 orders 有 5000 万条记录。现有如下查询经常执行，但响应时间超过 2 秒： SELECT * FROM orders WHERE user_id = 12345 AND status IN (&lsquo;pending&rsquo;, &lsquo;paid&rsquo;) AND created_at &gt;= &lsquo;2026-01-01&rsquo; ORDER BY created_at DESC LIMIT 20;\n表结构如下： CREATE TABLE orders ( id BIGINT PRIMARY KEY AUTO_INCREMENT, user_id INT NOT NULL, status VARCHAR(20) NOT NULL, amount DECIMAL(10,2), created_at DATETIME NOT NULL, updated_at DATETIME, INDEX idx_user (user_id), INDEX idx_status (status), INDEX idx_created (created_at) );\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/mysql-%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98%E9%AB%98%E5%B9%B6%E5%8F%91%E8%AE%A2%E5%8D%95%E6%9F%A5%E8%AF%A2%E4%BC%98%E5%8C%96/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='mysql' /><meta property='article:tag' content='middleware' /><meta property='article:tag' content='interview' /><meta property='article:published_time' content='2026-05-21T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-21T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="MySQL 高频面试题：高并发订单查询优化">
+<meta name="twitter:description" content="mysql 🗄️ 中间件每日一题 · 2026年05月21日 方向：MySQL（索引、事务、锁、主从复制、优化） 题目 在一个高并发的电商系统中，订单表 orders 有 5000 万条记录。现有如下查询经常执行，但响应时间超过 2 秒： SELECT * FROM orders WHERE user_id = 12345 AND status IN (&lsquo;pending&rsquo;, &lsquo;paid&rsquo;) AND created_at &gt;= &lsquo;2026-01-01&rsquo; ORDER BY created_at DESC LIMIT 20;\n表结构如下： CREATE TABLE orders ( id BIGINT PRIMARY KEY AUTO_INCREMENT, user_id INT NOT NULL, status VARCHAR(20) NOT NULL, amount DECIMAL(10,2), created_at DATETIME NOT NULL, updated_at DATETIME, INDEX idx_user (user_id), INDEX idx_status (status), INDEX idx_created (created_at) );\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/tech/" >
+                Tech
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/mysql-%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98%E9%AB%98%E5%B9%B6%E5%8F%91%E8%AE%A2%E5%8D%95%E6%9F%A5%E8%AF%A2%E4%BC%98%E5%8C%96/">MySQL 高频面试题：高并发订单查询优化</a>
+        </h2>
+    
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">May 21, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h1 id="mysql">mysql
+</h1><p>🗄️ 中间件每日一题 · 2026年05月21日
+方向：MySQL（索引、事务、锁、主从复制、优化）
+题目
+在一个高并发的电商系统中，订单表 orders 有 5000 万条记录。现有如下查询经常执行，但响应时间超过 2 秒：
+SELECT * FROM orders
+WHERE user_id = 12345
+AND status IN (&lsquo;pending&rsquo;, &lsquo;paid&rsquo;)
+AND created_at &gt;= &lsquo;2026-01-01&rsquo;
+ORDER BY created_at DESC
+LIMIT 20;</p>
+<p>表结构如下：
+CREATE TABLE orders (
+id BIGINT PRIMARY KEY AUTO_INCREMENT,
+user_id INT NOT NULL,
+status VARCHAR(20) NOT NULL,
+amount DECIMAL(10,2),
+created_at DATETIME NOT NULL,
+updated_at DATETIME,
+INDEX idx_user (user_id),
+INDEX idx_status (status),
+INDEX idx_created (created_at)
+);</p>
+<p>请分析该查询慢的原因，并给出优化方案（包括索引设计、查询改写等）。</p>
+<p>题解
+核心要点：</p>
+<ol>
+<li>现有索引无法覆盖复合条件：三个单列索引在多条件查询时，MySQL 只会选择其中一个索引，无法同时利用多个条件过滤。</li>
+<li>回表开销大：即使走了 idx_user 索引，还需要回表查询其他字段，5000 万数据量下回表成本极高。</li>
+<li>排序与分页导致额外开销：ORDER BY created_at DESC LIMIT 20 需要对过滤后的结果集排序，如果结果集很大，排序会非常耗时。
+优化方案：
+方案一：创建联合索引（最佳实践）
+&ndash; 创建联合索引，顺序：user_id → status → created_at
+CREATE INDEX idx_user_status_created
+ON orders(user_id, status, created_at);</li>
+</ol>
+<p>索引字段顺序原则（最左前缀匹配）：
+• user_id：区分度高，放最左边
+• status：枚举值，用于 IN 条件
+• created_at：用于排序和范围查询，放最右边
+方案二：覆盖索引（避免回表）
+CREATE INDEX idx_cover
+ON orders(user_id, status, created_at, id, amount);</p>
+<p>此时查询可以直接从索引获取数据，完全避免回表。
+方案三：查询改写（业务层优化）
+先查 ID，再回表获取完整数据（主键查询极快）。</p>
+<p>原理</p>
+<ol>
+<li>MySQL 索引选择策略：
+• MySQL 优化器在多个单列索引中，会通过成本估算选择一个索引，但不会同时使用多个单列索引（Index Merge 有限场景才会触发）。
+• 联合索引遵循最左前缀原则：(A, B, C) 可以匹配 A、A+B、A+B+C，但无法匹配 B 或 C 单独条件。</li>
+<li>回表（Table Lookup）：
+• 非聚簇索引（二级索引）只存储索引字段和主键 ID，查询其他字段需要回表到聚簇索引获取完整行。
+• 大数据量下，回表的随机 I/O 成本极高。</li>
+<li>索引排序优化：
+• 如果 ORDER BY 的字段在索引中，且索引顺序与排序一致，MySQL 可以直接按索引顺序扫描，避免额外排序（filesort）。</li>
+<li>EXPLAIN 分析关键指标：
+• type：应为 ref 或 range（避免 ALL 全表扫描）
+• key：应使用联合索引
+• Extra：应为 Using index condition（无 Using filesort）</li>
+</ol>
+<p>延伸</p>
+<ol>
+<li>为什么不用 (status, user_id, created_at) 顺序？
+• status 区分度低（只有几个枚举值），放最左边会导致索引扇出（单个索引节点指向大量数据行），降低过滤效率。
+• user_id 区分度高（每个用户 ID 唯一），放最左边可以快速定位到用户维度的数据子集。</li>
+<li>IN 条件对索引的影响：
+• status IN (&lsquo;pending&rsquo;, &lsquo;paid&rsquo;) 会让 MySQL 分别查询两个值的数据，然后合并结果。
+• 如果 IN 列表过长（如数百个值），可能导致索引失效，改为 OR 或子查询可能更优。</li>
+<li>分区表优化：
+• 如果数据按时间维度增长，可以按 created_at 字段分区（按月/季度）。
+• 查询时加上分区键条件，MySQL 只扫描相关分区，大幅减少数据量。</li>
+<li>高并发场景的缓存策略：
+• 对于热点用户（查询频繁的 user_id），可以将查询结果缓存到 Redis，设置短期 TTL（如 60 秒）。
+• 使用缓存预热 + 旁路缓存模式，减少数据库压力。
+每日坚持打卡，中间件面试手到擒来！💪</li>
+</ol>
+<h1 id="kafka">kafka
+</h1><p>🗄️ 中间件每日一题 · 2026年05月20日
+方向:Kafka(消息队列、分区机制、消费者组、消息可靠性、高吞吐设计)
+题目
+在一个高并发的订单系统中,使用 Kafka 作为消息中间件,订单服务作为生产者,库存服务和物流服务作为消费者。现在发现偶尔会出现消息重复消费的问题,导致库存被重复扣减。请问:</p>
+<ol>
+<li>Kafka 在什么场景下会产生消息重复消费?</li>
+<li>如何在应用层保证消费的幂等性?</li>
+<li>Kafka 自身提供了哪些机制来减少重复消费?
+题解
+Kafka 消息重复消费的根本原因在于消费者位移提交机制与消息处理的原子性问题。
+核心要点:
+• 自动提交位移的时机问题:默认 enable.auto.commit=true,每 5 秒自动提交一次。如果消息已被消费但位移未及时提交,发生 rebalance 或消费者重启时会重新消费。
+• 手动提交的位移丢失:即使使用手动提交,如果先处理消息再提交位移,在提交前崩溃也会重复消费。
+• 应用层幂等性设计:通过业务主键、分布式锁、数据库唯一约束等手段,确保重复消费不会产生副作用。
+• Kafka 幂等性生产者:生产者开启 enable.idempotence=true,配合事务 API 可以保证 Exactly Once 语义。
+• 消费者事务性读取:设置 isolation.level=read_committed,只读取已提交的事务消息。</li>
+</ol>
+<p>关键处理逻辑:
+// 应用层幂等性实现示例
+@Transactional
+public void processOrder(ConsumerRecord&lt;String, String&gt; record) {
+String orderId = record.key(); // 使用订单ID作为幂等键</p>
+<pre><code>// 1. 先查询是否已处理过(使用数据库唯一约束)
+if (orderProcessRepository.existsByOrderId(orderId)) {
+    log.info(&quot;订单{}已处理,跳过&quot;, orderId);
+    return;
+}
+
+// 2. 处理业务逻辑
+Order order = parseOrder(record.value());
+inventoryService.decreaseStock(order);
+
+// 3. 记录处理状态(与业务操作在同一事务)
+orderProcessRepository.save(new OrderProcess(orderId, LocalDateTime.now()));
+
+// 4. 手动提交位移(业务事务成功后)
+consumer.commitSync();
+</code></pre>
+<p>}</p>
+<p>配置示例:</p>
+<h1 id="消费者配置---关闭自动提交">消费者配置 - 关闭自动提交
+</h1><p>enable.auto.commit=false
+isolation.level=read_committed</p>
+<h1 id="生产者配置---开启幂等性">生产者配置 - 开启幂等性
+</h1><p>enable.idempotence=true
+acks=all
+retries=Integer.MAX_VALUE
+max.in.flight.requests.per.connection=5</p>
+<p>原理</p>
+<ol>
+<li>Kafka 位移提交机制:
+Kafka 使用 __consumer_offsets 内部主题存储消费者组的位移信息。消费者通过 commitSync() 或 commitAsync() 向 Coordinator 提交已消费的位移。
+• 自动提交:后台线程周期性提交,存在&quot;消息已消费但位移未提交&quot;的时间窗口。
+• 手动提交:显式调用提交,但如果&quot;先消费后提交&quot;模式下消费者崩溃,仍会重复消费。
+• 先提交后消费:可避免重复消费但会导致消息丢失(处理失败但位移已提交)。</li>
+<li>Rebalance 触发重复消费:
+当消费者组发生 rebalance(新消费者加入、消费者崩溃、分区数变化)时,未提交的位移会丢失,Coordinator 将分区重新分配给其他消费者,从上次已提交的位移开始消费,导致重复。</li>
+<li>生产者幂等性原理:
+开启 enable.idempotence=true 后,Broker 为每个生产者分配一个 Producer ID(PID),并为每条消息附加单调递增的 Sequence Number。Broker 端通过 &lt;PID, Partition, SeqNumber&gt; 三元组去重,确保单个会话内的消息不会重复写入。
+局限性:PID 在生产者重启后会变化,无法跨会话保证幂等。需配合事务 API 实现真正的 Exactly Once。</li>
+</ol>
+<p>延伸</p>
+<ol>
+<li>
+<p>为什么不能只依赖 Kafka 的幂等性生产者?
+生产者幂等性只保证单个生产者会话内不重复写入,但无法解决:
+• 生产者重启后 PID 变化,重发消息会被当作新消息
+• 消费端的重复消费问题(这是位移管理问题,与生产端无关)
+• 网络重试导致的跨会话重复发送
+因此实际生产中必须在应用层实现消费幂等性。</p>
+</li>
+<li>
+<p>Kafka 事务 vs 数据库事务,如何选择?</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>方案</th>
+          <th>优势</th>
+          <th>劣势</th>
+          <th>适用场景</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Kafka 事务</td>
+          <td>跨分区原子性,真正的 Exactly Once</td>
+          <td>性能开销大(约降低 30%),复杂度高</td>
+          <td>跨多个 Topic 的原子写入,流处理场景</td>
+      </tr>
+      <tr>
+          <td>数据库事务 + 幂等键</td>
+          <td>简单可靠,性能较好</td>
+          <td>需业务改造,数据库成为瓶颈</td>
+          <td>大多数业务系统,消息最终写入数据库</td>
+      </tr>
+      <tr>
+          <td>推荐:优先使用数据库事务 + 唯一约束保证幂等,除非有明确的跨 Topic 原子性需求。</td>
+          <td></td>
+          <td></td>
+          <td></td>
+      </tr>
+  </tbody>
+</table></div>
+</li>
+<li>
+<p>如何监控和发现重复消费?
+• 业务指标:监控库存扣减次数 vs 订单数,发现异常比例
+• 消费位移监控:通过 kafka-consumer-groups.sh &ndash;describe 查看 LAG 和 CURRENT-OFFSET,位移回退说明发生了重复消费
+• 日志审计:为每条消息记录处理日志,通过 message_id 检索是否被重复处理
+• APM 工具:使用 Prometheus + Grafana 监控消费者的 duplicate_message_count 指标
+每日坚持打卡,中间件面试手到擒来!💪</p>
+</li>
+</ol>
+<h1 id="es">es
+</h1><p>🗄️ 中间件每日一题 · 2026年05月22日
+方向：Elasticsearch
+题目
+在一个电商搜索系统中，用户搜索&quot;苹果手机&quot;时，既希望匹配到&quot;iPhone 15&quot;，也希望匹配到&quot;Apple 手机&quot;。同时，搜索&quot;iphone&quot;（小写）也应该能匹配到&quot;iPhone&quot;（大写）。请问：</p>
+<ol>
+<li>如何配置 Elasticsearch 的分词器和字段映射来实现这个需求？</li>
+<li>如果要支持拼音搜索（如搜索&quot;pingguo&quot;能匹配到&quot;苹果&quot;），应该如何扩展？</li>
+<li>在高并发场景下，如何优化这类模糊匹配查询的性能？
+题解
+核心要点：
+• 分词器选择：使用 ik_max_word 分词器进行索引时分词，使用 ik_smart 进行搜索时分词
+• 同义词配置：通过 synonym token filter 配置同义词词典（如 &ldquo;苹果,Apple,iPhone&rdquo;）
+• 大小写处理：使用 lowercase token filter 统一转换为小写
+• 字段映射：使用 text 类型字段，配置自定义 analyzer
+• 性能优化：合理使用 match 查询而非 wildcard，利用倒排索引特性
+关键配置示例：
+PUT /products
+{
+&ldquo;settings&rdquo;: {
+&ldquo;analysis&rdquo;: {
+&ldquo;filter&rdquo;: {
+&ldquo;my_synonym_filter&rdquo;: {
+&ldquo;type&rdquo;: &ldquo;synonym&rdquo;,
+&ldquo;synonyms&rdquo;: [
+&ldquo;苹果,Apple,iPhone&rdquo;,
+&ldquo;手机,phone,移动电话&rdquo;
+]
+}
+},
+&ldquo;analyzer&rdquo;: {
+&ldquo;my_ik_analyzer&rdquo;: {
+&ldquo;type&rdquo;: &ldquo;custom&rdquo;,
+&ldquo;tokenizer&rdquo;: &ldquo;ik_max_word&rdquo;,
+&ldquo;filter&rdquo;: [
+&ldquo;lowercase&rdquo;,
+&ldquo;my_synonym_filter&rdquo;
+]
+}
+}
+}
+},
+&ldquo;mappings&rdquo;: {
+&ldquo;properties&rdquo;: {
+&ldquo;product_name&rdquo;: {
+&ldquo;type&rdquo;: &ldquo;text&rdquo;,
+&ldquo;analyzer&rdquo;: &ldquo;my_ik_analyzer&rdquo;,
+&ldquo;search_analyzer&rdquo;: &ldquo;ik_smart&rdquo;
+}
+}
+}
+}</li>
+</ol>
+<p>查询示例：
+GET /products/_search
+{
+&ldquo;query&rdquo;: {
+&ldquo;match&rdquo;: {
+&ldquo;product_name&rdquo;: {
+&ldquo;query&rdquo;: &ldquo;苹果手机&rdquo;,
+&ldquo;operator&rdquo;: &ldquo;and&rdquo;
+}
+}
+}
+}</p>
+<p>原理
+倒排索引与分词流程：
+Elasticsearch 的核心是倒排索引（Inverted Index）。当文档被索引时：</p>
+<ol>
+<li>
+<p>分词阶段：原始文本 &ldquo;iPhone 15 手机&rdquo; 经过 analyzer 处理
+• Tokenizer（ik_max_word）：切分为 [&ldquo;iPhone&rdquo;, &ldquo;15&rdquo;, &ldquo;手机&rdquo;]
+• Token Filter（lowercase）：转换为 [&ldquo;iphone&rdquo;, &ldquo;15&rdquo;, &ldquo;手机&rdquo;]
+• Token Filter（synonym）：扩展为 [&ldquo;iphone&rdquo;, &ldquo;苹果&rdquo;, &ldquo;apple&rdquo;, &ldquo;15&rdquo;, &ldquo;手机&rdquo;, &ldquo;phone&rdquo;]</p>
+</li>
+<li>
+<p>建立倒排索引：每个 term 指向包含它的文档 ID
+iphone    -&gt; [doc1, doc5, doc8]
+苹果      -&gt; [doc1, doc3, doc5]
+手机      -&gt; [doc1, doc2, doc3, &hellip;]</p>
+</li>
+<li>
+<p>查询阶段：用户输入 &ldquo;苹果手机&rdquo; 经过 search_analyzer（ik_smart）分词为 [&ldquo;苹果&rdquo;, &ldquo;手机&rdquo;]，然后在倒排索引中查找这些 term，通过布尔运算（AND/OR）合并结果
+为什么这样设计高效：
+• 倒排索引使得 term 查找时间复杂度为 O(1)
+• 分词后的精确匹配比全文扫描快几个数量级
+• 同义词在索引时扩展，查询时无需额外计算</p>
+</li>
+</ol>
+<p>延伸</p>
+<ol>
+<li>拼音搜索扩展方案
+安装 elasticsearch-analysis-pinyin 插件，配置多字段映射：
+&ldquo;product_name&rdquo;: {
+&ldquo;type&rdquo;: &ldquo;text&rdquo;,
+&ldquo;analyzer&rdquo;: &ldquo;my_ik_analyzer&rdquo;,
+&ldquo;fields&rdquo;: {
+&ldquo;pinyin&rdquo;: {
+&ldquo;type&rdquo;: &ldquo;text&rdquo;,
+&ldquo;analyzer&rdquo;: &ldquo;pinyin_analyzer&rdquo;
+}
+}
+}</li>
+</ol>
+<p>查询时使用 multi_match 同时搜索原字段和拼音字段：
+{
+&ldquo;query&rdquo;: {
+&ldquo;multi_match&rdquo;: {
+&ldquo;query&rdquo;: &ldquo;pingguo&rdquo;,
+&ldquo;fields&rdquo;: [&ldquo;product_name&rdquo;, &ldquo;product_name.pinyin&rdquo;]
+}
+}
+}</p>
+<ol start="2">
+<li>性能优化对比：match vs wildcard
+• match 查询：利用倒排索引，时间复杂度 O(1)，适合分词后的精确匹配
+• wildcard 查询：需要扫描所有 term，时间复杂度 O(n)，应避免在高并发场景使用
+• 前缀查询优化：使用 edge_ngram token filter 预处理，将前缀查询转换为 term 查询</li>
+<li>高并发场景的架构优化
+• 分片策略：合理设置主分片数（建议 5-10 个），避免过度分片导致的协调开销
+• 副本分片：增加副本数提升查询吞吐量（读写分离）
+• 缓存利用：Elasticsearch 的 query cache 和 request cache 会自动缓存热点查询
+• 索引预热：使用 index.store.preload 预加载常用字段到内存
+每日坚持打卡，中间件面试手到擒来！💪</li>
+</ol>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/mysql/">Mysql</a>
+        
+            <a href="/tags/middleware/">Middleware</a>
+        
+            <a href="/tags/interview/">Interview</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/mysql-%E5%AE%8C%E5%85%A8%E5%AD%A6%E4%B9%A0%E6%8C%87%E5%8D%97%E5%9F%BA%E6%9C%AC%E4%BD%BF%E7%94%A8%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">MySQL 完全学习指南：基本使用、底层原理与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/mongodb-%E5%AD%A6%E4%B9%A0%E6%8C%87%E5%8D%97mysql-%E5%AF%B9%E6%AF%94%E5%9F%BA%E7%A1%80%E8%AF%AD%E6%B3%95%E5%B8%B8%E7%94%A8%E5%87%BD%E6%95%B0%E7%89%B9%E6%80%A7%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">MongoDB 学习指南：MySQL 对比、基础语法、常用函数、特性、底层原理与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/postgresql-%E5%AD%A6%E4%B9%A0%E6%8C%87%E5%8D%97mysql-%E5%AF%B9%E6%AF%94%E5%9F%BA%E7%A1%80%E8%AF%AD%E6%B3%95%E5%B8%B8%E7%94%A8%E5%87%BD%E6%95%B0%E7%89%B9%E6%80%A7%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">PostgreSQL 学习指南：MySQL 对比、基础语法、常用函数、特性、底层原理与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/strongapi%E5%9F%BA%E4%BA%8E-flask-%E5%92%8C-pydantic-%E7%9A%84%E6%8E%A5%E5%8F%A3%E5%8F%82%E6%95%B0%E6%A0%A1%E9%AA%8C%E5%B0%81%E8%A3%85/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">StrongApi：基于 Flask 和 Pydantic 的接口参数校验封装</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/git-%E5%AD%A6%E4%B9%A0%E6%8C%87%E5%8D%97/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">Git 学习指南</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>

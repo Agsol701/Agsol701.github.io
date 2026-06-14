@@ -6695,6 +6695,330 @@
 </description>
         </item>
         <item>
+        <title>MySQL 高频面试题：高并发订单查询优化</title>
+        <link>https://Agsol701.github.io/p/mysql-%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98%E9%AB%98%E5%B9%B6%E5%8F%91%E8%AE%A2%E5%8D%95%E6%9F%A5%E8%AF%A2%E4%BC%98%E5%8C%96/</link>
+        <pubDate>Thu, 21 May 2026 00:00:00 +0000</pubDate>
+        
+        <guid>https://Agsol701.github.io/p/mysql-%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98%E9%AB%98%E5%B9%B6%E5%8F%91%E8%AE%A2%E5%8D%95%E6%9F%A5%E8%AF%A2%E4%BC%98%E5%8C%96/</guid>
+        <description>&lt;h1 id=&#34;mysql&#34;&gt;mysql
+&lt;/h1&gt;&lt;p&gt;🗄️ 中间件每日一题 · 2026年05月21日
+方向：MySQL（索引、事务、锁、主从复制、优化）
+题目
+在一个高并发的电商系统中，订单表 orders 有 5000 万条记录。现有如下查询经常执行，但响应时间超过 2 秒：
+SELECT * FROM orders
+WHERE user_id = 12345
+AND status IN (&amp;lsquo;pending&amp;rsquo;, &amp;lsquo;paid&amp;rsquo;)
+AND created_at &amp;gt;= &amp;lsquo;2026-01-01&amp;rsquo;
+ORDER BY created_at DESC
+LIMIT 20;&lt;/p&gt;
+&lt;p&gt;表结构如下：
+CREATE TABLE orders (
+id BIGINT PRIMARY KEY AUTO_INCREMENT,
+user_id INT NOT NULL,
+status VARCHAR(20) NOT NULL,
+amount DECIMAL(10,2),
+created_at DATETIME NOT NULL,
+updated_at DATETIME,
+INDEX idx_user (user_id),
+INDEX idx_status (status),
+INDEX idx_created (created_at)
+);&lt;/p&gt;
+&lt;p&gt;请分析该查询慢的原因，并给出优化方案（包括索引设计、查询改写等）。&lt;/p&gt;
+&lt;p&gt;题解
+核心要点：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;现有索引无法覆盖复合条件：三个单列索引在多条件查询时，MySQL 只会选择其中一个索引，无法同时利用多个条件过滤。&lt;/li&gt;
+&lt;li&gt;回表开销大：即使走了 idx_user 索引，还需要回表查询其他字段，5000 万数据量下回表成本极高。&lt;/li&gt;
+&lt;li&gt;排序与分页导致额外开销：ORDER BY created_at DESC LIMIT 20 需要对过滤后的结果集排序，如果结果集很大，排序会非常耗时。
+优化方案：
+方案一：创建联合索引（最佳实践）
+&amp;ndash; 创建联合索引，顺序：user_id → status → created_at
+CREATE INDEX idx_user_status_created
+ON orders(user_id, status, created_at);&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;索引字段顺序原则（最左前缀匹配）：
+• user_id：区分度高，放最左边
+• status：枚举值，用于 IN 条件
+• created_at：用于排序和范围查询，放最右边
+方案二：覆盖索引（避免回表）
+CREATE INDEX idx_cover
+ON orders(user_id, status, created_at, id, amount);&lt;/p&gt;
+&lt;p&gt;此时查询可以直接从索引获取数据，完全避免回表。
+方案三：查询改写（业务层优化）
+先查 ID，再回表获取完整数据（主键查询极快）。&lt;/p&gt;
+&lt;p&gt;原理&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;MySQL 索引选择策略：
+• MySQL 优化器在多个单列索引中，会通过成本估算选择一个索引，但不会同时使用多个单列索引（Index Merge 有限场景才会触发）。
+• 联合索引遵循最左前缀原则：(A, B, C) 可以匹配 A、A+B、A+B+C，但无法匹配 B 或 C 单独条件。&lt;/li&gt;
+&lt;li&gt;回表（Table Lookup）：
+• 非聚簇索引（二级索引）只存储索引字段和主键 ID，查询其他字段需要回表到聚簇索引获取完整行。
+• 大数据量下，回表的随机 I/O 成本极高。&lt;/li&gt;
+&lt;li&gt;索引排序优化：
+• 如果 ORDER BY 的字段在索引中，且索引顺序与排序一致，MySQL 可以直接按索引顺序扫描，避免额外排序（filesort）。&lt;/li&gt;
+&lt;li&gt;EXPLAIN 分析关键指标：
+• type：应为 ref 或 range（避免 ALL 全表扫描）
+• key：应使用联合索引
+• Extra：应为 Using index condition（无 Using filesort）&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;延伸&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;为什么不用 (status, user_id, created_at) 顺序？
+• status 区分度低（只有几个枚举值），放最左边会导致索引扇出（单个索引节点指向大量数据行），降低过滤效率。
+• user_id 区分度高（每个用户 ID 唯一），放最左边可以快速定位到用户维度的数据子集。&lt;/li&gt;
+&lt;li&gt;IN 条件对索引的影响：
+• status IN (&amp;lsquo;pending&amp;rsquo;, &amp;lsquo;paid&amp;rsquo;) 会让 MySQL 分别查询两个值的数据，然后合并结果。
+• 如果 IN 列表过长（如数百个值），可能导致索引失效，改为 OR 或子查询可能更优。&lt;/li&gt;
+&lt;li&gt;分区表优化：
+• 如果数据按时间维度增长，可以按 created_at 字段分区（按月/季度）。
+• 查询时加上分区键条件，MySQL 只扫描相关分区，大幅减少数据量。&lt;/li&gt;
+&lt;li&gt;高并发场景的缓存策略：
+• 对于热点用户（查询频繁的 user_id），可以将查询结果缓存到 Redis，设置短期 TTL（如 60 秒）。
+• 使用缓存预热 + 旁路缓存模式，减少数据库压力。
+每日坚持打卡，中间件面试手到擒来！💪&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h1 id=&#34;kafka&#34;&gt;kafka
+&lt;/h1&gt;&lt;p&gt;🗄️ 中间件每日一题 · 2026年05月20日
+方向:Kafka(消息队列、分区机制、消费者组、消息可靠性、高吞吐设计)
+题目
+在一个高并发的订单系统中,使用 Kafka 作为消息中间件,订单服务作为生产者,库存服务和物流服务作为消费者。现在发现偶尔会出现消息重复消费的问题,导致库存被重复扣减。请问:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Kafka 在什么场景下会产生消息重复消费?&lt;/li&gt;
+&lt;li&gt;如何在应用层保证消费的幂等性?&lt;/li&gt;
+&lt;li&gt;Kafka 自身提供了哪些机制来减少重复消费?
+题解
+Kafka 消息重复消费的根本原因在于消费者位移提交机制与消息处理的原子性问题。
+核心要点:
+• 自动提交位移的时机问题:默认 enable.auto.commit=true,每 5 秒自动提交一次。如果消息已被消费但位移未及时提交,发生 rebalance 或消费者重启时会重新消费。
+• 手动提交的位移丢失:即使使用手动提交,如果先处理消息再提交位移,在提交前崩溃也会重复消费。
+• 应用层幂等性设计:通过业务主键、分布式锁、数据库唯一约束等手段,确保重复消费不会产生副作用。
+• Kafka 幂等性生产者:生产者开启 enable.idempotence=true,配合事务 API 可以保证 Exactly Once 语义。
+• 消费者事务性读取:设置 isolation.level=read_committed,只读取已提交的事务消息。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;关键处理逻辑:
+// 应用层幂等性实现示例
+@Transactional
+public void processOrder(ConsumerRecord&amp;lt;String, String&amp;gt; record) {
+String orderId = record.key(); // 使用订单ID作为幂等键&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;// 1. 先查询是否已处理过(使用数据库唯一约束)
+if (orderProcessRepository.existsByOrderId(orderId)) {
+    log.info(&amp;quot;订单{}已处理,跳过&amp;quot;, orderId);
+    return;
+}
+
+// 2. 处理业务逻辑
+Order order = parseOrder(record.value());
+inventoryService.decreaseStock(order);
+
+// 3. 记录处理状态(与业务操作在同一事务)
+orderProcessRepository.save(new OrderProcess(orderId, LocalDateTime.now()));
+
+// 4. 手动提交位移(业务事务成功后)
+consumer.commitSync();
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;}&lt;/p&gt;
+&lt;p&gt;配置示例:&lt;/p&gt;
+&lt;h1 id=&#34;消费者配置---关闭自动提交&#34;&gt;消费者配置 - 关闭自动提交
+&lt;/h1&gt;&lt;p&gt;enable.auto.commit=false
+isolation.level=read_committed&lt;/p&gt;
+&lt;h1 id=&#34;生产者配置---开启幂等性&#34;&gt;生产者配置 - 开启幂等性
+&lt;/h1&gt;&lt;p&gt;enable.idempotence=true
+acks=all
+retries=Integer.MAX_VALUE
+max.in.flight.requests.per.connection=5&lt;/p&gt;
+&lt;p&gt;原理&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Kafka 位移提交机制:
+Kafka 使用 __consumer_offsets 内部主题存储消费者组的位移信息。消费者通过 commitSync() 或 commitAsync() 向 Coordinator 提交已消费的位移。
+• 自动提交:后台线程周期性提交,存在&amp;quot;消息已消费但位移未提交&amp;quot;的时间窗口。
+• 手动提交:显式调用提交,但如果&amp;quot;先消费后提交&amp;quot;模式下消费者崩溃,仍会重复消费。
+• 先提交后消费:可避免重复消费但会导致消息丢失(处理失败但位移已提交)。&lt;/li&gt;
+&lt;li&gt;Rebalance 触发重复消费:
+当消费者组发生 rebalance(新消费者加入、消费者崩溃、分区数变化)时,未提交的位移会丢失,Coordinator 将分区重新分配给其他消费者,从上次已提交的位移开始消费,导致重复。&lt;/li&gt;
+&lt;li&gt;生产者幂等性原理:
+开启 enable.idempotence=true 后,Broker 为每个生产者分配一个 Producer ID(PID),并为每条消息附加单调递增的 Sequence Number。Broker 端通过 &amp;lt;PID, Partition, SeqNumber&amp;gt; 三元组去重,确保单个会话内的消息不会重复写入。
+局限性:PID 在生产者重启后会变化,无法跨会话保证幂等。需配合事务 API 实现真正的 Exactly Once。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;延伸&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;
+&lt;p&gt;为什么不能只依赖 Kafka 的幂等性生产者?
+生产者幂等性只保证单个生产者会话内不重复写入,但无法解决:
+• 生产者重启后 PID 变化,重发消息会被当作新消息
+• 消费端的重复消费问题(这是位移管理问题,与生产端无关)
+• 网络重试导致的跨会话重复发送
+因此实际生产中必须在应用层实现消费幂等性。&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Kafka 事务 vs 数据库事务,如何选择?&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;方案&lt;/th&gt;
+          &lt;th&gt;优势&lt;/th&gt;
+          &lt;th&gt;劣势&lt;/th&gt;
+          &lt;th&gt;适用场景&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Kafka 事务&lt;/td&gt;
+          &lt;td&gt;跨分区原子性,真正的 Exactly Once&lt;/td&gt;
+          &lt;td&gt;性能开销大(约降低 30%),复杂度高&lt;/td&gt;
+          &lt;td&gt;跨多个 Topic 的原子写入,流处理场景&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;数据库事务 + 幂等键&lt;/td&gt;
+          &lt;td&gt;简单可靠,性能较好&lt;/td&gt;
+          &lt;td&gt;需业务改造,数据库成为瓶颈&lt;/td&gt;
+          &lt;td&gt;大多数业务系统,消息最终写入数据库&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;推荐:优先使用数据库事务 + 唯一约束保证幂等,除非有明确的跨 Topic 原子性需求。&lt;/td&gt;
+          &lt;td&gt;&lt;/td&gt;
+          &lt;td&gt;&lt;/td&gt;
+          &lt;td&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;如何监控和发现重复消费?
+• 业务指标:监控库存扣减次数 vs 订单数,发现异常比例
+• 消费位移监控:通过 kafka-consumer-groups.sh &amp;ndash;describe 查看 LAG 和 CURRENT-OFFSET,位移回退说明发生了重复消费
+• 日志审计:为每条消息记录处理日志,通过 message_id 检索是否被重复处理
+• APM 工具:使用 Prometheus + Grafana 监控消费者的 duplicate_message_count 指标
+每日坚持打卡,中间件面试手到擒来!💪&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h1 id=&#34;es&#34;&gt;es
+&lt;/h1&gt;&lt;p&gt;🗄️ 中间件每日一题 · 2026年05月22日
+方向：Elasticsearch
+题目
+在一个电商搜索系统中，用户搜索&amp;quot;苹果手机&amp;quot;时，既希望匹配到&amp;quot;iPhone 15&amp;quot;，也希望匹配到&amp;quot;Apple 手机&amp;quot;。同时，搜索&amp;quot;iphone&amp;quot;（小写）也应该能匹配到&amp;quot;iPhone&amp;quot;（大写）。请问：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;如何配置 Elasticsearch 的分词器和字段映射来实现这个需求？&lt;/li&gt;
+&lt;li&gt;如果要支持拼音搜索（如搜索&amp;quot;pingguo&amp;quot;能匹配到&amp;quot;苹果&amp;quot;），应该如何扩展？&lt;/li&gt;
+&lt;li&gt;在高并发场景下，如何优化这类模糊匹配查询的性能？
+题解
+核心要点：
+• 分词器选择：使用 ik_max_word 分词器进行索引时分词，使用 ik_smart 进行搜索时分词
+• 同义词配置：通过 synonym token filter 配置同义词词典（如 &amp;ldquo;苹果,Apple,iPhone&amp;rdquo;）
+• 大小写处理：使用 lowercase token filter 统一转换为小写
+• 字段映射：使用 text 类型字段，配置自定义 analyzer
+• 性能优化：合理使用 match 查询而非 wildcard，利用倒排索引特性
+关键配置示例：
+PUT /products
+{
+&amp;ldquo;settings&amp;rdquo;: {
+&amp;ldquo;analysis&amp;rdquo;: {
+&amp;ldquo;filter&amp;rdquo;: {
+&amp;ldquo;my_synonym_filter&amp;rdquo;: {
+&amp;ldquo;type&amp;rdquo;: &amp;ldquo;synonym&amp;rdquo;,
+&amp;ldquo;synonyms&amp;rdquo;: [
+&amp;ldquo;苹果,Apple,iPhone&amp;rdquo;,
+&amp;ldquo;手机,phone,移动电话&amp;rdquo;
+]
+}
+},
+&amp;ldquo;analyzer&amp;rdquo;: {
+&amp;ldquo;my_ik_analyzer&amp;rdquo;: {
+&amp;ldquo;type&amp;rdquo;: &amp;ldquo;custom&amp;rdquo;,
+&amp;ldquo;tokenizer&amp;rdquo;: &amp;ldquo;ik_max_word&amp;rdquo;,
+&amp;ldquo;filter&amp;rdquo;: [
+&amp;ldquo;lowercase&amp;rdquo;,
+&amp;ldquo;my_synonym_filter&amp;rdquo;
+]
+}
+}
+}
+},
+&amp;ldquo;mappings&amp;rdquo;: {
+&amp;ldquo;properties&amp;rdquo;: {
+&amp;ldquo;product_name&amp;rdquo;: {
+&amp;ldquo;type&amp;rdquo;: &amp;ldquo;text&amp;rdquo;,
+&amp;ldquo;analyzer&amp;rdquo;: &amp;ldquo;my_ik_analyzer&amp;rdquo;,
+&amp;ldquo;search_analyzer&amp;rdquo;: &amp;ldquo;ik_smart&amp;rdquo;
+}
+}
+}
+}&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;查询示例：
+GET /products/_search
+{
+&amp;ldquo;query&amp;rdquo;: {
+&amp;ldquo;match&amp;rdquo;: {
+&amp;ldquo;product_name&amp;rdquo;: {
+&amp;ldquo;query&amp;rdquo;: &amp;ldquo;苹果手机&amp;rdquo;,
+&amp;ldquo;operator&amp;rdquo;: &amp;ldquo;and&amp;rdquo;
+}
+}
+}
+}&lt;/p&gt;
+&lt;p&gt;原理
+倒排索引与分词流程：
+Elasticsearch 的核心是倒排索引（Inverted Index）。当文档被索引时：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;
+&lt;p&gt;分词阶段：原始文本 &amp;ldquo;iPhone 15 手机&amp;rdquo; 经过 analyzer 处理
+• Tokenizer（ik_max_word）：切分为 [&amp;ldquo;iPhone&amp;rdquo;, &amp;ldquo;15&amp;rdquo;, &amp;ldquo;手机&amp;rdquo;]
+• Token Filter（lowercase）：转换为 [&amp;ldquo;iphone&amp;rdquo;, &amp;ldquo;15&amp;rdquo;, &amp;ldquo;手机&amp;rdquo;]
+• Token Filter（synonym）：扩展为 [&amp;ldquo;iphone&amp;rdquo;, &amp;ldquo;苹果&amp;rdquo;, &amp;ldquo;apple&amp;rdquo;, &amp;ldquo;15&amp;rdquo;, &amp;ldquo;手机&amp;rdquo;, &amp;ldquo;phone&amp;rdquo;]&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;建立倒排索引：每个 term 指向包含它的文档 ID
+iphone    -&amp;gt; [doc1, doc5, doc8]
+苹果      -&amp;gt; [doc1, doc3, doc5]
+手机      -&amp;gt; [doc1, doc2, doc3, &amp;hellip;]&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;查询阶段：用户输入 &amp;ldquo;苹果手机&amp;rdquo; 经过 search_analyzer（ik_smart）分词为 [&amp;ldquo;苹果&amp;rdquo;, &amp;ldquo;手机&amp;rdquo;]，然后在倒排索引中查找这些 term，通过布尔运算（AND/OR）合并结果
+为什么这样设计高效：
+• 倒排索引使得 term 查找时间复杂度为 O(1)
+• 分词后的精确匹配比全文扫描快几个数量级
+• 同义词在索引时扩展，查询时无需额外计算&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;延伸&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;拼音搜索扩展方案
+安装 elasticsearch-analysis-pinyin 插件，配置多字段映射：
+&amp;ldquo;product_name&amp;rdquo;: {
+&amp;ldquo;type&amp;rdquo;: &amp;ldquo;text&amp;rdquo;,
+&amp;ldquo;analyzer&amp;rdquo;: &amp;ldquo;my_ik_analyzer&amp;rdquo;,
+&amp;ldquo;fields&amp;rdquo;: {
+&amp;ldquo;pinyin&amp;rdquo;: {
+&amp;ldquo;type&amp;rdquo;: &amp;ldquo;text&amp;rdquo;,
+&amp;ldquo;analyzer&amp;rdquo;: &amp;ldquo;pinyin_analyzer&amp;rdquo;
+}
+}
+}&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;查询时使用 multi_match 同时搜索原字段和拼音字段：
+{
+&amp;ldquo;query&amp;rdquo;: {
+&amp;ldquo;multi_match&amp;rdquo;: {
+&amp;ldquo;query&amp;rdquo;: &amp;ldquo;pingguo&amp;rdquo;,
+&amp;ldquo;fields&amp;rdquo;: [&amp;ldquo;product_name&amp;rdquo;, &amp;ldquo;product_name.pinyin&amp;rdquo;]
+}
+}
+}&lt;/p&gt;
+&lt;ol start=&#34;2&#34;&gt;
+&lt;li&gt;性能优化对比：match vs wildcard
+• match 查询：利用倒排索引，时间复杂度 O(1)，适合分词后的精确匹配
+• wildcard 查询：需要扫描所有 term，时间复杂度 O(n)，应避免在高并发场景使用
+• 前缀查询优化：使用 edge_ngram token filter 预处理，将前缀查询转换为 term 查询&lt;/li&gt;
+&lt;li&gt;高并发场景的架构优化
+• 分片策略：合理设置主分片数（建议 5-10 个），避免过度分片导致的协调开销
+• 副本分片：增加副本数提升查询吞吐量（读写分离）
+• 缓存利用：Elasticsearch 的 query cache 和 request cache 会自动缓存热点查询
+• 索引预热：使用 index.store.preload 预加载常用字段到内存
+每日坚持打卡，中间件面试手到擒来！💪&lt;/li&gt;
+&lt;/ol&gt;
+</description>
+        </item>
+        <item>
         <title>StrongApi：基于 Flask 和 Pydantic 的接口参数校验封装</title>
         <link>https://Agsol701.github.io/p/strongapi%E5%9F%BA%E4%BA%8E-flask-%E5%92%8C-pydantic-%E7%9A%84%E6%8E%A5%E5%8F%A3%E5%8F%82%E6%95%B0%E6%A0%A1%E9%AA%8C%E5%B0%81%E8%A3%85/</link>
         <pubDate>Fri, 08 May 2026 00:00:00 +0000</pubDate>
@@ -15004,6 +15328,2331 @@
 &lt;li&gt;常用 Git 命令: &lt;a class=&#34;link&#34; href=&#34;https://git-scm.com/docs&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
     &gt;https://git-scm.com/docs&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
+</description>
+        </item>
+        <item>
+        <title>Eventlet vs Gevent 在 Celery 中的差异分析</title>
+        <link>https://Agsol701.github.io/p/eventlet-vs-gevent-%E5%9C%A8-celery-%E4%B8%AD%E7%9A%84%E5%B7%AE%E5%BC%82%E5%88%86%E6%9E%90/</link>
+        <pubDate>Fri, 20 Mar 2026 00:00:00 +0000</pubDate>
+        
+        <guid>https://Agsol701.github.io/p/eventlet-vs-gevent-%E5%9C%A8-celery-%E4%B8%AD%E7%9A%84%E5%B7%AE%E5%BC%82%E5%88%86%E6%9E%90/</guid>
+        <description>&lt;h1 id=&#34;eventlet-vs-gevent-在-celery-中的差异分析&#34;&gt;Eventlet vs Gevent 在 Celery 中的差异分析
+&lt;/h1&gt;&lt;h2 id=&#34;问题现象&#34;&gt;问题现象
+&lt;/h2&gt;&lt;p&gt;在使用 Celery 的 green pool（协程并发池）时，比较常见的一类现象是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;使用 &lt;code&gt;eventlet&lt;/code&gt; 时，worker 进程看起来是正常的&lt;/li&gt;
+&lt;li&gt;进程没有退出，心跳有时也还在&lt;/li&gt;
+&lt;li&gt;但是消费者就是“不再消费”或者消费明显卡住&lt;/li&gt;
+&lt;li&gt;将启动参数从 &lt;code&gt;eventlet&lt;/code&gt; 改成 &lt;code&gt;gevent&lt;/code&gt; 后，现象消失&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这个问题很容易让人误以为是 Celery 的 consumer 逻辑有 bug，但从源码链路来看，更多时候问题并不在 Celery 的“消费逻辑本身”，而是在 &lt;strong&gt;green pool 的运行时、monkey patch 时机、事件循环实现、以及第三方库兼容性&lt;/strong&gt; 上。&lt;/p&gt;
+&lt;h2 id=&#34;先说结论&#34;&gt;先说结论
+&lt;/h2&gt;&lt;p&gt;先给结论，再展开源码：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;eventlet&lt;/code&gt; 和 &lt;code&gt;gevent&lt;/code&gt; 在 Celery 里都属于 green pool，本质都是单进程内跑大量 greenlet&lt;/li&gt;
+&lt;li&gt;Celery 对两者的封装其实很薄，主要差异不在 Celery 自己，而在 &lt;code&gt;eventlet&lt;/code&gt; / &lt;code&gt;gevent&lt;/code&gt; 运行时&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;eventlet&lt;/code&gt; 对 monkey patch 的时机更敏感，兼容性问题也更多&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;gevent&lt;/code&gt; 的底层事件循环更成熟，默认运行表现通常更稳定&lt;/li&gt;
+&lt;li&gt;“进程正常但不消费”这类现象，通常意味着 &lt;strong&gt;worker 没挂，但某个关键 I/O 或 hub 调度被阻塞了&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;如果切到 &lt;code&gt;gevent&lt;/code&gt; 后恢复正常，通常说明问题更接近于 &lt;code&gt;eventlet&lt;/code&gt; 的运行时行为，而不是任务代码或 broker 协议本身&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;celery-pool-类型概览&#34;&gt;Celery Pool 类型概览
+&lt;/h2&gt;&lt;p&gt;Celery 支持多种并发池（Pool）实现，通过 &lt;code&gt;-P&lt;/code&gt; 参数指定：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;Pool 类型&lt;/th&gt;
+          &lt;th&gt;并发模型&lt;/th&gt;
+          &lt;th&gt;适用场景&lt;/th&gt;
+          &lt;th&gt;启动命令示例&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;prefork&lt;/strong&gt; (默认)&lt;/td&gt;
+          &lt;td&gt;多进程&lt;/td&gt;
+          &lt;td&gt;CPU 密集型任务，无需处理大量并发连接&lt;/td&gt;
+          &lt;td&gt;&lt;code&gt;celery -A task worker -c 4&lt;/code&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;eventlet&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;协程 (greenlet)&lt;/td&gt;
+          &lt;td&gt;I/O 密集型，大量并发网络请求&lt;/td&gt;
+          &lt;td&gt;&lt;code&gt;celery -A task worker -P eventlet -c 100&lt;/code&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;gevent&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;协程 (greenlet)&lt;/td&gt;
+          &lt;td&gt;类似 eventlet，API 更友好，稳定性更好&lt;/td&gt;
+          &lt;td&gt;&lt;code&gt;celery -A task worker -P gevent -c 100&lt;/code&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;solo&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;单线程&lt;/td&gt;
+          &lt;td&gt;开发调试、任务量小&lt;/td&gt;
+          &lt;td&gt;&lt;code&gt;celery -A task worker -P solo&lt;/code&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;threads&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;多线程&lt;/td&gt;
+          &lt;td&gt;轻量级 I/O 任务&lt;/td&gt;
+          &lt;td&gt;&lt;code&gt;celery -A task worker -P threads -c 10&lt;/code&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h3 id=&#34;默认行为&#34;&gt;默认行为
+&lt;/h3&gt;&lt;p&gt;如果不指定 &lt;code&gt;-P&lt;/code&gt; 参数，Celery 默认使用 &lt;strong&gt;prefork&lt;/strong&gt;（多进程模式）：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# 这两个命令等价&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;celery -A task worker -Q celery -l debug -c &lt;span class=&#34;m&#34;&gt;4&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;celery -A task worker -Q celery -l debug -P prefork -c &lt;span class=&#34;m&#34;&gt;4&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h3 id=&#34;prefork-vs-eventletgevent-的关键区别&#34;&gt;Prefork vs Eventlet/Gevent 的关键区别
+&lt;/h3&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# prefork - 每个 worker 进程独立，内存占用较高，但隔离性好&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;celery -A task worker -Q celery -l debug -c &lt;span class=&#34;m&#34;&gt;4&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# eventlet - 单进程多协程，适合 I/O 密集型，需要安装 eventlet&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;pip install eventlet
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;celery -A task worker -Q celery -l debug -P eventlet -c &lt;span class=&#34;m&#34;&gt;100&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# gevent - 单进程多协程，稳定性通常优于 eventlet&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;pip install gevent
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;celery -A task worker -Q celery -l debug -P gevent -c &lt;span class=&#34;m&#34;&gt;100&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h3 id=&#34;选择建议&#34;&gt;选择建议
+&lt;/h3&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;场景&lt;/th&gt;
+          &lt;th&gt;推荐的 Pool&lt;/th&gt;
+          &lt;th&gt;原因&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;CPU 密集型计算&lt;/td&gt;
+          &lt;td&gt;prefork&lt;/td&gt;
+          &lt;td&gt;多进程充分利用多核，避免 GIL 限制&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;大量 HTTP 请求、数据库查询&lt;/td&gt;
+          &lt;td&gt;gevent&lt;/td&gt;
+          &lt;td&gt;协程高效处理并发 I/O&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;开发调试&lt;/td&gt;
+          &lt;td&gt;solo&lt;/td&gt;
+          &lt;td&gt;简单可控，便于排查问题&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;已有 eventlet 代码且运行稳定&lt;/td&gt;
+          &lt;td&gt;eventlet&lt;/td&gt;
+          &lt;td&gt;保持兼容，但新项目建议用 gevent&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h3 id=&#34;cpu-密集型-vs-io-密集型&#34;&gt;CPU 密集型 vs I/O 密集型
+&lt;/h3&gt;&lt;p&gt;选择 Pool 类型的关键在于理解任务的特性：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;特征&lt;/th&gt;
+          &lt;th&gt;CPU 密集型&lt;/th&gt;
+          &lt;th&gt;I/O 密集型&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;瓶颈&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;CPU 计算能力&lt;/td&gt;
+          &lt;td&gt;等待 I/O 操作完成&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;CPU 利用率&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;高，持续占用&lt;/td&gt;
+          &lt;td&gt;低，大部分时间在等待&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;主要操作&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;数学计算、数据处理、加密解密&lt;/td&gt;
+          &lt;td&gt;网络请求、磁盘读写、数据库查询&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h4 id=&#34;cpu-密集型示例&#34;&gt;CPU 密集型示例
+&lt;/h4&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;15
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# 图像处理&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;kn&#34;&gt;from&lt;/span&gt; &lt;span class=&#34;nn&#34;&gt;PIL&lt;/span&gt; &lt;span class=&#34;kn&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Image&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;img&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Image&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;open&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;large.jpg&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;img&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;img&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;resize&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;((&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;4000&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;3000&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;))&lt;/span&gt;  &lt;span class=&#34;c1&#34;&gt;# CPU 计算像素&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# 加密计算&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;kn&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;nn&#34;&gt;hashlib&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;for&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;i&lt;/span&gt; &lt;span class=&#34;ow&#34;&gt;in&lt;/span&gt; &lt;span class=&#34;nb&#34;&gt;range&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;10000000&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;):&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;n&#34;&gt;hashlib&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;sha256&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;sa&#34;&gt;f&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;data&lt;/span&gt;&lt;span class=&#34;si&#34;&gt;{&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;i&lt;/span&gt;&lt;span class=&#34;si&#34;&gt;}&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;encode&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;())&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;hexdigest&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;()&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# 数学运算&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;result&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;nb&#34;&gt;sum&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;i&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;*&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;i&lt;/span&gt; &lt;span class=&#34;k&#34;&gt;for&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;i&lt;/span&gt; &lt;span class=&#34;ow&#34;&gt;in&lt;/span&gt; &lt;span class=&#34;nb&#34;&gt;range&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;100000000&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;))&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# 机器学习推理&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;output&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;model&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;predict&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;large_batch_data&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;&lt;strong&gt;特点&lt;/strong&gt;：代码一直在执行计算，CPU 没有等待时间。&lt;/p&gt;
+&lt;h4 id=&#34;io-密集型示例&#34;&gt;I/O 密集型示例
+&lt;/h4&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# HTTP 请求&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;kn&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;nn&#34;&gt;requests&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;response&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;requests&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;get&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;https://api.example.com/data&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;  &lt;span class=&#34;c1&#34;&gt;# 等待网络响应&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# 数据库查询&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;cursor&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;execute&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;SELECT * FROM users WHERE id = 1&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;  &lt;span class=&#34;c1&#34;&gt;# 等待数据库返回&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# 文件读写&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;with&lt;/span&gt; &lt;span class=&#34;nb&#34;&gt;open&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;large_file.txt&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;r&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;k&#34;&gt;as&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;f&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;n&#34;&gt;content&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;f&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;read&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;()&lt;/span&gt;  &lt;span class=&#34;c1&#34;&gt;# 等待磁盘读取&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# 发送邮件&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;smtp&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;sendmail&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;from_addr&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;to_addr&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;message&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;  &lt;span class=&#34;c1&#34;&gt;# 等待 SMTP 服务器&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;&lt;strong&gt;特点&lt;/strong&gt;：代码发起请求后进入等待状态，CPU 空闲。&lt;/p&gt;
+&lt;h4 id=&#34;为什么选择不同的-pool&#34;&gt;为什么选择不同的 Pool
+&lt;/h4&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;15
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;16
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;17
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;18
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;CPU 密集型任务（用 prefork）：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;┌─────────────────────────────────────┐
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│ 进程1: ████████████████████████████ │  ← CPU 满载
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│ 进程2: ████████████████████████████ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│ 进程3: ████████████████████████████ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│ 进程4: ████████████████████████████ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;└─────────────────────────────────────┘
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;→ 多进程并行，充分利用多核 CPU
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;I/O 密集型任务（用 gevent/eventlet）：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;┌─────────────────────────────────────┐
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│ 协程1: ██░░░░░░░░░░░░██░░░░░░░░░░██ │  ← 大部分时间在等待
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│ 协程2: ░░██░░░░░░░░░░░░██░░░░░░░░░░ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│ 协程3: ░░░░██░░░░░░░░░░░░██░░░░░░░░ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│ 协程4: ░░░░░░██░░░░░░░░░░░░██░░░░░░ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;└─────────────────────────────────────┘
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;██ = CPU 工作  ░░ = 等待 I/O
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;→ 单进程多协程，等待时自动切换执行其他协程
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h4 id=&#34;简单判断方法&#34;&gt;简单判断方法
+&lt;/h4&gt;&lt;p&gt;&lt;strong&gt;任务是在&amp;quot;算&amp;quot;还是在&amp;quot;等&amp;quot;？&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;算得多 → CPU 密集型 → 用 prefork&lt;/li&gt;
+&lt;li&gt;等得多 → I/O 密集型 → 用 gevent&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;重要提示&lt;/strong&gt;：eventlet 和 gevent 都属于 green pool，需要确保任务代码中不包含阻塞调用（如未 patch 的 socket、time.sleep 等），否则会阻塞整个事件循环。&lt;/p&gt;
+&lt;h2 id=&#34;celery-中两者怎么用&#34;&gt;Celery 中两者怎么用
+&lt;/h2&gt;&lt;h3 id=&#34;正确的启动方式&#34;&gt;正确的启动方式
+&lt;/h3&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;celery -A proj worker -P gevent -c &lt;span class=&#34;m&#34;&gt;500&lt;/span&gt; -l info
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;celery -A proj worker -P eventlet -c &lt;span class=&#34;m&#34;&gt;500&lt;/span&gt; -l info
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这里最重要的一点不是命令本身，而是 &lt;strong&gt;用 &lt;code&gt;-P&lt;/code&gt; 在进程启动的尽可能早期选择 pool&lt;/strong&gt;。&lt;/p&gt;
+&lt;p&gt;Celery 在 &lt;code&gt;celery/worker/components.py&lt;/code&gt; 里明确写了这样一条告警语义：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;The&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;worker_pool&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;setting&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;shouldn&lt;/span&gt;&lt;span class=&#34;s1&#34;&gt;&amp;#39;t be used to select the eventlet/gevent&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;pools&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;instead&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;you&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;must&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;use&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;the&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;P&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;argument&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;so&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;that&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;patches&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;are&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;applied&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;as&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;early&lt;/span&gt; &lt;span class=&#34;k&#34;&gt;as&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;possible&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这句话非常关键，因为它其实已经直接点出了 green pool 最容易出问题的地方：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;不是“有没有配置成功”&lt;/li&gt;
+&lt;li&gt;而是“补丁是不是足够早地打上了”&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;不推荐的方式&#34;&gt;不推荐的方式
+&lt;/h3&gt;&lt;p&gt;不建议依赖配置文件里的 &lt;code&gt;worker_pool = &#39;eventlet&#39;&lt;/code&gt; 或 &lt;code&gt;worker_pool = &#39;gevent&#39;&lt;/code&gt; 来切换 green pool，尤其是 &lt;code&gt;eventlet&lt;/code&gt;。&lt;/p&gt;
+&lt;p&gt;原因不是 Celery 不支持，而是 &lt;strong&gt;太晚了&lt;/strong&gt;。一旦 &lt;code&gt;socket&lt;/code&gt;、&lt;code&gt;ssl&lt;/code&gt;、&lt;code&gt;threading&lt;/code&gt;、某些 broker 相关模块已经按标准阻塞实现被导入，再去 patch，行为就可能变得不一致。&lt;/p&gt;
+&lt;h2 id=&#34;disable_monkey_patchtrue-的作用&#34;&gt;&lt;code&gt;DISABLE_MONKEY_PATCH=true&lt;/code&gt; 的作用
+&lt;/h2&gt;&lt;p&gt;这里要先说明一个边界：&lt;code&gt;DISABLE_MONKEY_PATCH&lt;/code&gt; 不是 Celery 官方统一定义的标准配置项，它通常是项目自己的启动开关，用来控制是否执行类似下面这种代码：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;kn&#34;&gt;from&lt;/span&gt; &lt;span class=&#34;nn&#34;&gt;gevent&lt;/span&gt; &lt;span class=&#34;kn&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;monkey&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;monkey&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;patch_all&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;()&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# 或&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;kn&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;nn&#34;&gt;eventlet&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;eventlet&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;monkey_patch&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;()&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;如果项目里约定了：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;nv&#34;&gt;DISABLE_MONKEY_PATCH&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;&lt;span class=&#34;nb&#34;&gt;true&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;那它的含义通常就是：&lt;strong&gt;禁止 eventlet/gevent 在 Celery worker 进程启动时对 Python 标准库做 monkey patch&lt;/strong&gt;。&lt;/p&gt;
+&lt;p&gt;monkey patch 会把一些标准库模块替换成协程友好的版本，例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;socket&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;ssl&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;select&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;threading&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;time&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;subprocess&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这对 &lt;code&gt;-P gevent&lt;/code&gt; / &lt;code&gt;-P eventlet&lt;/code&gt; 这类 green pool 很关键，因为它们依赖 cooperative I/O。如果不 patch，很多网络 I/O、sleep、锁等待仍然是原生阻塞行为。&lt;/p&gt;
+&lt;h3 id=&#34;对-celery-green-pool-的影响&#34;&gt;对 Celery green pool 的影响
+&lt;/h3&gt;&lt;p&gt;如果 worker 使用的是：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;celery -A app worker -P gevent
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# 或&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;celery -A app worker -P eventlet
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;正常情况下应该尽早完成 monkey patch。否则即使 gevent/eventlet pool 启动成功，任务里的很多调用仍然可能阻塞整个 worker 所在的 OS 线程。&lt;/p&gt;
+&lt;p&gt;也就是说，设置：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;nv&#34;&gt;DISABLE_MONKEY_PATCH&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;&lt;span class=&#34;nb&#34;&gt;true&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;之后，表面上看 worker 仍然可能是 green pool，但实际效果会变成：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;协程并发能力下降&lt;/li&gt;
+&lt;li&gt;某些 I/O 调用不会自动让出执行权&lt;/li&gt;
+&lt;li&gt;一个阻塞调用可能拖住整个事件循环&lt;/li&gt;
+&lt;li&gt;“worker 进程还活着，但不消费或消费变慢”的风险上升&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以，如果你明确使用 &lt;code&gt;-P gevent&lt;/code&gt; 或 &lt;code&gt;-P eventlet&lt;/code&gt;，一般不建议打开这个开关，除非你非常确定任务链路里没有依赖 monkey patch 的阻塞 I/O。&lt;/p&gt;
+&lt;h3 id=&#34;为什么有些项目会禁用-monkey-patch&#34;&gt;为什么有些项目会禁用 monkey patch
+&lt;/h3&gt;&lt;p&gt;禁用 monkey patch 并不是完全没有价值。它的主要好处是避免全局改写标准库行为。&lt;/p&gt;
+&lt;p&gt;monkey patch 是进程级、全局性的，一旦执行，会影响整个 worker 进程里的所有库。某些库对标准库行为比较敏感，比如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;HTTP 客户端：&lt;code&gt;requests&lt;/code&gt;、&lt;code&gt;urllib3&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;数据库驱动：&lt;code&gt;pymysql&lt;/code&gt;、部分 PostgreSQL/MySQL client&lt;/li&gt;
+&lt;li&gt;broker / 缓存客户端：&lt;code&gt;redis&lt;/code&gt;、Kafka client&lt;/li&gt;
+&lt;li&gt;RPC / 网络库：&lt;code&gt;grpc&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;线程、锁、子进程、日志相关代码&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果这些库和 eventlet/gevent 的 green 版本不兼容，禁用 monkey patch 可以让运行时更接近原生 Python 行为，减少“被悄悄改写”的副作用。&lt;/p&gt;
+&lt;h3 id=&#34;和-prefork--threads-的关系&#34;&gt;和 prefork / threads 的关系
+&lt;/h3&gt;&lt;p&gt;如果 worker 使用的是默认 prefork：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;celery -A app worker -P prefork
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;或者 threads / solo：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;celery -A app worker -P threads
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;celery -A app worker -P solo
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;通常并不需要 eventlet/gevent 的 monkey patch。此时设置 &lt;code&gt;DISABLE_MONKEY_PATCH=true&lt;/code&gt; 更像是一个保护开关，用来防止某些公共启动代码在非 green pool 场景下意外执行 monkey patch。&lt;/p&gt;
+&lt;p&gt;简单判断：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;Celery pool&lt;/th&gt;
+          &lt;th&gt;是否建议禁用 monkey patch&lt;/th&gt;
+          &lt;th&gt;原因&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;gevent&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;通常不建议&lt;/td&gt;
+          &lt;td&gt;green pool 依赖协程化 I/O&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;eventlet&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;通常不建议&lt;/td&gt;
+          &lt;td&gt;eventlet 对 patch 时机更敏感&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;prefork&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;可以禁用&lt;/td&gt;
+          &lt;td&gt;多进程模型不依赖 green patch&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;threads&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;通常可以禁用&lt;/td&gt;
+          &lt;td&gt;使用原生线程并发&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;solo&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;可以禁用&lt;/td&gt;
+          &lt;td&gt;单线程调试模型不需要 green patch&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;一句话总结：&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;&lt;code&gt;DISABLE_MONKEY_PATCH=true&lt;/code&gt; 的作用是关闭 eventlet/gevent 对标准库的全局 monkey patch；这会降低 green pool 的协程化 I/O 能力，但能换取更接近原生 Python 的运行时行为。&lt;/strong&gt;&lt;/p&gt;
+&lt;h2 id=&#34;先看-celery-自己的源码封装&#34;&gt;先看 Celery 自己的源码封装
+&lt;/h2&gt;&lt;p&gt;从 Celery 视角看，&lt;code&gt;eventlet&lt;/code&gt; 和 &lt;code&gt;gevent&lt;/code&gt; 都是并发池实现，分别在：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;celery/concurrency/eventlet.py&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;celery/concurrency/gevent.py&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;eventlet-pool-的实现&#34;&gt;Eventlet pool 的实现
+&lt;/h3&gt;&lt;p&gt;&lt;code&gt;celery/concurrency/eventlet.py&lt;/code&gt; 里，&lt;code&gt;TaskPool&lt;/code&gt; 初始化时会绑定：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;eventlet.greenpool.GreenPool&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;eventlet.greenthread.getcurrent&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;greenthread.spawn_n&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;核心逻辑可以概括为：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;7
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;kn&#34;&gt;from&lt;/span&gt; &lt;span class=&#34;nn&#34;&gt;eventlet.greenpool&lt;/span&gt; &lt;span class=&#34;kn&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;GreenPool&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;kn&#34;&gt;from&lt;/span&gt; &lt;span class=&#34;nn&#34;&gt;eventlet&lt;/span&gt; &lt;span class=&#34;kn&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;greenthread&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;Pool&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;GreenPool&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;getcurrent&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;greenthread&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;getcurrent&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;getpid&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;k&#34;&gt;lambda&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;nb&#34;&gt;id&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;greenthread&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;getcurrent&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;())&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;spawn_n&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;greenthread&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;spawn_n&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;启动时创建 green pool：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;_pool&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;Pool&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;limit&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;_quick_put&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;_pool&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;spawn&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;提交任务时，本质上是把 Celery 的 &lt;code&gt;apply_target(...)&lt;/code&gt; 扔进 eventlet 的 greenlet 池里执行。&lt;/p&gt;
+&lt;p&gt;也就是说，Celery 在这里做的事情并不复杂：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;创建一个 &lt;code&gt;GreenPool&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;用 &lt;code&gt;spawn&lt;/code&gt; 提交任务&lt;/li&gt;
+&lt;li&gt;用一个映射表跟踪 greenlet&lt;/li&gt;
+&lt;li&gt;必要时 kill 某个 greenlet&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;gevent-pool-的实现&#34;&gt;Gevent pool 的实现
+&lt;/h3&gt;&lt;p&gt;&lt;code&gt;celery/concurrency/gevent.py&lt;/code&gt; 的结构与之非常像，不过底层换成了：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;gevent.pool.Pool&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;gevent.getcurrent&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;gevent.spawn_raw&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;核心逻辑可以概括为：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;7
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;kn&#34;&gt;from&lt;/span&gt; &lt;span class=&#34;nn&#34;&gt;gevent&lt;/span&gt; &lt;span class=&#34;kn&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;getcurrent&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;spawn_raw&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;kn&#34;&gt;from&lt;/span&gt; &lt;span class=&#34;nn&#34;&gt;gevent.pool&lt;/span&gt; &lt;span class=&#34;kn&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Pool&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;Pool&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Pool&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;getcurrent&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;getcurrent&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;getpid&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;k&#34;&gt;lambda&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;nb&#34;&gt;id&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;getcurrent&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;())&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;spawn_n&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;spawn_raw&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;启动时也是：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;_pool&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;Pool&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;limit&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;_quick_put&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;_pool&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;spawn&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;提交任务时，&lt;code&gt;gevent&lt;/code&gt; 版本还会额外经过 &lt;code&gt;apply_timeout(...)&lt;/code&gt; 包装，在设置了超时时可以用 &lt;code&gt;gevent.Timeout&lt;/code&gt; 控制任务。&lt;/p&gt;
+&lt;p&gt;这一点说明：&lt;strong&gt;Celery 对 gevent 的整合稍微完整一点&lt;/strong&gt;，至少在超时控制上是直接接进去的。&lt;/p&gt;
+&lt;h2 id=&#34;一个非常关键的源码差异eventlet-会主动检查-patch-时机&#34;&gt;一个非常关键的源码差异：eventlet 会主动检查 patch 时机
+&lt;/h2&gt;&lt;p&gt;&lt;code&gt;celery/concurrency/eventlet.py&lt;/code&gt; 里有一段很值得注意的逻辑：它会扫描 &lt;code&gt;sys.modules&lt;/code&gt;，看 &lt;code&gt;billiard&lt;/code&gt;、&lt;code&gt;celery&lt;/code&gt;、&lt;code&gt;kombu&lt;/code&gt; 等模块是不是已经导入，并尝试对 &lt;code&gt;thread&lt;/code&gt;、&lt;code&gt;threading&lt;/code&gt;、&lt;code&gt;socket&lt;/code&gt; 相关情况发出告警。&lt;/p&gt;
+&lt;p&gt;其核心意图可以概括为：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;RACE_MODS&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;s1&#34;&gt;&amp;#39;billiard.&amp;#39;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s1&#34;&gt;&amp;#39;celery.&amp;#39;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s1&#34;&gt;&amp;#39;kombu.&amp;#39;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;# 如果这些模块已经导入，说明 eventlet patch 可能太晚了&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;warnings&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;warn&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;...&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这说明 Celery 官方在 &lt;code&gt;eventlet&lt;/code&gt; 适配层里，明确意识到了一个问题：&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;eventlet 很容易出现“补丁打得太晚”的竞态问题。&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;而这类问题最麻烦的地方在于：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;进程不一定会崩&lt;/li&gt;
+&lt;li&gt;worker 也不一定会报明显异常&lt;/li&gt;
+&lt;li&gt;但某些 socket、DNS、SSL、线程同步对象仍然是“阻塞版”&lt;/li&gt;
+&lt;li&gt;一旦这些对象出现在消费链路里，就可能把整个 hub 卡住&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这正是“进程正常，但不消费”的典型成因之一。&lt;/p&gt;
+&lt;h2 id=&#34;worker-启动时hub-和-pool-是怎么挂起来的&#34;&gt;Worker 启动时，Hub 和 Pool 是怎么挂起来的
+&lt;/h2&gt;&lt;p&gt;Celery 的 worker bootstep 在 &lt;code&gt;celery/worker/components.py&lt;/code&gt;。&lt;/p&gt;
+&lt;p&gt;这里有两个关键点。&lt;/p&gt;
+&lt;h3 id=&#34;1-hub-bootstep&#34;&gt;1. Hub bootstep
+&lt;/h3&gt;&lt;p&gt;&lt;code&gt;Hub&lt;/code&gt; bootstep 会根据 worker 是否启用事件循环来创建 &lt;code&gt;kombu&lt;/code&gt; 的 event loop：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;w.hub = get_event_loop()&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;如果没有，就 &lt;code&gt;set_event_loop(...)&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;也就是说，&lt;strong&gt;Celery worker 自己有一层基于 kombu 的 hub/event loop&lt;/strong&gt;，负责 broker I/O、定时器、consumer 等协作。&lt;/p&gt;
+&lt;h3 id=&#34;2-pool-bootstep&#34;&gt;2. Pool bootstep
+&lt;/h3&gt;&lt;p&gt;Pool bootstep 会创建 &lt;code&gt;w.pool&lt;/code&gt;，然后 consumer 在初始化时会拿到：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;pool=w.pool&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;timer=w.timer&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;hub=w.hub&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;也就是说，从结构上看，消费链路并不是“池子自己单独跑”，而是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;kombu hub 负责消息侧事件循环&lt;/li&gt;
+&lt;li&gt;pool 负责任务执行并发&lt;/li&gt;
+&lt;li&gt;两者要协同工作&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这意味着一旦 green runtime 对 socket、定时器、DNS、信号、线程原语的兼容性出现问题，表面看上去就可能是“consumer 不消费了”，但根因其实是 &lt;strong&gt;event loop / cooperative I/O 某处失去协作&lt;/strong&gt;。&lt;/p&gt;
+&lt;h2 id=&#34;gevent-的-libev-到底用在了哪里&#34;&gt;gevent 的 libev 到底用在了哪里
+&lt;/h2&gt;&lt;p&gt;&lt;strong&gt;libev 不在 Celery 里直接使用，而是在 gevent 运行时里使用。&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;也就是说：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Celery 只知道自己在用 &lt;code&gt;celery/concurrency/gevent.py&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;gevent.py&lt;/code&gt; 再去调用 gevent 的 &lt;code&gt;Pool&lt;/code&gt;、&lt;code&gt;getcurrent&lt;/code&gt;、&lt;code&gt;spawn_raw&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;gevent 自己内部的 hub / loop 再落到 &lt;code&gt;libev&lt;/code&gt; 或 &lt;code&gt;libuv&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;根据 gevent 官方文档，gevent 是建立在 &lt;strong&gt;libev 或 libuv event loop&lt;/strong&gt; 之上的；在非 Windows 环境下，长期默认实现通常是 &lt;code&gt;libev&lt;/code&gt;。&lt;/p&gt;
+&lt;p&gt;文档位置：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;https://www.gevent.org/&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;https://www.gevent.org/loop_impls.html&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;https://www.gevent.org/api/gevent.hub.html&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;从 gevent 的设计上看，可以把调用链理解为：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Celery worker
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  -&amp;gt; celery/concurrency/gevent.py
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  -&amp;gt; gevent.pool.Pool / gevent Hub
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  -&amp;gt; gevent loop implementation
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  -&amp;gt; libev/libuv
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  -&amp;gt; epoll/kqueue/select 等 OS I/O 多路复用能力
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;所以你在 Celery 源码里看不到 &lt;code&gt;libev&lt;/code&gt; 很正常，因为它属于 gevent 的底层实现，不是 Celery 的直接依赖层。&lt;/p&gt;
+&lt;h2 id=&#34;如果是第一天正常第二天不消费应该优先怀疑什么&#34;&gt;如果是“第一天正常，第二天不消费”，应该优先怀疑什么
+&lt;/h2&gt;&lt;p&gt;如果你的现象不是“启动后马上不消费”，而是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;eventlet&lt;/code&gt; worker 刚启动时完全正常&lt;/li&gt;
+&lt;li&gt;可以连续跑很久，比如一天&lt;/li&gt;
+&lt;li&gt;过了一段时间后，进程还在，但突然不再继续消费&lt;/li&gt;
+&lt;li&gt;重启 worker 后又恢复&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;那我会优先判断成：&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;不是任务代码跑一天后自己坏了，而是 worker 在运行一段时间后，遇到了一次 broker 连接抖动、重连、心跳、取消消费或恢复消费相关事件，之后 consumer 没有完全恢复到继续拉消息的状态。&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;这个判断并不是拍脑袋，因为 Kombu / Celery 历史记录里确实长期有这类问题痕迹。&lt;/p&gt;
+&lt;h3 id=&#34;1-kombu-的-changelog-里就有直接相关的修复&#34;&gt;1. Kombu 的 changelog 里就有直接相关的修复
+&lt;/h3&gt;&lt;p&gt;Kombu changelog 中有两条非常值得注意：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;Fix Redis connections after reconnect - consumer starts consuming the tasks after crash. (#2007)&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;Redis: Consumer.cancel() is now thread safe.&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;第二条后面还直接解释了 greenlet 场景：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;This fixes an issue when using gevent/eventlet and a message is handled after the consumer is canceled resulting in a &amp;quot;message for queue without consumers&amp;quot; error.&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这几条信息说明两件事：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;重连之后 consumer 恢复消费&lt;/strong&gt; 这件事，历史上确实出过问题&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Consumer.cancel / consumer 恢复流程&lt;/strong&gt; 在 &lt;code&gt;gevent/eventlet&lt;/code&gt; 这类并发模型下，确实是容易出边缘问题的地方&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;2-celery-issue-中也有运行一段时间后-idle不再消费的案例&#34;&gt;2. Celery issue 中也有“运行一段时间后 idle，不再消费”的案例
+&lt;/h3&gt;&lt;p&gt;Celery issue &lt;code&gt;#4012&lt;/code&gt; 中描述的现象就非常像你说的这种：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;worker 跑了一段时间后开始 idle&lt;/li&gt;
+&lt;li&gt;进程还活着，也有多个 broker 连接&lt;/li&gt;
+&lt;li&gt;但就是不再继续消费&lt;/li&gt;
+&lt;li&gt;手动把 RabbitMQ 连接关掉，触发重连后，又会恢复消费&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这类现象很像：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;不是任务执行层直接崩溃&lt;/li&gt;
+&lt;li&gt;而是消费循环、broker I/O、重连后的注册状态，某一步进入了“看似活着、实际上不再推进”的状态&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;3-一天后才出问题更像周期性连接事件触发&#34;&gt;3. “一天后才出问题”更像周期性连接事件触发
+&lt;/h3&gt;&lt;p&gt;从时间特征上看，“第一天正常，第二天不消费”通常更像：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;broker 空闲连接被回收&lt;/li&gt;
+&lt;li&gt;网络短暂抖动&lt;/li&gt;
+&lt;li&gt;heartbeat 检测触发一次异常&lt;/li&gt;
+&lt;li&gt;Redis / RabbitMQ 连接发生 reconnect&lt;/li&gt;
+&lt;li&gt;consumer cancel / re-register 在某个边缘时序下没有完全恢复&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这类问题的特征就是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;不会在启动时立刻出现&lt;/li&gt;
+&lt;li&gt;不会在压测的前几分钟必现&lt;/li&gt;
+&lt;li&gt;往往要等到一次真正的连接生命周期事件发生后才暴露&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以，&lt;strong&gt;这种“跑一天后卡住”的时间特征，更像连接状态机或 hub 协作链路问题，而不是纯 CPU 打满。&lt;/strong&gt;&lt;/p&gt;
+&lt;h3 id=&#34;4-我会优先考虑的三类触发点&#34;&gt;4. 我会优先考虑的三类触发点
+&lt;/h3&gt;&lt;h4 id=&#34;第一类broker--网络侧的空闲回收断连心跳异常&#34;&gt;第一类：broker / 网络侧的空闲回收、断连、心跳异常
+&lt;/h4&gt;&lt;p&gt;这是最符合你现象的一类。&lt;/p&gt;
+&lt;p&gt;一旦 broker 连接因为空闲、超时、网络闪断或心跳异常进入重连流程，worker 会经历：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;旧连接失效&lt;/li&gt;
+&lt;li&gt;consumer cancel&lt;/li&gt;
+&lt;li&gt;channel / connection cleanup&lt;/li&gt;
+&lt;li&gt;新连接建立&lt;/li&gt;
+&lt;li&gt;queue / consumer 重新注册&lt;/li&gt;
+&lt;li&gt;恢复 drain events&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果这条链路里任何一步在 greenlet 场景下没有完全收干净，就可能出现：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;worker 进程还在&lt;/li&gt;
+&lt;li&gt;hub 还在跑&lt;/li&gt;
+&lt;li&gt;但已经不再真正从 broker 拉取任务&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;第二类eventlet-下某个-greenlet-在关键时刻阻塞了消费-loop&#34;&gt;第二类：eventlet 下某个 greenlet 在关键时刻阻塞了消费 loop
+&lt;/h4&gt;&lt;p&gt;这类情况也很常见，尤其是任务里存在：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;阻塞型网络 I/O&lt;/li&gt;
+&lt;li&gt;DNS 查询&lt;/li&gt;
+&lt;li&gt;SSL 握手&lt;/li&gt;
+&lt;li&gt;不可 monkey patch 的 C 扩展&lt;/li&gt;
+&lt;li&gt;某些不会主动让出执行权的长阻塞调用&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;平时它可能不一定出问题，但一旦刚好发生在：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;heartbeat 发送/接收&lt;/li&gt;
+&lt;li&gt;broker socket 重建&lt;/li&gt;
+&lt;li&gt;consumer 恢复订阅&lt;/li&gt;
+&lt;li&gt;定时器回调执行&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这些关键时刻，就可能把整个 cooperative 调度链拖住。&lt;/p&gt;
+&lt;h4 id=&#34;第三类重连后-consumer-状态没有完全恢复&#34;&gt;第三类：重连后 consumer 状态没有完全恢复
+&lt;/h4&gt;&lt;p&gt;这一类和第一类非常接近，但更偏状态机残留问题。&lt;/p&gt;
+&lt;p&gt;也就是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;连接已经重建了&lt;/li&gt;
+&lt;li&gt;worker 看起来也在线&lt;/li&gt;
+&lt;li&gt;但 consumer 的某些注册、取消、恢复流程没有完全收尾&lt;/li&gt;
+&lt;li&gt;导致后续 &lt;code&gt;drain_events&lt;/code&gt; 或消费回调没有真正重新推进&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Kombu changelog 里关于 &lt;code&gt;Consumer.cancel()&lt;/code&gt; 的修复，本质上就在说明这条链路历史上并不稳定。&lt;/p&gt;
+&lt;h2 id=&#34;把一天后不消费落到源码链路里看&#34;&gt;把“一天后不消费”落到源码链路里看
+&lt;/h2&gt;&lt;p&gt;如果从源码路径去看，这类问题通常不在“任务执行函数”本身，而是在 &lt;strong&gt;consumer 事件循环 -&amp;gt; broker I/O -&amp;gt; 异常恢复 -&amp;gt; 重新注册消费&lt;/strong&gt; 这条链路上。&lt;/p&gt;
+&lt;h3 id=&#34;1-celery-的-consumer-主循环并不是一直傻等而是在不断推进-event-loop&#34;&gt;1. Celery 的 consumer 主循环并不是一直傻等，而是在不断推进 event loop
+&lt;/h3&gt;&lt;p&gt;在 &lt;code&gt;celery/worker/loops.py&lt;/code&gt; 里，green pool 常走 &lt;code&gt;asynloop(...)&lt;/code&gt;。它的主干逻辑可以概括成：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;7
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;while&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;blueprint&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;state&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;==&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;RUN&lt;/span&gt; &lt;span class=&#34;ow&#34;&gt;and&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;obj&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;connection&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;n&#34;&gt;state&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;maybe_shutdown&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;()&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;k&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;heartbeat_error&lt;/span&gt; &lt;span class=&#34;ow&#34;&gt;is&lt;/span&gt; &lt;span class=&#34;ow&#34;&gt;not&lt;/span&gt; &lt;span class=&#34;kc&#34;&gt;None&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        &lt;span class=&#34;k&#34;&gt;raise&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;heartbeat_error&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;k&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;qos&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;prev&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;!=&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;qos&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;value&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        &lt;span class=&#34;n&#34;&gt;update_qos&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;()&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;nb&#34;&gt;next&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;loop&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这里有三个非常关键的点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;next(loop)&lt;/code&gt; 本质上是在推动 hub/event loop 往前走&lt;/li&gt;
+&lt;li&gt;心跳异常会通过 &lt;code&gt;heartbeat_error&lt;/code&gt; 抛出来&lt;/li&gt;
+&lt;li&gt;只要这条循环不再继续推进，worker 就可能表现为“进程还在，但不拉消息”&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;也就是说，你看到的“不消费”，从源码视角更像是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;loop&lt;/code&gt; 没有继续有效推进&lt;/li&gt;
+&lt;li&gt;或者推进了，但没有再拿到可读事件&lt;/li&gt;
+&lt;li&gt;或者重连后没有把新的消费 fd 正确重新挂回 loop&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;2-心跳检查本身就是一个可能触发异常恢复的入口&#34;&gt;2. 心跳检查本身就是一个可能触发异常恢复的入口
+&lt;/h3&gt;&lt;p&gt;同一个文件里，&lt;code&gt;_enable_amqheartbeats(...)&lt;/code&gt; 会周期性调用：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;connection&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;heartbeat_check&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;rate&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;一旦这里抛异常，&lt;code&gt;asynloop(...)&lt;/code&gt; / &lt;code&gt;synloop(...)&lt;/code&gt; 就会进入异常路径。&lt;/p&gt;
+&lt;p&gt;这和你的现象很契合，因为：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;worker 可以先正常跑很久&lt;/li&gt;
+&lt;li&gt;等到某次 heartbeat、socket timeout、连接 reset 才触发问题&lt;/li&gt;
+&lt;li&gt;问题触发后不是立刻进程退出，而是转入恢复流程&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以“第一天正常、第二天不消费”，从源码上完全可以解释成：&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;正常消费路径一直没问题，真正出错的是某次连接生命周期事件之后的恢复路径。&lt;/strong&gt;&lt;/p&gt;
+&lt;h3 id=&#34;3-celery-在连接异常后确实会走一条关闭--重启-blueprint的恢复链路&#34;&gt;3. Celery 在连接异常后，确实会走一条“关闭 + 重启 blueprint”的恢复链路
+&lt;/h3&gt;&lt;p&gt;在 &lt;code&gt;celery/worker/consumer/consumer.py&lt;/code&gt; 里，&lt;code&gt;Consumer.start()&lt;/code&gt; 的逻辑大致是：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;7
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;while&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;blueprint&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;state&lt;/span&gt; &lt;span class=&#34;ow&#34;&gt;not&lt;/span&gt; &lt;span class=&#34;ow&#34;&gt;in&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;STOP_CONDITIONS&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;k&#34;&gt;try&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        &lt;span class=&#34;n&#34;&gt;blueprint&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;start&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;k&#34;&gt;except&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;recoverable_errors&lt;/span&gt; &lt;span class=&#34;k&#34;&gt;as&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;exc&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        &lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;on_connection_error_after_connected&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;exc&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        &lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;on_close&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;()&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        &lt;span class=&#34;n&#34;&gt;blueprint&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;restart&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这里可以看到，Celery 的恢复思路不是“原地修一下就算了”，而是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;记录连接异常&lt;/li&gt;
+&lt;li&gt;调 &lt;code&gt;on_connection_error_after_connected(...)&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;调 &lt;code&gt;on_close()&lt;/code&gt; 做清理&lt;/li&gt;
+&lt;li&gt;再 &lt;code&gt;blueprint.restart(self)&lt;/code&gt; 重新拉起 consumer 相关 bootsteps&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;也就是说，如果你跑了一天后才不消费，一个非常合理的源码级推测就是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;某次 recoverable error 确实发生了&lt;/li&gt;
+&lt;li&gt;但后续 &lt;code&gt;on_close -&amp;gt; restart&lt;/code&gt; 这条清理/重建链路没有完全恢复干净&lt;/li&gt;
+&lt;li&gt;于是 worker 还活着，但消费功能并没有彻底回来&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;4-celery-在异常后的清理动作本身就可能卡在连接收尾上&#34;&gt;4. Celery 在异常后的清理动作，本身就可能卡在连接收尾上
+&lt;/h3&gt;&lt;p&gt;&lt;code&gt;on_connection_error_after_connected(...)&lt;/code&gt; 里有一个值得注意的调用：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;try&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;connection&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;collect&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;()&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;except&lt;/span&gt; &lt;span class=&#34;ne&#34;&gt;Exception&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;k&#34;&gt;pass&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这段代码的意图是做连接清理，但从排障角度看，它说明一件事：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Celery 在连接异常后，确实依赖底层 transport / connection 去收尾&lt;/li&gt;
+&lt;li&gt;如果某个 transport 的清理动作在 greenlet/hub 场景下不彻底，恢复路径就可能留下残留状态&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以你的现象不能只盯着“异常是否发生”，还要盯着：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;异常后清理是否完成&lt;/li&gt;
+&lt;li&gt;清理后 consumer 是否重新注册&lt;/li&gt;
+&lt;li&gt;hub 是否开始监听新的 fd&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;5-redis-transport-的源码里确实能看到-cancel--读事件--重新注册这些敏感点&#34;&gt;5. Redis transport 的源码里，确实能看到 cancel / 读事件 / 重新注册这些敏感点
+&lt;/h3&gt;&lt;p&gt;如果 broker 是 Redis，&lt;code&gt;kombu/transport/redis.py&lt;/code&gt; 里有几段非常关键。&lt;/p&gt;
+&lt;h4 id=&#34;basic_cancel-不是立即取消而是可能延后到本次读取完成后&#34;&gt;&lt;code&gt;basic_cancel()&lt;/code&gt; 不是立即取消，而是可能延后到“本次读取完成后”
+&lt;/h4&gt;&lt;p&gt;源码逻辑大意是：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;connection&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;cycle&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;_in_protected_read&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;k&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;connection&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;cycle&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;after_read&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;add&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;...&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;_basic_cancel&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;...&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这说明在 Redis transport 里，如果当时正处在受保护的读取阶段，取消消费并不会立刻执行，而是延迟到读取完成后处理。&lt;/p&gt;
+&lt;p&gt;这就引出了一个典型风险：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;如果 cancel / reconnect / read 这几个动作在时序上撞在一起&lt;/li&gt;
+&lt;li&gt;某些延后动作没有被完整执行&lt;/li&gt;
+&lt;li&gt;就可能留下“看起来 consumer 在，实际上没真正订阅成功”的状态&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;on_readable--poller--fd-注册决定了能不能继续拉到消息&#34;&gt;&lt;code&gt;on_readable()&lt;/code&gt; / poller / fd 注册决定了能不能继续拉到消息
+&lt;/h4&gt;&lt;p&gt;Redis transport 的 &lt;code&gt;MultiChannelPoller&lt;/code&gt; 会：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;在 &lt;code&gt;get(...)&lt;/code&gt; 中调用 &lt;code&gt;poller.poll(timeout)&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;在 &lt;code&gt;on_readable(fileno)&lt;/code&gt; 时读取 broker 数据&lt;/li&gt;
+&lt;li&gt;在 &lt;code&gt;register_with_event_loop(...)&lt;/code&gt; 时，把 fd 重新挂到 event loop&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;逻辑链可以概括成：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;events&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;poller&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;poll&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;timeout&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;for&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;fileno&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;event&lt;/span&gt; &lt;span class=&#34;ow&#34;&gt;in&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;events&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;handle_event&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;fileno&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;event&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;以及：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;nf&#34;&gt;register_with_event_loop&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;bp&#34;&gt;self&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;connection&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;loop&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;):&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;o&#34;&gt;...&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;add_reader&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;fd&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;on_readable&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;fd&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;k&#34;&gt;for&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;fd&lt;/span&gt; &lt;span class=&#34;ow&#34;&gt;in&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;cycle&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;fds&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;]&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;所以如果重连之后出现以下任何一种情况：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;老 fd 没清掉&lt;/li&gt;
+&lt;li&gt;新 fd 没重新 add_reader&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;cycle.fds&lt;/code&gt; 没恢复正确&lt;/li&gt;
+&lt;li&gt;poller 还盯着旧连接&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;那表现出来就会非常像你说的这种：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;worker 在线&lt;/li&gt;
+&lt;li&gt;hub 在跑&lt;/li&gt;
+&lt;li&gt;但 broker 消息不再进入消费回调&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;6-为什么这类问题会很久以后才触发&#34;&gt;6. 为什么这类问题会“很久以后才触发”
+&lt;/h3&gt;&lt;p&gt;把上面几段源码串起来，时间特征就很好理解了。&lt;/p&gt;
+&lt;p&gt;启动后的正常阶段走的是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;consumer.consume()&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;next(loop)&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;poller.poll(...)&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;on_readable(...)&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;create_task_handler()&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这一整条路径在第一天可能一直正常。&lt;/p&gt;
+&lt;p&gt;但只要某个时刻发生：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;heartbeat_check()&lt;/code&gt; 失败&lt;/li&gt;
+&lt;li&gt;socket reset / timeout&lt;/li&gt;
+&lt;li&gt;broker reconnect&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;basic_cancel()&lt;/code&gt; 延迟执行&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;register_with_event_loop()&lt;/code&gt; 未完全恢复&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;问题就会从“正常消费路径”切换到“异常恢复路径”。&lt;/p&gt;
+&lt;p&gt;而很多线上问题恰恰不是出在前者，而是出在后者。&lt;/p&gt;
+&lt;h3 id=&#34;7-结合源码我会把高概率怀疑点收敛到哪里&#34;&gt;7. 结合源码，我会把高概率怀疑点收敛到哪里
+&lt;/h3&gt;&lt;p&gt;如果结合 Celery 和 Kombu 这几处源码，我会把“eventlet 跑一天后不消费”的高概率怀疑点收敛到下面三处：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;celery/worker/loops.py&lt;/code&gt;：event loop 仍在，但 heartbeat / loop 推进已经异常&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;celery/worker/consumer/consumer.py&lt;/code&gt;：recoverable error 之后的 &lt;code&gt;on_close + blueprint.restart&lt;/code&gt; 没完全恢复&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;kombu/transport/redis.py&lt;/code&gt;：cancel、protected read、fd 重新注册、poller 状态之间留下了残留&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果 broker 不是 Redis，而是 RabbitMQ，这个结论也仍然成立，只是具体 transport 文件不同，核心仍然是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;旧连接断开&lt;/li&gt;
+&lt;li&gt;event loop 收到异常&lt;/li&gt;
+&lt;li&gt;transport 清理旧 fd / channel&lt;/li&gt;
+&lt;li&gt;重新建连并重新注册 consumer&lt;/li&gt;
+&lt;li&gt;恢复 &lt;code&gt;drain_events&lt;/code&gt; / readable callback&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;只要其中某一步没有完全回到一致状态，就会出现“活着，但不消费”。&lt;/p&gt;
+&lt;h2 id=&#34;为什么-eventlet-更容易把这种问题暴露出来&#34;&gt;为什么 eventlet 更容易把这种问题暴露出来
+&lt;/h2&gt;&lt;p&gt;这里要先强调一件事：&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;不能把这个现象简单归因成一个单一 bug。&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;更准确的说法是，&lt;code&gt;eventlet&lt;/code&gt; 更容易触发这类问题，常见原因有以下几类。&lt;/p&gt;
+&lt;h3 id=&#34;1-monkey-patch-时机过晚&#34;&gt;1. monkey patch 时机过晚
+&lt;/h3&gt;&lt;p&gt;这是最经典的一类。&lt;/p&gt;
+&lt;p&gt;如果 worker 启动前，某些关键模块已经被普通阻塞版本导入，比如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;socket&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;ssl&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;threading&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;某些数据库驱动&lt;/li&gt;
+&lt;li&gt;某些 HTTP 客户端&lt;/li&gt;
+&lt;li&gt;broker transport 依赖链上的模块&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;那么即使后面用了 &lt;code&gt;eventlet&lt;/code&gt;，也可能只是“部分变绿”。&lt;/p&gt;
+&lt;p&gt;这种状态下，worker 仍然能：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;启动成功&lt;/li&gt;
+&lt;li&gt;打印 ready&lt;/li&gt;
+&lt;li&gt;维持进程存活&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;但当消费链路进入某个阻塞调用点时，整个协作调度就可能卡住，表现出来就是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;队列里有消息&lt;/li&gt;
+&lt;li&gt;worker 在线&lt;/li&gt;
+&lt;li&gt;就是不拉取或不继续处理&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;2-eventlet-的兼容性更脆弱&#34;&gt;2. eventlet 的兼容性更脆弱
+&lt;/h3&gt;&lt;p&gt;&lt;code&gt;eventlet&lt;/code&gt; 和 &lt;code&gt;gevent&lt;/code&gt; 都依赖 monkey patch，但实际项目里常见的兼容性体验通常是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;eventlet&lt;/code&gt; 更容易踩库兼容问题&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;gevent&lt;/code&gt; 更容易维持“整体可运行”&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这不是因为 Celery 对 gevent 做了大量特殊优化，而是因为 &lt;strong&gt;gevent 的底层事件循环和生态维护更成熟&lt;/strong&gt;。&lt;/p&gt;
+&lt;p&gt;另外，eventlet 官方文档现在已经明确给出警告：&lt;strong&gt;新项目使用 eventlet 已经被 heavily discouraged&lt;/strong&gt;，并说明项目进入以稳定性和 bug fix 为主的维护模式，不再接受新的通用特性，长期目标是推动用户迁移。&lt;/p&gt;
+&lt;p&gt;这意味着什么？意味着当你遇到这种“跑了一天后才卡住”的边缘时序问题时：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;它未必没有人遇到过&lt;/li&gt;
+&lt;li&gt;但后续生态层面的修复速度和覆盖范围，通常会比 gevent 弱&lt;/li&gt;
+&lt;li&gt;你需要自己承担更多运行时兼容性验证成本&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Celery 官方文档在 gevent 页面里也直接描述 gevent 是建立在 &lt;code&gt;libev/libuv&lt;/code&gt; 上的高性能 event loop；同时，Celery 社区对 eventlet 的维护风险也有明确讨论。&lt;/p&gt;
+&lt;h3 id=&#34;3-dns--ssl--socket-这类-io-更容易放大-eventlet-的问题&#34;&gt;3. DNS / SSL / socket 这类 I/O 更容易放大 eventlet 的问题
+&lt;/h3&gt;&lt;p&gt;这类问题往往不会在最简单的 demo 中暴露，但在真实业务环境里常见：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;任务里发 HTTP 请求&lt;/li&gt;
+&lt;li&gt;连接 Redis / RabbitMQ / 数据库&lt;/li&gt;
+&lt;li&gt;进行 DNS 解析&lt;/li&gt;
+&lt;li&gt;使用 SSL/TLS&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;green runtime 只要有一处没 patch 好，或者第三方库内部偷偷走了阻塞调用，就可能把整个线程卡住。&lt;/p&gt;
+&lt;p&gt;对 green pool 来说，最可怕的不是“报错退出”，而是 &lt;strong&gt;主 greenlet 还活着，但调度停滞&lt;/strong&gt;。&lt;/p&gt;
+&lt;h3 id=&#34;4-celery-对-eventlet-的封装更强调能跑不是替你兜底所有兼容性&#34;&gt;4. Celery 对 eventlet 的封装更强调“能跑”，不是“替你兜底所有兼容性”
+&lt;/h3&gt;&lt;p&gt;从 &lt;code&gt;celery/concurrency/eventlet.py&lt;/code&gt; 的实现可以看出来，Celery 的做法主要是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;包一层 &lt;code&gt;GreenPool&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;把任务提交进去&lt;/li&gt;
+&lt;li&gt;做一点生命周期管理&lt;/li&gt;
+&lt;li&gt;提供若干 signals&lt;/li&gt;
+&lt;li&gt;在模块导入阶段提醒 patch 竞态&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;它并不会替你修复：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;第三方库是否 cooperative&lt;/li&gt;
+&lt;li&gt;DNS 解析是否走绿色实现&lt;/li&gt;
+&lt;li&gt;某个驱动是否混用了线程锁和阻塞 socket&lt;/li&gt;
+&lt;li&gt;某个 import 是否发生得太早&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;因此，一旦运行时组合复杂起来，&lt;code&gt;eventlet&lt;/code&gt; 很容易比 &lt;code&gt;gevent&lt;/code&gt; 更早暴露出“不消费”这类症状。&lt;/p&gt;
+&lt;h2 id=&#34;为什么-gevent-通常更稳&#34;&gt;为什么 gevent 通常更稳
+&lt;/h2&gt;&lt;p&gt;注意，这里说的是“通常更稳”，不是“绝对不会出问题”。&lt;/p&gt;
+&lt;h3 id=&#34;1-gevent-的底层-loop-更成熟&#34;&gt;1. gevent 的底层 loop 更成熟
+&lt;/h3&gt;&lt;p&gt;gevent 的核心优势不在 Celery 适配层，而在运行时底层：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;事件循环实现成熟&lt;/li&gt;
+&lt;li&gt;I/O watcher 体系更稳定&lt;/li&gt;
+&lt;li&gt;与高并发网络场景长期磨合更多&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这也是为什么你在表面上看到的只是把：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;-P eventlet
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;换成：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;-P gevent
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;结果消费就恢复了。&lt;/p&gt;
+&lt;p&gt;真正变化的不是 Celery consumer 逻辑，而是 &lt;strong&gt;整个 green runtime 的稳定性基础&lt;/strong&gt;。&lt;/p&gt;
+&lt;h3 id=&#34;2-gevent-在-celery-中的集成更直接&#34;&gt;2. gevent 在 Celery 中的集成更直接
+&lt;/h3&gt;&lt;p&gt;从 &lt;code&gt;celery/concurrency/gevent.py&lt;/code&gt; 可以看到：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;pool 就是 &lt;code&gt;gevent.pool.Pool&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;提交就是 &lt;code&gt;spawn&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;超时控制直接接 &lt;code&gt;gevent.Timeout&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这条路径比较直接，运行期语义也相对清晰。&lt;/p&gt;
+&lt;h3 id=&#34;3-gevent-的文档和运行时观测能力更好&#34;&gt;3. gevent 的文档和运行时观测能力更好
+&lt;/h3&gt;&lt;p&gt;gevent 对 loop、watcher、DNS、signal 的文档化程度更高，遇到问题时通常更容易定位。&lt;/p&gt;
+&lt;h2 id=&#34;这里有哪些重复或容易冲突的认知&#34;&gt;这里有哪些重复或容易冲突的认知
+&lt;/h2&gt;&lt;p&gt;结合前面文章里的内容，最容易冲突的点主要有这几个。&lt;/p&gt;
+&lt;h3 id=&#34;1-eventlet-和-prefork-不是一回事&#34;&gt;1. &lt;code&gt;eventlet&lt;/code&gt; 和 &lt;code&gt;prefork&lt;/code&gt; 不是一回事
+&lt;/h3&gt;&lt;p&gt;之前如果把“eventlet 问题”和“prefork fork 子进程状态丢失”直接绑在一起，会造成概念冲突。&lt;/p&gt;
+&lt;p&gt;因为当你用：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;celery -A proj worker -P eventlet
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;时，使用的是 &lt;code&gt;eventlet&lt;/code&gt; green pool，而不是 &lt;code&gt;prefork&lt;/code&gt;。&lt;/p&gt;
+&lt;p&gt;所以“eventlet 不消费”的根因，不应该简单解释成“prefork fork 之后状态没继承”。这两条分析链路要分开。&lt;/p&gt;
+&lt;h3 id=&#34;2-libev-不在-celery-里直接出现&#34;&gt;2. libev 不在 Celery 里直接出现
+&lt;/h3&gt;&lt;p&gt;如果文章一边说“gevent 使用 libev”，一边又让读者在 Celery 代码里找 &lt;code&gt;libev&lt;/code&gt;，就容易造成困惑。&lt;/p&gt;
+&lt;p&gt;更准确的表述应该是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Celery 集成的是 gevent pool&lt;/li&gt;
+&lt;li&gt;gevent 的底层 loop 才是 libev/libuv&lt;/li&gt;
+&lt;li&gt;所以 &lt;code&gt;libev&lt;/code&gt; 的使用点在 gevent 运行时，不在 Celery 业务层&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;3-worker_pool-配置和--p-启动参数不是等价建议&#34;&gt;3. &lt;code&gt;worker_pool&lt;/code&gt; 配置和 &lt;code&gt;-P&lt;/code&gt; 启动参数不是等价建议
+&lt;/h3&gt;&lt;p&gt;从 &lt;code&gt;celery/worker/components.py&lt;/code&gt; 的提示可以看出，对 green pool 来说，&lt;code&gt;-P&lt;/code&gt; 比配置文件切换更关键，因为它关系到 patch 是否足够早。&lt;/p&gt;
+&lt;p&gt;因此这两种方式不能无差别并列成“都一样的推荐用法”。&lt;/p&gt;
+&lt;h2 id=&#34;更合理的结论&#34;&gt;更合理的结论
+&lt;/h2&gt;&lt;p&gt;如果你的现象是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;eventlet&lt;/code&gt; 下 worker 进程正常但不消费&lt;/li&gt;
+&lt;li&gt;改成 &lt;code&gt;gevent&lt;/code&gt; 后恢复正常&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;那么更合理的解释是：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Celery 的消费主链路本身大概率没问题&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;eventlet&lt;/code&gt; 运行时更容易在 patch 时机或库兼容性上出问题&lt;/li&gt;
+&lt;li&gt;某个 I/O 调用阻塞了 cooperative 调度，导致看起来像“consumer 不工作”&lt;/li&gt;
+&lt;li&gt;换成 &lt;code&gt;gevent&lt;/code&gt; 后，底层 loop 和兼容性更稳，所以症状消失&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;换句话说，这更像是：&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;相同的 Celery 上层逻辑，落在了两个稳定性不同的 green runtime 上。&lt;/strong&gt;&lt;/p&gt;
+&lt;h2 id=&#34;实践建议&#34;&gt;实践建议
+&lt;/h2&gt;&lt;h3 id=&#34;如果你遇到的是运行一天后不消费&#34;&gt;如果你遇到的是“运行一天后不消费”
+&lt;/h3&gt;&lt;p&gt;建议优先从“连接生命周期”角度排查，而不是只盯任务代码：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;检查 broker 是否存在空闲连接回收、heartbeat timeout、连接被 server 主动关闭&lt;/li&gt;
+&lt;li&gt;拉 worker 日志，重点看不消费前后是否出现 reconnect、consumer cancel、heartbeat、socket reset 相关日志&lt;/li&gt;
+&lt;li&gt;如果是 Redis，重点关注 reconnect 后是否重新恢复消费&lt;/li&gt;
+&lt;li&gt;如果是 RabbitMQ，重点观察 heartbeat、channel close、connection reset 后 worker 是否真正恢复 &lt;code&gt;drain_events&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;尝试人工断开 broker 连接，看 worker 是会自动恢复，还是会进入“进程存活但不再消费”的状态&lt;/li&gt;
+&lt;li&gt;记录恢复手段：是 broker 重连能恢复，还是必须重启 worker 才恢复&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果“断开连接后能自动恢复”与“跑一天后自然卡住”表现不同，那么问题通常就在 &lt;strong&gt;异常重连路径&lt;/strong&gt;，而不是正常消费路径。&lt;/p&gt;
+&lt;h3 id=&#34;如果继续用-gevent&#34;&gt;如果继续用 gevent
+&lt;/h3&gt;&lt;p&gt;建议：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;用 &lt;code&gt;-P gevent&lt;/code&gt; 启动，而不是晚期配置切换&lt;/li&gt;
+&lt;li&gt;明确把任务限定为 I/O 密集型&lt;/li&gt;
+&lt;li&gt;检查任务中是否存在长时间阻塞调用&lt;/li&gt;
+&lt;li&gt;配合 &lt;code&gt;-c&lt;/code&gt; 做压力测试，而不是只看单次运行&lt;/li&gt;
+&lt;li&gt;确认 &lt;code&gt;greenlet&lt;/code&gt; 版本与 Python 版本匹配&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;如果必须继续用-eventlet&#34;&gt;如果必须继续用 eventlet
+&lt;/h3&gt;&lt;p&gt;建议优先排查：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;是否通过 &lt;code&gt;-P eventlet&lt;/code&gt; 启动&lt;/li&gt;
+&lt;li&gt;是否有过早 import 导致 patch 太晚&lt;/li&gt;
+&lt;li&gt;是否存在 DNS / SSL / socket 阻塞点&lt;/li&gt;
+&lt;li&gt;是否用了不适合 greenlet 的第三方库&lt;/li&gt;
+&lt;li&gt;是否存在某些任务根本没有主动让出控制权&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;对于 eventlet，实战里经常还会加：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;nv&#34;&gt;EVENTLET_NO_GREENDNS&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;yes
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这不是万能药，但在 DNS 相关问题上经常值得一试。&lt;/p&gt;
+&lt;h2 id=&#34;总结&#34;&gt;总结
+&lt;/h2&gt;&lt;p&gt;从源码上看，Celery 对 &lt;code&gt;eventlet&lt;/code&gt; 和 &lt;code&gt;gevent&lt;/code&gt; 的适配层其实都不厚，核心区别主要来自两者底层运行时：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;eventlet&lt;/code&gt;：更依赖 monkey patch 时机，兼容性更脆弱&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;gevent&lt;/code&gt;：底层 loop 更成熟，通常更稳定&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;因此，“eventlet 进程正常但不消费，而 gevent 正常”的现象，更像是 &lt;strong&gt;运行时协作调度失效&lt;/strong&gt;，而不是 &lt;strong&gt;Celery 消费代码本身失效&lt;/strong&gt;。&lt;/p&gt;
+&lt;p&gt;如果只用一句话总结：&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Celery 上层逻辑没变，变的是 green runtime 的稳定性。&lt;/strong&gt;&lt;/p&gt;
+&lt;h2 id=&#34;参考&#34;&gt;参考
+&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;Celery &lt;code&gt;eventlet&lt;/code&gt; pool：&lt;code&gt;celery/concurrency/eventlet.py&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;Celery &lt;code&gt;gevent&lt;/code&gt; pool：&lt;code&gt;celery/concurrency/gevent.py&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;Worker bootsteps：&lt;code&gt;celery/worker/components.py&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;Celery gevent 文档：&lt;code&gt;https://docs.celeryq.dev/en/v5.5.3/userguide/concurrency/gevent.html&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;gevent 文档首页：&lt;code&gt;https://www.gevent.org/&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;gevent loop 实现说明：&lt;code&gt;https://www.gevent.org/loop_impls.html&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;gevent hub 文档：&lt;code&gt;https://www.gevent.org/api/gevent.hub.html&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;Celery 关于 eventlet 风险讨论：&lt;code&gt;https://github.com/celery/celery/issues/9257&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+</description>
+        </item>
+        <item>
+        <title>流式返回协议对比</title>
+        <link>https://Agsol701.github.io/p/%E6%B5%81%E5%BC%8F%E8%BF%94%E5%9B%9E%E5%8D%8F%E8%AE%AE%E5%AF%B9%E6%AF%94/</link>
+        <pubDate>Fri, 20 Mar 2026 00:00:00 +0000</pubDate>
+        
+        <guid>https://Agsol701.github.io/p/%E6%B5%81%E5%BC%8F%E8%BF%94%E5%9B%9E%E5%8D%8F%E8%AE%AE%E5%AF%B9%E6%AF%94/</guid>
+        <description>&lt;h1 id=&#34;流式返回协议对比&#34;&gt;流式返回协议对比
+&lt;/h1&gt;&lt;h2 id=&#34;概述&#34;&gt;概述
+&lt;/h2&gt;&lt;p&gt;流式返回（Streaming Response）是指服务端将数据分块逐步发送给客户端，而不是等待全部处理完成后一次性返回。这种方式特别适合长耗时任务、实时数据推送等场景。&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;常见流式协议&#34;&gt;常见流式协议
+&lt;/h2&gt;&lt;h3 id=&#34;1-sse-server-sent-events&#34;&gt;1. SSE (Server-Sent Events)
+&lt;/h3&gt;&lt;h4 id=&#34;基本信息&#34;&gt;基本信息
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;协议类型&lt;/strong&gt;：基于 HTTP 的单向推送协议&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;标准&lt;/strong&gt;：W3C HTML5 标准&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;数据格式&lt;/strong&gt;：纯文本，每行以 &lt;code&gt;data:&lt;/code&gt; 开头&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;传输方式&lt;/strong&gt;：长连接&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;请求示例&#34;&gt;请求示例
+&lt;/h4&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-http&#34; data-lang=&#34;http&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;nf&#34;&gt;GET&lt;/span&gt; &lt;span class=&#34;nn&#34;&gt;/stream&lt;/span&gt; &lt;span class=&#34;kr&#34;&gt;HTTP&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;/&lt;/span&gt;&lt;span class=&#34;m&#34;&gt;1.1&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;Host&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;l&#34;&gt;example.com&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;Accept&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;l&#34;&gt;text/event-stream&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;Cache-Control&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;l&#34;&gt;no-cache&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h4 id=&#34;响应示例&#34;&gt;响应示例
+&lt;/h4&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;8
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-http&#34; data-lang=&#34;http&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;kr&#34;&gt;HTTP&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;/&lt;/span&gt;&lt;span class=&#34;m&#34;&gt;1.1&lt;/span&gt; &lt;span class=&#34;m&#34;&gt;200&lt;/span&gt; &lt;span class=&#34;ne&#34;&gt;OK&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;Content-Type&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;l&#34;&gt;text/event-stream&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;Cache-Control&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;l&#34;&gt;no-cache&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;Connection&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;l&#34;&gt;keep-alive&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;data: {&amp;#34;message&amp;#34;: &amp;#34;Hello&amp;#34;}
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;data: {&amp;#34;message&amp;#34;: &amp;#34;World&amp;#34;}
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;data: {&amp;#34;message&amp;#34;: &amp;#34;!&amp;#34;}
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h4 id=&#34;特点&#34;&gt;特点
+&lt;/h4&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;特性&lt;/th&gt;
+          &lt;th&gt;说明&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;方向&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;服务端 → 客户端（单向）&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;重连&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;自动重连，支持 &lt;code&gt;Last-Event-ID&lt;/code&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;编码&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;UTF-8 纯文本&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;事件类型&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;支持自定义事件类型 &lt;code&gt;event:&lt;/code&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;浏览器支持&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;原生支持（除 IE）&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h4 id=&#34;优点&#34;&gt;优点
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;实现简单，基于标准 HTTP&lt;/li&gt;
+&lt;li&gt;浏览器原生支持，无需额外库&lt;/li&gt;
+&lt;li&gt;自动重连机制&lt;/li&gt;
+&lt;li&gt;文本格式，易于调试&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;缺点&#34;&gt;缺点
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;单向通信，客户端无法主动发送数据&lt;/li&gt;
+&lt;li&gt;只支持文本，二进制数据需编码&lt;/li&gt;
+&lt;li&gt;请求大小限制（GET 请求）&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;适用场景&#34;&gt;适用场景
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;实时通知、消息推送&lt;/li&gt;
+&lt;li&gt;聊天应用（服务端推送）&lt;/li&gt;
+&lt;li&gt;实时数据更新（股票、日志）&lt;/li&gt;
+&lt;li&gt;AI 对话流式输出&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;2-websocket&#34;&gt;2. WebSocket
+&lt;/h3&gt;&lt;h4 id=&#34;基本信息-1&#34;&gt;基本信息
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;协议类型&lt;/strong&gt;：全双工通信协议&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;标准&lt;/strong&gt;：RFC 6455&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;数据格式&lt;/strong&gt;：二进制或文本&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;传输方式&lt;/strong&gt;：TCP 长连接&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;握手示例&#34;&gt;握手示例
+&lt;/h4&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-http&#34; data-lang=&#34;http&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;nf&#34;&gt;GET&lt;/span&gt; &lt;span class=&#34;nn&#34;&gt;/chat&lt;/span&gt; &lt;span class=&#34;kr&#34;&gt;HTTP&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;/&lt;/span&gt;&lt;span class=&#34;m&#34;&gt;1.1&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;Host&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;l&#34;&gt;example.com&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;Upgrade&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;l&#34;&gt;websocket&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;Connection&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;l&#34;&gt;Upgrade&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;Sec-WebSocket-Key&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;l&#34;&gt;x3JJHMbDL1EzLkh9GBhXDw==&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;Sec-WebSocket-Version&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;l&#34;&gt;13&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h4 id=&#34;帧格式&#34;&gt;帧格式
+&lt;/h4&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;15
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;16
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;17
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;18
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-gdscript3&#34; data-lang=&#34;gdscript3&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;mi&#34;&gt;0&lt;/span&gt;                   &lt;span class=&#34;mi&#34;&gt;1&lt;/span&gt;                   &lt;span class=&#34;mi&#34;&gt;2&lt;/span&gt;                   &lt;span class=&#34;mi&#34;&gt;3&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;mi&#34;&gt;0&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;1&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;2&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;3&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;4&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;5&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;6&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;7&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;8&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;9&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;0&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;1&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;2&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;3&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;4&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;5&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;6&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;7&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;8&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;9&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;0&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;1&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;2&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;3&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;4&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;5&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;6&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;7&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;8&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;9&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;0&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;1&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;o&#34;&gt;+-+-+-+-+-------+-+-------------+-------------------------------+&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;F&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;R&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;R&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;R&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;opcode&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;M&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Payload&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;len&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;    &lt;span class=&#34;n&#34;&gt;Extended&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;payload&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;length&lt;/span&gt;    &lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;I&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;S&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;S&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;S&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;  &lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;4&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;  &lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;A&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;     &lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;7&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;     &lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;             &lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;16&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;/&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;64&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;           &lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;N&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;V&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;V&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;V&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;       &lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;S&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;             &lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;   &lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;k&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;payload&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;len&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;==&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;126&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;/&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;127&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;   &lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;1&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;2&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;3&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;       &lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;K&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;             &lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;                               &lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;o&#34;&gt;+-+-+-+-+-------+-+-------------+&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;+&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;     &lt;span class=&#34;n&#34;&gt;Extended&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;payload&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;length&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;continued&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;k&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;payload&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;len&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;==&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;127&lt;/span&gt;  &lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;o&#34;&gt;+&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;+-------------------------------+&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;                               &lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;Masking&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;-&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;key&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;k&#34;&gt;if&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;MASK&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;set&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;to&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;1&lt;/span&gt;  &lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;o&#34;&gt;+-------------------------------+-------------------------------+&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Masking&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;-&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;key&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;continued&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;       &lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;           &lt;span class=&#34;n&#34;&gt;Payload&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Data&lt;/span&gt;         &lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;o&#34;&gt;+--------------------------------&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;+&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;                     &lt;span class=&#34;n&#34;&gt;Payload&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Data&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;continued&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;...&lt;/span&gt;                &lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;o&#34;&gt;+&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;+&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;                     &lt;span class=&#34;n&#34;&gt;Payload&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Data&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;continued&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;...&lt;/span&gt;                &lt;span class=&#34;o&#34;&gt;|&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;o&#34;&gt;+---------------------------------------------------------------+&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h4 id=&#34;特点-1&#34;&gt;特点
+&lt;/h4&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;特性&lt;/th&gt;
+          &lt;th&gt;说明&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;方向&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;双向全双工&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;连接&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;单一 TCP 连接&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;开销&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;低（头部仅 2-14 字节）&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;数据类型&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;文本/二进制&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;子协议&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;支持 STOMP、MQTT 等&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h4 id=&#34;优点-1&#34;&gt;优点
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;双向实时通信&lt;/li&gt;
+&lt;li&gt;低延迟、低开销&lt;/li&gt;
+&lt;li&gt;支持二进制数据&lt;/li&gt;
+&lt;li&gt;可扩展子协议&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;缺点-1&#34;&gt;缺点
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;需要维护连接状态&lt;/li&gt;
+&lt;li&gt;需要处理心跳和重连&lt;/li&gt;
+&lt;li&gt;代理服务器可能不支持&lt;/li&gt;
+&lt;li&gt;实现相对复杂&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;适用场景-1&#34;&gt;适用场景
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;实时聊天应用&lt;/li&gt;
+&lt;li&gt;在线协作（多人编辑）&lt;/li&gt;
+&lt;li&gt;实时游戏&lt;/li&gt;
+&lt;li&gt;股票/交易行情推送&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;3-http-chunked-transfer-encoding&#34;&gt;3. HTTP Chunked Transfer Encoding
+&lt;/h3&gt;&lt;h4 id=&#34;基本信息-2&#34;&gt;基本信息
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;协议类型&lt;/strong&gt;：HTTP/1.1 传输编码&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;标准&lt;/strong&gt;：RFC 7230&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;数据格式&lt;/strong&gt;：分块传输&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;传输方式&lt;/strong&gt;：HTTP 长连接&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;响应示例-1&#34;&gt;响应示例
+&lt;/h4&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-http&#34; data-lang=&#34;http&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;kr&#34;&gt;HTTP&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;/&lt;/span&gt;&lt;span class=&#34;m&#34;&gt;1.1&lt;/span&gt; &lt;span class=&#34;m&#34;&gt;200&lt;/span&gt; &lt;span class=&#34;ne&#34;&gt;OK&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;Content-Type&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;l&#34;&gt;application/json&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;Transfer-Encoding&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;l&#34;&gt;chunked&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;mi&#34;&gt;4&lt;/span&gt;&lt;span class=&#34;err&#34;&gt;\r\n&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;err&#34;&gt;Hell\r\n&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;mi&#34;&gt;6&lt;/span&gt;&lt;span class=&#34;err&#34;&gt;\r\n&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;err&#34;&gt;o&lt;/span&gt; &lt;span class=&#34;err&#34;&gt;Worl\r\n&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;mi&#34;&gt;2&lt;/span&gt;&lt;span class=&#34;err&#34;&gt;\r\n&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;err&#34;&gt;d!\r\n&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;mi&#34;&gt;0&lt;/span&gt;&lt;span class=&#34;err&#34;&gt;\r\n&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;err&#34;&gt;\r\n&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h4 id=&#34;特点-2&#34;&gt;特点
+&lt;/h4&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;特性&lt;/th&gt;
+          &lt;th&gt;说明&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;方向&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;服务端 → 客户端&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;分块&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;每块前标注大小（十六进制）&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;结束&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;0 长度块表示结束&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;兼容性&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;HTTP/1.1 标准&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h4 id=&#34;优点-2&#34;&gt;优点
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;标准协议，广泛支持&lt;/li&gt;
+&lt;li&gt;无需预先知道内容长度&lt;/li&gt;
+&lt;li&gt;可用于大文件传输&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;缺点-2&#34;&gt;缺点
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;单向传输&lt;/li&gt;
+&lt;li&gt;客户端断开后服务端可能继续处理&lt;/li&gt;
+&lt;li&gt;格式相对复杂&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;适用场景-2&#34;&gt;适用场景
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;大文件下载&lt;/li&gt;
+&lt;li&gt;动态生成内容&lt;/li&gt;
+&lt;li&gt;API 流式响应（如 OpenAI API）&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;4-grpc-streaming&#34;&gt;4. gRPC Streaming
+&lt;/h3&gt;&lt;h4 id=&#34;基本信息-3&#34;&gt;基本信息
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;协议类型&lt;/strong&gt;：基于 HTTP/2 的 RPC 框架&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;标准&lt;/strong&gt;：gRPC Protocol&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;数据格式&lt;/strong&gt;：Protocol Buffers&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;传输方式&lt;/strong&gt;：HTTP/2 多路复用&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;proto-定义&#34;&gt;Proto 定义
+&lt;/h4&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-protobuf&#34; data-lang=&#34;protobuf&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;kd&#34;&gt;service&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;ChatService&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;&lt;span class=&#34;err&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;err&#34;&gt;&lt;/span&gt;  &lt;span class=&#34;c1&#34;&gt;// 客户端流式
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;&lt;/span&gt;  &lt;span class=&#34;k&#34;&gt;rpc&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;SendMessage&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;stream&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Message&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;k&#34;&gt;returns&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;Response&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;);&lt;/span&gt;&lt;span class=&#34;err&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;err&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;err&#34;&gt;&lt;/span&gt;  &lt;span class=&#34;c1&#34;&gt;// 服务端流式
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;&lt;/span&gt;  &lt;span class=&#34;k&#34;&gt;rpc&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;GetMessages&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;Request&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;k&#34;&gt;returns&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;stream&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Message&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;);&lt;/span&gt;&lt;span class=&#34;err&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;err&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;err&#34;&gt;&lt;/span&gt;  &lt;span class=&#34;c1&#34;&gt;// 双向流式
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;c1&#34;&gt;&lt;/span&gt;  &lt;span class=&#34;k&#34;&gt;rpc&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Chat&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;stream&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Message&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;k&#34;&gt;returns&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;stream&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Message&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;);&lt;/span&gt;&lt;span class=&#34;err&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;err&#34;&gt;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;&lt;span class=&#34;err&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h4 id=&#34;特点-3&#34;&gt;特点
+&lt;/h4&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;特性&lt;/th&gt;
+          &lt;th&gt;说明&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;方向&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;单向/双向流式&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;协议&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;HTTP/2&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;序列化&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;Protocol Buffers&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;多路复用&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;单连接多流&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h4 id=&#34;优点-3&#34;&gt;优点
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;高性能（二进制、HTTP/2）&lt;/li&gt;
+&lt;li&gt;强类型（IDL 定义）&lt;/li&gt;
+&lt;li&gt;支持多种流式模式&lt;/li&gt;
+&lt;li&gt;内置负载均衡、认证&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;缺点-3&#34;&gt;缺点
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;学习曲线较陡&lt;/li&gt;
+&lt;li&gt;需要代码生成&lt;/li&gt;
+&lt;li&gt;调试相对困难&lt;/li&gt;
+&lt;li&gt;浏览器支持需 gRPC-Web&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;适用场景-3&#34;&gt;适用场景
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;微服务间通信&lt;/li&gt;
+&lt;li&gt;高性能 API&lt;/li&gt;
+&lt;li&gt;需要强类型的流式接口&lt;/li&gt;
+&lt;li&gt;多语言环境&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;5-mqtt&#34;&gt;5. MQTT
+&lt;/h3&gt;&lt;h4 id=&#34;基本信息-4&#34;&gt;基本信息
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;协议类型&lt;/strong&gt;：发布/订阅消息协议&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;标准&lt;/strong&gt;：ISO/IEC 20922 (MQTT 3.1.1)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;数据格式&lt;/strong&gt;：二进制&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;传输方式&lt;/strong&gt;：TCP&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;消息格式&#34;&gt;消息格式
+&lt;/h4&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-gdscript3&#34; data-lang=&#34;gdscript3&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;Fixed&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Header&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;1&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;-&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;2&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;bytes&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;err&#34;&gt;└─&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Message&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Type&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;+&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Flags&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;Variable&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Header&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;0&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;-&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;4&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;bytes&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;err&#34;&gt;└─&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Topic&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Name&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;/&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Packet&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Identifier&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;Payload&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;0&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;bytes&lt;/span&gt; &lt;span class=&#34;ow&#34;&gt;or&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;more&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;err&#34;&gt;└─&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Application&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Data&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h4 id=&#34;特点-4&#34;&gt;特点
+&lt;/h4&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;特性&lt;/th&gt;
+          &lt;th&gt;说明&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;模式&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;发布/订阅&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;QoS&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;3 级（0/1/2）&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;开销&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;极小（最小 2 字节）&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;连接&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;持久会话&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h4 id=&#34;优点-4&#34;&gt;优点
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;超低开销&lt;/li&gt;
+&lt;li&gt;QoS 保证&lt;/li&gt;
+&lt;li&gt;离线消息支持&lt;/li&gt;
+&lt;li&gt;适合 IoT 场景&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;缺点-4&#34;&gt;缺点
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;非标准 HTTP&lt;/li&gt;
+&lt;li&gt;需要代理服务器&lt;/li&gt;
+&lt;li&gt;不适合浏览器直接使用&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;适用场景-4&#34;&gt;适用场景
+&lt;/h4&gt;&lt;ul&gt;
+&lt;li&gt;IoT 设备通信&lt;/li&gt;
+&lt;li&gt;传感器数据采集&lt;/li&gt;
+&lt;li&gt;实时监控&lt;/li&gt;
+&lt;li&gt;消息队列&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;6-server-sent-events-sse---补充&#34;&gt;6. Server-Sent Events (SSE) - 补充
+&lt;/h3&gt;&lt;h4 id=&#34;python-flask-实现&#34;&gt;Python Flask 实现
+&lt;/h4&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;kn&#34;&gt;from&lt;/span&gt; &lt;span class=&#34;nn&#34;&gt;flask&lt;/span&gt; &lt;span class=&#34;kn&#34;&gt;import&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Flask&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Response&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;n&#34;&gt;app&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Flask&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;vm&#34;&gt;__name__&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;nd&#34;&gt;@app.route&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;s1&#34;&gt;&amp;#39;/stream&amp;#39;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;nf&#34;&gt;stream&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;():&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;k&#34;&gt;def&lt;/span&gt; &lt;span class=&#34;nf&#34;&gt;generate&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;():&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        &lt;span class=&#34;k&#34;&gt;for&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;i&lt;/span&gt; &lt;span class=&#34;ow&#34;&gt;in&lt;/span&gt; &lt;span class=&#34;nb&#34;&gt;range&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;10&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;):&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;            &lt;span class=&#34;k&#34;&gt;yield&lt;/span&gt; &lt;span class=&#34;sa&#34;&gt;f&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;data: &lt;/span&gt;&lt;span class=&#34;si&#34;&gt;{&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;i&lt;/span&gt;&lt;span class=&#34;si&#34;&gt;}&lt;/span&gt;&lt;span class=&#34;se&#34;&gt;\n\n&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;            &lt;span class=&#34;n&#34;&gt;time&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;sleep&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;mi&#34;&gt;1&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;k&#34;&gt;return&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;Response&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;generate&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(),&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;mimetype&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;=&lt;/span&gt;&lt;span class=&#34;s1&#34;&gt;&amp;#39;text/event-stream&amp;#39;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h4 id=&#34;javascript-客户端&#34;&gt;JavaScript 客户端
+&lt;/h4&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;9
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-javascript&#34; data-lang=&#34;javascript&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;kr&#34;&gt;const&lt;/span&gt; &lt;span class=&#34;nx&#34;&gt;eventSource&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;k&#34;&gt;new&lt;/span&gt; &lt;span class=&#34;nx&#34;&gt;EventSource&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;s1&#34;&gt;&amp;#39;/stream&amp;#39;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;);&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;nx&#34;&gt;eventSource&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;nx&#34;&gt;onmessage&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;nx&#34;&gt;event&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;=&amp;gt;&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;nx&#34;&gt;console&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;nx&#34;&gt;log&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;nx&#34;&gt;event&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;nx&#34;&gt;data&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;);&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;};&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;nx&#34;&gt;eventSource&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;nx&#34;&gt;onerror&lt;/span&gt; &lt;span class=&#34;o&#34;&gt;=&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;nx&#34;&gt;error&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;=&amp;gt;&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;nx&#34;&gt;console&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;nx&#34;&gt;error&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;s1&#34;&gt;&amp;#39;Connection error:&amp;#39;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nx&#34;&gt;error&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;);&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;};&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;hr&gt;
+&lt;h2 id=&#34;协议对比总结&#34;&gt;协议对比总结
+&lt;/h2&gt;&lt;h3 id=&#34;对比表&#34;&gt;对比表
+&lt;/h3&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;协议&lt;/th&gt;
+          &lt;th&gt;方向&lt;/th&gt;
+          &lt;th&gt;协议层&lt;/th&gt;
+          &lt;th&gt;数据格式&lt;/th&gt;
+          &lt;th&gt;浏览器支持&lt;/th&gt;
+          &lt;th&gt;复杂度&lt;/th&gt;
+          &lt;th&gt;适用场景&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;SSE&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;单向&lt;/td&gt;
+          &lt;td&gt;HTTP&lt;/td&gt;
+          &lt;td&gt;文本&lt;/td&gt;
+          &lt;td&gt;✅ 原生&lt;/td&gt;
+          &lt;td&gt;⭐ 低&lt;/td&gt;
+          &lt;td&gt;实时推送、AI 对话&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;WebSocket&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;双向&lt;/td&gt;
+          &lt;td&gt;TCP&lt;/td&gt;
+          &lt;td&gt;文本/二进制&lt;/td&gt;
+          &lt;td&gt;✅ 原生&lt;/td&gt;
+          &lt;td&gt;⭐⭐⭐ 高&lt;/td&gt;
+          &lt;td&gt;实时聊天、协作&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;Chunked&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;单向&lt;/td&gt;
+          &lt;td&gt;HTTP&lt;/td&gt;
+          &lt;td&gt;任意&lt;/td&gt;
+          &lt;td&gt;✅ 原生&lt;/td&gt;
+          &lt;td&gt;⭐⭐ 中&lt;/td&gt;
+          &lt;td&gt;大文件、API 流式&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;gRPC&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;单向/双向&lt;/td&gt;
+          &lt;td&gt;HTTP/2&lt;/td&gt;
+          &lt;td&gt;Protobuf&lt;/td&gt;
+          &lt;td&gt;❌ 需 gRPC-Web&lt;/td&gt;
+          &lt;td&gt;⭐⭐⭐⭐ 很高&lt;/td&gt;
+          &lt;td&gt;微服务、高性能 API&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;MQTT&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;发布/订阅&lt;/td&gt;
+          &lt;td&gt;TCP&lt;/td&gt;
+          &lt;td&gt;二进制&lt;/td&gt;
+          &lt;td&gt;❌ 需 MQTT.js&lt;/td&gt;
+          &lt;td&gt;⭐⭐ 中&lt;/td&gt;
+          &lt;td&gt;IoT、传感器&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h3 id=&#34;选择建议&#34;&gt;选择建议
+&lt;/h3&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;15
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;16
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;17
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;                    需要双向通信？
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;                    ┌────┴────┐
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;                   是         否
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;                   │          │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;              WebSocket   ┌───┴───┐
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;                   │    需要高性能/强类型？
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;                   │    ┌───┴───┐
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;                   │   是      否
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;                   │   │        │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;                gRPC  SSE   Chunked
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;                       │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;                   浏览器原生？
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;                       │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;                  ┌────┴────┐
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;                 是        否
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;                 │         │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;               SSE      Chunked
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;hr&gt;
+&lt;h2 id=&#34;客户端断开行为对比&#34;&gt;客户端断开行为对比
+&lt;/h2&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;协议&lt;/th&gt;
+          &lt;th&gt;客户端断开后服务端行为&lt;/th&gt;
+          &lt;th&gt;检测时机&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;SSE&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;立即终止（下次 yield 失败）&lt;/td&gt;
+          &lt;td&gt;写入时&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;WebSocket&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;立即终止（连接关闭）&lt;/td&gt;
+          &lt;td&gt;写入/读取时&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;Chunked&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;立即终止（下次 chunk 失败）&lt;/td&gt;
+          &lt;td&gt;写入时&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;gRPC&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;立即终止（流关闭）&lt;/td&gt;
+          &lt;td&gt;写入/读取时&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;MQTT&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;会话保留，离线消息存储&lt;/td&gt;
+          &lt;td&gt;连接断开时&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;最佳实践&#34;&gt;最佳实践
+&lt;/h2&gt;&lt;h3 id=&#34;1-连接管理&#34;&gt;1. 连接管理
+&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;实现心跳机制检测连接状态&lt;/li&gt;
+&lt;li&gt;处理异常断开和自动重连&lt;/li&gt;
+&lt;li&gt;设置合理的超时时间&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;2-错误处理&#34;&gt;2. 错误处理
+&lt;/h3&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-python&#34; data-lang=&#34;python&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;try&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;k&#34;&gt;for&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;data&lt;/span&gt; &lt;span class=&#34;ow&#34;&gt;in&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;stream_generator&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;():&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        &lt;span class=&#34;k&#34;&gt;yield&lt;/span&gt; &lt;span class=&#34;n&#34;&gt;data&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;except&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;ne&#34;&gt;ConnectionError&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;ne&#34;&gt;BrokenPipeError&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;):&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;n&#34;&gt;logger&lt;/span&gt;&lt;span class=&#34;o&#34;&gt;.&lt;/span&gt;&lt;span class=&#34;n&#34;&gt;info&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;(&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;Client disconnected&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;c1&#34;&gt;# 清理资源&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h3 id=&#34;3-性能优化&#34;&gt;3. 性能优化
+&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;使用缓冲区减少写入次数&lt;/li&gt;
+&lt;li&gt;控制数据块大小&lt;/li&gt;
+&lt;li&gt;考虑压缩（如 gzip）&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;4-安全性&#34;&gt;4. 安全性
+&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;使用 HTTPS/WSS&lt;/li&gt;
+&lt;li&gt;实现认证和授权&lt;/li&gt;
+&lt;li&gt;防止 DDoS 攻击&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;参考资源&#34;&gt;参考资源
+&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://html.spec.whatwg.org/multipage/server-sent-events.html&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;SSE 规范&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://tools.ietf.org/html/rfc6455&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;WebSocket 规范&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://grpc.io/docs/&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;gRPC 文档&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;http://mqtt.org/&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;MQTT 规范&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://tools.ietf.org/html/rfc7230&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;HTTP/1.1 规范&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;核心概念解释&#34;&gt;核心概念解释
+&lt;/h2&gt;&lt;h3 id=&#34;长连接-vs-短连接&#34;&gt;长连接 vs 短连接
+&lt;/h3&gt;&lt;h4 id=&#34;短连接short-connection&#34;&gt;短连接（Short Connection）
+&lt;/h4&gt;&lt;p&gt;&lt;strong&gt;定义&lt;/strong&gt;：每次通信都需要建立新的连接，通信完成后立即关闭连接。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;工作流程&lt;/strong&gt;：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;客户端              服务端
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │                   │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │ ── TCP 握手 ────→ │  建立连接
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │                   │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │ ── 发送请求 ────→ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │ ←── 返回响应 ──── │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │                   │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │ ── 关闭连接 ────→ │  连接断开
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │                   │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │ ── TCP 握手 ────→ │  下次请求重新建立
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │ ── 发送请求 ────→ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │ ←── 返回响应 ──── │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │ ── 关闭连接 ────→ │
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;&lt;strong&gt;特点&lt;/strong&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;每次请求都需要完整的 TCP 三次握手&lt;/li&gt;
+&lt;li&gt;请求完成后立即断开连接&lt;/li&gt;
+&lt;li&gt;服务端不需要维护连接状态&lt;/li&gt;
+&lt;li&gt;并发连接数可能较多&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;优点&lt;/strong&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;实现简单&lt;/li&gt;
+&lt;li&gt;无需维护连接状态&lt;/li&gt;
+&lt;li&gt;服务器资源占用可控&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;缺点&lt;/strong&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;频繁建立/断开连接，开销大&lt;/li&gt;
+&lt;li&gt;无法实现实时推送&lt;/li&gt;
+&lt;li&gt;性能较差（每次都有握手延迟）&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;适用场景&lt;/strong&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;传统 HTTP/1.0 请求&lt;/li&gt;
+&lt;li&gt;请求频率低的应用&lt;/li&gt;
+&lt;li&gt;不需要实时性的场景&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;h4 id=&#34;长连接long-connection--keep-alive&#34;&gt;长连接（Long Connection / Keep-Alive）
+&lt;/h4&gt;&lt;p&gt;&lt;strong&gt;定义&lt;/strong&gt;：建立连接后，保持连接状态，可以多次发送请求和接收响应。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;工作流程&lt;/strong&gt;：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;客户端              服务端
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │                   │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │ ── TCP 握手 ────→ │  建立连接（只一次）
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │                   │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │ ── 发送请求1 ───→ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │ ←── 返回响应1 ─── │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │                   │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │ ── 发送请求2 ───→ │  复用同一连接
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │ ←── 返回响应2 ─── │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │                   │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │ ── 发送请求3 ───→ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │ ←── 返回响应3 ─── │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │                   │
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  │ ── 关闭连接 ────→ │  连接断开
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;&lt;strong&gt;特点&lt;/strong&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;一次建立连接，多次复用&lt;/li&gt;
+&lt;li&gt;通过 &lt;code&gt;Connection: keep-alive&lt;/code&gt; 头部标识&lt;/li&gt;
+&lt;li&gt;可以设置超时时间&lt;/li&gt;
+&lt;li&gt;减少握手开销&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;优点&lt;/strong&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;减少握手开销，性能更好&lt;/li&gt;
+&lt;li&gt;降低延迟&lt;/li&gt;
+&lt;li&gt;支持实时推送&lt;/li&gt;
+&lt;li&gt;节省服务器资源&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;缺点&lt;/strong&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;需要维护连接状态&lt;/li&gt;
+&lt;li&gt;可能占用较多服务器连接资源&lt;/li&gt;
+&lt;li&gt;需要处理连接超时和重连&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;适用场景&lt;/strong&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;HTTP/1.1 Keep-Alive&lt;/li&gt;
+&lt;li&gt;WebSocket 连接&lt;/li&gt;
+&lt;li&gt;SSE 流式推送&lt;/li&gt;
+&lt;li&gt;数据库连接池&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;h4 id=&#34;对比表-1&#34;&gt;对比表
+&lt;/h4&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;特性&lt;/th&gt;
+          &lt;th&gt;短连接&lt;/th&gt;
+          &lt;th&gt;长连接&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;连接建立&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;每次请求都建立&lt;/td&gt;
+          &lt;td&gt;一次建立，多次复用&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;连接关闭&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;每次响应后关闭&lt;/td&gt;
+          &lt;td&gt;超时或主动关闭&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;握手开销&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;高（每次都有）&lt;/td&gt;
+          &lt;td&gt;低（只需一次）&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;延迟&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;高（每次握手）&lt;/td&gt;
+          &lt;td&gt;低&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;服务器压力&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;并发连接数多&lt;/td&gt;
+          &lt;td&gt;连接数少，但占用时间长&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;实时性&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;差&lt;/td&gt;
+          &lt;td&gt;好&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;状态管理&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;无状态&lt;/td&gt;
+          &lt;td&gt;需维护连接状态&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;典型协议&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;HTTP/1.0&lt;/td&gt;
+          &lt;td&gt;HTTP/1.1、WebSocket、SSE&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;全双工-vs-半双工-vs-单工&#34;&gt;全双工 vs 半双工 vs 单工
+&lt;/h3&gt;&lt;h4 id=&#34;单工simplex&#34;&gt;单工（Simplex）
+&lt;/h4&gt;&lt;p&gt;&lt;strong&gt;定义&lt;/strong&gt;：数据只能沿一个方向传输，不能反向传输。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;示意图&lt;/strong&gt;：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;发送端 ───────────────→ 接收端
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;&lt;strong&gt;特点&lt;/strong&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;单向通信&lt;/li&gt;
+&lt;li&gt;发送方只能发送，接收方只能接收&lt;/li&gt;
+&lt;li&gt;类似于广播电台&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;例子&lt;/strong&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;广播电台&lt;/li&gt;
+&lt;li&gt;电视信号传输&lt;/li&gt;
+&lt;li&gt;键盘到计算机&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;h4 id=&#34;半双工half-duplex&#34;&gt;半双工（Half-Duplex）
+&lt;/h4&gt;&lt;p&gt;&lt;strong&gt;定义&lt;/strong&gt;：数据可以双向传输，但不能同时进行，同一时间只能有一个方向。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;示意图&lt;/strong&gt;：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;发送端 ←──────────────→ 接收端
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;   (同一时间只能单向)
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;&lt;strong&gt;特点&lt;/strong&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;双向通信&lt;/li&gt;
+&lt;li&gt;但不能同时收发&lt;/li&gt;
+&lt;li&gt;需要切换方向&lt;/li&gt;
+&lt;li&gt;类似于对讲机&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;例子&lt;/strong&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;对讲机&lt;/li&gt;
+&lt;li&gt;早期以太网（共享介质）&lt;/li&gt;
+&lt;li&gt;无线电通信&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;h4 id=&#34;全双工full-duplex&#34;&gt;全双工（Full-Duplex）
+&lt;/h4&gt;&lt;p&gt;&lt;strong&gt;定义&lt;/strong&gt;：数据可以同时双向传输。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;示意图&lt;/strong&gt;：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;发送端 ←──────────────→ 接收端
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;   (可以同时双向传输)
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;&lt;strong&gt;特点&lt;/strong&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;双向同时通信&lt;/li&gt;
+&lt;li&gt;无需切换方向&lt;/li&gt;
+&lt;li&gt;效率最高&lt;/li&gt;
+&lt;li&gt;类似于电话&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;例子&lt;/strong&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;电话通话&lt;/li&gt;
+&lt;li&gt;现代以太网&lt;/li&gt;
+&lt;li&gt;WebSocket&lt;/li&gt;
+&lt;li&gt;gRPC&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;h4 id=&#34;对比表-2&#34;&gt;对比表
+&lt;/h4&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;特性&lt;/th&gt;
+          &lt;th&gt;单工&lt;/th&gt;
+          &lt;th&gt;半双工&lt;/th&gt;
+          &lt;th&gt;全双工&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;传输方向&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;单向&lt;/td&gt;
+          &lt;td&gt;双向（分时）&lt;/td&gt;
+          &lt;td&gt;双向（同时）&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;同时收发&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;❌&lt;/td&gt;
+          &lt;td&gt;❌&lt;/td&gt;
+          &lt;td&gt;✅&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;效率&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;低&lt;/td&gt;
+          &lt;td&gt;中&lt;/td&gt;
+          &lt;td&gt;高&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;复杂度&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;低&lt;/td&gt;
+          &lt;td&gt;中&lt;/td&gt;
+          &lt;td&gt;高&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;典型应用&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;广播、电视&lt;/td&gt;
+          &lt;td&gt;对讲机&lt;/td&gt;
+          &lt;td&gt;电话、WebSocket&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;协议特性对照&#34;&gt;协议特性对照
+&lt;/h3&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;协议&lt;/th&gt;
+          &lt;th&gt;连接类型&lt;/th&gt;
+          &lt;th&gt;通信模式&lt;/th&gt;
+          &lt;th&gt;说明&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;HTTP/1.0&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;短连接&lt;/td&gt;
+          &lt;td&gt;单工&lt;/td&gt;
+          &lt;td&gt;每次请求新连接&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;HTTP/1.1&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;长连接（Keep-Alive）&lt;/td&gt;
+          &lt;td&gt;单工&lt;/td&gt;
+          &lt;td&gt;复用连接，但仍是请求-响应模式&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;SSE&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;长连接&lt;/td&gt;
+          &lt;td&gt;单工&lt;/td&gt;
+          &lt;td&gt;服务端持续推送&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;WebSocket&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;长连接&lt;/td&gt;
+          &lt;td&gt;全双工&lt;/td&gt;
+          &lt;td&gt;双向实时通信&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;gRPC&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;长连接&lt;/td&gt;
+          &lt;td&gt;全双工&lt;/td&gt;
+          &lt;td&gt;基于 HTTP/2 的双向流&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;strong&gt;MQTT&lt;/strong&gt;&lt;/td&gt;
+          &lt;td&gt;长连接&lt;/td&gt;
+          &lt;td&gt;半双工&lt;/td&gt;
+          &lt;td&gt;发布/订阅模式&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;实际应用示例&#34;&gt;实际应用示例
+&lt;/h3&gt;&lt;h4 id=&#34;场景-1传统网页浏览短连接--单工&#34;&gt;场景 1：传统网页浏览（短连接 + 单工）
+&lt;/h4&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;浏览器 ──[请求]──→ 服务器
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;浏览器 ←──[响应]─── 服务器
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;连接关闭
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h4 id=&#34;场景-2在线聊天长连接--全双工&#34;&gt;场景 2：在线聊天（长连接 + 全双工）
+&lt;/h4&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;客户端 ←──[消息1]─── 服务器
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;客户端 ──[消息2]──→ 服务器
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;客户端 ←──[消息3]─── 服务器
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;客户端 ──[消息4]──→ 服务器
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;连接保持...
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h4 id=&#34;场景-3ai-对话流式输出长连接--单工&#34;&gt;场景 3：AI 对话流式输出（长连接 + 单工）
+&lt;/h4&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;客户端 ──[请求]──→ 服务器
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;客户端 ←──[token1]── 服务器
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;客户端 ←──[token2]── 服务器
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;客户端 ←──[token3]── 服务器
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;...
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;连接关闭
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;hr&gt;
+&lt;h3 id=&#34;总结&#34;&gt;总结
+&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;长连接 vs 短连接&lt;/strong&gt;：关注连接的复用方式和生命周期&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;全双工 vs 半双工 vs 单工&lt;/strong&gt;：关注数据传输的方向和并发性&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;流式协议通常使用&lt;strong&gt;长连接&lt;/strong&gt;来保持持续的传输通道，而是否支持&lt;strong&gt;全双工&lt;/strong&gt;则取决于协议的设计需求（如 WebSocket 支持全双工，SSE 只支持单向推送）。&lt;/p&gt;
 </description>
         </item>
         <item>

@@ -7,7 +7,331 @@
         <generator>Hugo -- gohugo.io</generator>
         <language>en</language>
         <copyright>Agsol</copyright>
-        <lastBuildDate>Wed, 06 May 2026 00:00:00 +0000</lastBuildDate><atom:link href="https://Agsol701.github.io/tags/mysql/index.xml" rel="self" type="application/rss+xml" /><item>
+        <lastBuildDate>Thu, 21 May 2026 00:00:00 +0000</lastBuildDate><atom:link href="https://Agsol701.github.io/tags/mysql/index.xml" rel="self" type="application/rss+xml" /><item>
+        <title>MySQL 高频面试题：高并发订单查询优化</title>
+        <link>https://Agsol701.github.io/p/mysql-%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98%E9%AB%98%E5%B9%B6%E5%8F%91%E8%AE%A2%E5%8D%95%E6%9F%A5%E8%AF%A2%E4%BC%98%E5%8C%96/</link>
+        <pubDate>Thu, 21 May 2026 00:00:00 +0000</pubDate>
+        
+        <guid>https://Agsol701.github.io/p/mysql-%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98%E9%AB%98%E5%B9%B6%E5%8F%91%E8%AE%A2%E5%8D%95%E6%9F%A5%E8%AF%A2%E4%BC%98%E5%8C%96/</guid>
+        <description>&lt;h1 id=&#34;mysql&#34;&gt;mysql
+&lt;/h1&gt;&lt;p&gt;🗄️ 中间件每日一题 · 2026年05月21日
+方向：MySQL（索引、事务、锁、主从复制、优化）
+题目
+在一个高并发的电商系统中，订单表 orders 有 5000 万条记录。现有如下查询经常执行，但响应时间超过 2 秒：
+SELECT * FROM orders
+WHERE user_id = 12345
+AND status IN (&amp;lsquo;pending&amp;rsquo;, &amp;lsquo;paid&amp;rsquo;)
+AND created_at &amp;gt;= &amp;lsquo;2026-01-01&amp;rsquo;
+ORDER BY created_at DESC
+LIMIT 20;&lt;/p&gt;
+&lt;p&gt;表结构如下：
+CREATE TABLE orders (
+id BIGINT PRIMARY KEY AUTO_INCREMENT,
+user_id INT NOT NULL,
+status VARCHAR(20) NOT NULL,
+amount DECIMAL(10,2),
+created_at DATETIME NOT NULL,
+updated_at DATETIME,
+INDEX idx_user (user_id),
+INDEX idx_status (status),
+INDEX idx_created (created_at)
+);&lt;/p&gt;
+&lt;p&gt;请分析该查询慢的原因，并给出优化方案（包括索引设计、查询改写等）。&lt;/p&gt;
+&lt;p&gt;题解
+核心要点：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;现有索引无法覆盖复合条件：三个单列索引在多条件查询时，MySQL 只会选择其中一个索引，无法同时利用多个条件过滤。&lt;/li&gt;
+&lt;li&gt;回表开销大：即使走了 idx_user 索引，还需要回表查询其他字段，5000 万数据量下回表成本极高。&lt;/li&gt;
+&lt;li&gt;排序与分页导致额外开销：ORDER BY created_at DESC LIMIT 20 需要对过滤后的结果集排序，如果结果集很大，排序会非常耗时。
+优化方案：
+方案一：创建联合索引（最佳实践）
+&amp;ndash; 创建联合索引，顺序：user_id → status → created_at
+CREATE INDEX idx_user_status_created
+ON orders(user_id, status, created_at);&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;索引字段顺序原则（最左前缀匹配）：
+• user_id：区分度高，放最左边
+• status：枚举值，用于 IN 条件
+• created_at：用于排序和范围查询，放最右边
+方案二：覆盖索引（避免回表）
+CREATE INDEX idx_cover
+ON orders(user_id, status, created_at, id, amount);&lt;/p&gt;
+&lt;p&gt;此时查询可以直接从索引获取数据，完全避免回表。
+方案三：查询改写（业务层优化）
+先查 ID，再回表获取完整数据（主键查询极快）。&lt;/p&gt;
+&lt;p&gt;原理&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;MySQL 索引选择策略：
+• MySQL 优化器在多个单列索引中，会通过成本估算选择一个索引，但不会同时使用多个单列索引（Index Merge 有限场景才会触发）。
+• 联合索引遵循最左前缀原则：(A, B, C) 可以匹配 A、A+B、A+B+C，但无法匹配 B 或 C 单独条件。&lt;/li&gt;
+&lt;li&gt;回表（Table Lookup）：
+• 非聚簇索引（二级索引）只存储索引字段和主键 ID，查询其他字段需要回表到聚簇索引获取完整行。
+• 大数据量下，回表的随机 I/O 成本极高。&lt;/li&gt;
+&lt;li&gt;索引排序优化：
+• 如果 ORDER BY 的字段在索引中，且索引顺序与排序一致，MySQL 可以直接按索引顺序扫描，避免额外排序（filesort）。&lt;/li&gt;
+&lt;li&gt;EXPLAIN 分析关键指标：
+• type：应为 ref 或 range（避免 ALL 全表扫描）
+• key：应使用联合索引
+• Extra：应为 Using index condition（无 Using filesort）&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;延伸&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;为什么不用 (status, user_id, created_at) 顺序？
+• status 区分度低（只有几个枚举值），放最左边会导致索引扇出（单个索引节点指向大量数据行），降低过滤效率。
+• user_id 区分度高（每个用户 ID 唯一），放最左边可以快速定位到用户维度的数据子集。&lt;/li&gt;
+&lt;li&gt;IN 条件对索引的影响：
+• status IN (&amp;lsquo;pending&amp;rsquo;, &amp;lsquo;paid&amp;rsquo;) 会让 MySQL 分别查询两个值的数据，然后合并结果。
+• 如果 IN 列表过长（如数百个值），可能导致索引失效，改为 OR 或子查询可能更优。&lt;/li&gt;
+&lt;li&gt;分区表优化：
+• 如果数据按时间维度增长，可以按 created_at 字段分区（按月/季度）。
+• 查询时加上分区键条件，MySQL 只扫描相关分区，大幅减少数据量。&lt;/li&gt;
+&lt;li&gt;高并发场景的缓存策略：
+• 对于热点用户（查询频繁的 user_id），可以将查询结果缓存到 Redis，设置短期 TTL（如 60 秒）。
+• 使用缓存预热 + 旁路缓存模式，减少数据库压力。
+每日坚持打卡，中间件面试手到擒来！💪&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h1 id=&#34;kafka&#34;&gt;kafka
+&lt;/h1&gt;&lt;p&gt;🗄️ 中间件每日一题 · 2026年05月20日
+方向:Kafka(消息队列、分区机制、消费者组、消息可靠性、高吞吐设计)
+题目
+在一个高并发的订单系统中,使用 Kafka 作为消息中间件,订单服务作为生产者,库存服务和物流服务作为消费者。现在发现偶尔会出现消息重复消费的问题,导致库存被重复扣减。请问:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Kafka 在什么场景下会产生消息重复消费?&lt;/li&gt;
+&lt;li&gt;如何在应用层保证消费的幂等性?&lt;/li&gt;
+&lt;li&gt;Kafka 自身提供了哪些机制来减少重复消费?
+题解
+Kafka 消息重复消费的根本原因在于消费者位移提交机制与消息处理的原子性问题。
+核心要点:
+• 自动提交位移的时机问题:默认 enable.auto.commit=true,每 5 秒自动提交一次。如果消息已被消费但位移未及时提交,发生 rebalance 或消费者重启时会重新消费。
+• 手动提交的位移丢失:即使使用手动提交,如果先处理消息再提交位移,在提交前崩溃也会重复消费。
+• 应用层幂等性设计:通过业务主键、分布式锁、数据库唯一约束等手段,确保重复消费不会产生副作用。
+• Kafka 幂等性生产者:生产者开启 enable.idempotence=true,配合事务 API 可以保证 Exactly Once 语义。
+• 消费者事务性读取:设置 isolation.level=read_committed,只读取已提交的事务消息。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;关键处理逻辑:
+// 应用层幂等性实现示例
+@Transactional
+public void processOrder(ConsumerRecord&amp;lt;String, String&amp;gt; record) {
+String orderId = record.key(); // 使用订单ID作为幂等键&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;// 1. 先查询是否已处理过(使用数据库唯一约束)
+if (orderProcessRepository.existsByOrderId(orderId)) {
+    log.info(&amp;quot;订单{}已处理,跳过&amp;quot;, orderId);
+    return;
+}
+
+// 2. 处理业务逻辑
+Order order = parseOrder(record.value());
+inventoryService.decreaseStock(order);
+
+// 3. 记录处理状态(与业务操作在同一事务)
+orderProcessRepository.save(new OrderProcess(orderId, LocalDateTime.now()));
+
+// 4. 手动提交位移(业务事务成功后)
+consumer.commitSync();
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;}&lt;/p&gt;
+&lt;p&gt;配置示例:&lt;/p&gt;
+&lt;h1 id=&#34;消费者配置---关闭自动提交&#34;&gt;消费者配置 - 关闭自动提交
+&lt;/h1&gt;&lt;p&gt;enable.auto.commit=false
+isolation.level=read_committed&lt;/p&gt;
+&lt;h1 id=&#34;生产者配置---开启幂等性&#34;&gt;生产者配置 - 开启幂等性
+&lt;/h1&gt;&lt;p&gt;enable.idempotence=true
+acks=all
+retries=Integer.MAX_VALUE
+max.in.flight.requests.per.connection=5&lt;/p&gt;
+&lt;p&gt;原理&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Kafka 位移提交机制:
+Kafka 使用 __consumer_offsets 内部主题存储消费者组的位移信息。消费者通过 commitSync() 或 commitAsync() 向 Coordinator 提交已消费的位移。
+• 自动提交:后台线程周期性提交,存在&amp;quot;消息已消费但位移未提交&amp;quot;的时间窗口。
+• 手动提交:显式调用提交,但如果&amp;quot;先消费后提交&amp;quot;模式下消费者崩溃,仍会重复消费。
+• 先提交后消费:可避免重复消费但会导致消息丢失(处理失败但位移已提交)。&lt;/li&gt;
+&lt;li&gt;Rebalance 触发重复消费:
+当消费者组发生 rebalance(新消费者加入、消费者崩溃、分区数变化)时,未提交的位移会丢失,Coordinator 将分区重新分配给其他消费者,从上次已提交的位移开始消费,导致重复。&lt;/li&gt;
+&lt;li&gt;生产者幂等性原理:
+开启 enable.idempotence=true 后,Broker 为每个生产者分配一个 Producer ID(PID),并为每条消息附加单调递增的 Sequence Number。Broker 端通过 &amp;lt;PID, Partition, SeqNumber&amp;gt; 三元组去重,确保单个会话内的消息不会重复写入。
+局限性:PID 在生产者重启后会变化,无法跨会话保证幂等。需配合事务 API 实现真正的 Exactly Once。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;延伸&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;
+&lt;p&gt;为什么不能只依赖 Kafka 的幂等性生产者?
+生产者幂等性只保证单个生产者会话内不重复写入,但无法解决:
+• 生产者重启后 PID 变化,重发消息会被当作新消息
+• 消费端的重复消费问题(这是位移管理问题,与生产端无关)
+• 网络重试导致的跨会话重复发送
+因此实际生产中必须在应用层实现消费幂等性。&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Kafka 事务 vs 数据库事务,如何选择?&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;方案&lt;/th&gt;
+          &lt;th&gt;优势&lt;/th&gt;
+          &lt;th&gt;劣势&lt;/th&gt;
+          &lt;th&gt;适用场景&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Kafka 事务&lt;/td&gt;
+          &lt;td&gt;跨分区原子性,真正的 Exactly Once&lt;/td&gt;
+          &lt;td&gt;性能开销大(约降低 30%),复杂度高&lt;/td&gt;
+          &lt;td&gt;跨多个 Topic 的原子写入,流处理场景&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;数据库事务 + 幂等键&lt;/td&gt;
+          &lt;td&gt;简单可靠,性能较好&lt;/td&gt;
+          &lt;td&gt;需业务改造,数据库成为瓶颈&lt;/td&gt;
+          &lt;td&gt;大多数业务系统,消息最终写入数据库&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;推荐:优先使用数据库事务 + 唯一约束保证幂等,除非有明确的跨 Topic 原子性需求。&lt;/td&gt;
+          &lt;td&gt;&lt;/td&gt;
+          &lt;td&gt;&lt;/td&gt;
+          &lt;td&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;如何监控和发现重复消费?
+• 业务指标:监控库存扣减次数 vs 订单数,发现异常比例
+• 消费位移监控:通过 kafka-consumer-groups.sh &amp;ndash;describe 查看 LAG 和 CURRENT-OFFSET,位移回退说明发生了重复消费
+• 日志审计:为每条消息记录处理日志,通过 message_id 检索是否被重复处理
+• APM 工具:使用 Prometheus + Grafana 监控消费者的 duplicate_message_count 指标
+每日坚持打卡,中间件面试手到擒来!💪&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h1 id=&#34;es&#34;&gt;es
+&lt;/h1&gt;&lt;p&gt;🗄️ 中间件每日一题 · 2026年05月22日
+方向：Elasticsearch
+题目
+在一个电商搜索系统中，用户搜索&amp;quot;苹果手机&amp;quot;时，既希望匹配到&amp;quot;iPhone 15&amp;quot;，也希望匹配到&amp;quot;Apple 手机&amp;quot;。同时，搜索&amp;quot;iphone&amp;quot;（小写）也应该能匹配到&amp;quot;iPhone&amp;quot;（大写）。请问：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;如何配置 Elasticsearch 的分词器和字段映射来实现这个需求？&lt;/li&gt;
+&lt;li&gt;如果要支持拼音搜索（如搜索&amp;quot;pingguo&amp;quot;能匹配到&amp;quot;苹果&amp;quot;），应该如何扩展？&lt;/li&gt;
+&lt;li&gt;在高并发场景下，如何优化这类模糊匹配查询的性能？
+题解
+核心要点：
+• 分词器选择：使用 ik_max_word 分词器进行索引时分词，使用 ik_smart 进行搜索时分词
+• 同义词配置：通过 synonym token filter 配置同义词词典（如 &amp;ldquo;苹果,Apple,iPhone&amp;rdquo;）
+• 大小写处理：使用 lowercase token filter 统一转换为小写
+• 字段映射：使用 text 类型字段，配置自定义 analyzer
+• 性能优化：合理使用 match 查询而非 wildcard，利用倒排索引特性
+关键配置示例：
+PUT /products
+{
+&amp;ldquo;settings&amp;rdquo;: {
+&amp;ldquo;analysis&amp;rdquo;: {
+&amp;ldquo;filter&amp;rdquo;: {
+&amp;ldquo;my_synonym_filter&amp;rdquo;: {
+&amp;ldquo;type&amp;rdquo;: &amp;ldquo;synonym&amp;rdquo;,
+&amp;ldquo;synonyms&amp;rdquo;: [
+&amp;ldquo;苹果,Apple,iPhone&amp;rdquo;,
+&amp;ldquo;手机,phone,移动电话&amp;rdquo;
+]
+}
+},
+&amp;ldquo;analyzer&amp;rdquo;: {
+&amp;ldquo;my_ik_analyzer&amp;rdquo;: {
+&amp;ldquo;type&amp;rdquo;: &amp;ldquo;custom&amp;rdquo;,
+&amp;ldquo;tokenizer&amp;rdquo;: &amp;ldquo;ik_max_word&amp;rdquo;,
+&amp;ldquo;filter&amp;rdquo;: [
+&amp;ldquo;lowercase&amp;rdquo;,
+&amp;ldquo;my_synonym_filter&amp;rdquo;
+]
+}
+}
+}
+},
+&amp;ldquo;mappings&amp;rdquo;: {
+&amp;ldquo;properties&amp;rdquo;: {
+&amp;ldquo;product_name&amp;rdquo;: {
+&amp;ldquo;type&amp;rdquo;: &amp;ldquo;text&amp;rdquo;,
+&amp;ldquo;analyzer&amp;rdquo;: &amp;ldquo;my_ik_analyzer&amp;rdquo;,
+&amp;ldquo;search_analyzer&amp;rdquo;: &amp;ldquo;ik_smart&amp;rdquo;
+}
+}
+}
+}&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;查询示例：
+GET /products/_search
+{
+&amp;ldquo;query&amp;rdquo;: {
+&amp;ldquo;match&amp;rdquo;: {
+&amp;ldquo;product_name&amp;rdquo;: {
+&amp;ldquo;query&amp;rdquo;: &amp;ldquo;苹果手机&amp;rdquo;,
+&amp;ldquo;operator&amp;rdquo;: &amp;ldquo;and&amp;rdquo;
+}
+}
+}
+}&lt;/p&gt;
+&lt;p&gt;原理
+倒排索引与分词流程：
+Elasticsearch 的核心是倒排索引（Inverted Index）。当文档被索引时：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;
+&lt;p&gt;分词阶段：原始文本 &amp;ldquo;iPhone 15 手机&amp;rdquo; 经过 analyzer 处理
+• Tokenizer（ik_max_word）：切分为 [&amp;ldquo;iPhone&amp;rdquo;, &amp;ldquo;15&amp;rdquo;, &amp;ldquo;手机&amp;rdquo;]
+• Token Filter（lowercase）：转换为 [&amp;ldquo;iphone&amp;rdquo;, &amp;ldquo;15&amp;rdquo;, &amp;ldquo;手机&amp;rdquo;]
+• Token Filter（synonym）：扩展为 [&amp;ldquo;iphone&amp;rdquo;, &amp;ldquo;苹果&amp;rdquo;, &amp;ldquo;apple&amp;rdquo;, &amp;ldquo;15&amp;rdquo;, &amp;ldquo;手机&amp;rdquo;, &amp;ldquo;phone&amp;rdquo;]&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;建立倒排索引：每个 term 指向包含它的文档 ID
+iphone    -&amp;gt; [doc1, doc5, doc8]
+苹果      -&amp;gt; [doc1, doc3, doc5]
+手机      -&amp;gt; [doc1, doc2, doc3, &amp;hellip;]&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;查询阶段：用户输入 &amp;ldquo;苹果手机&amp;rdquo; 经过 search_analyzer（ik_smart）分词为 [&amp;ldquo;苹果&amp;rdquo;, &amp;ldquo;手机&amp;rdquo;]，然后在倒排索引中查找这些 term，通过布尔运算（AND/OR）合并结果
+为什么这样设计高效：
+• 倒排索引使得 term 查找时间复杂度为 O(1)
+• 分词后的精确匹配比全文扫描快几个数量级
+• 同义词在索引时扩展，查询时无需额外计算&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;延伸&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;拼音搜索扩展方案
+安装 elasticsearch-analysis-pinyin 插件，配置多字段映射：
+&amp;ldquo;product_name&amp;rdquo;: {
+&amp;ldquo;type&amp;rdquo;: &amp;ldquo;text&amp;rdquo;,
+&amp;ldquo;analyzer&amp;rdquo;: &amp;ldquo;my_ik_analyzer&amp;rdquo;,
+&amp;ldquo;fields&amp;rdquo;: {
+&amp;ldquo;pinyin&amp;rdquo;: {
+&amp;ldquo;type&amp;rdquo;: &amp;ldquo;text&amp;rdquo;,
+&amp;ldquo;analyzer&amp;rdquo;: &amp;ldquo;pinyin_analyzer&amp;rdquo;
+}
+}
+}&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;查询时使用 multi_match 同时搜索原字段和拼音字段：
+{
+&amp;ldquo;query&amp;rdquo;: {
+&amp;ldquo;multi_match&amp;rdquo;: {
+&amp;ldquo;query&amp;rdquo;: &amp;ldquo;pingguo&amp;rdquo;,
+&amp;ldquo;fields&amp;rdquo;: [&amp;ldquo;product_name&amp;rdquo;, &amp;ldquo;product_name.pinyin&amp;rdquo;]
+}
+}
+}&lt;/p&gt;
+&lt;ol start=&#34;2&#34;&gt;
+&lt;li&gt;性能优化对比：match vs wildcard
+• match 查询：利用倒排索引，时间复杂度 O(1)，适合分词后的精确匹配
+• wildcard 查询：需要扫描所有 term，时间复杂度 O(n)，应避免在高并发场景使用
+• 前缀查询优化：使用 edge_ngram token filter 预处理，将前缀查询转换为 term 查询&lt;/li&gt;
+&lt;li&gt;高并发场景的架构优化
+• 分片策略：合理设置主分片数（建议 5-10 个），避免过度分片导致的协调开销
+• 副本分片：增加副本数提升查询吞吐量（读写分离）
+• 缓存利用：Elasticsearch 的 query cache 和 request cache 会自动缓存热点查询
+• 索引预热：使用 index.store.preload 预加载常用字段到内存
+每日坚持打卡，中间件面试手到擒来！💪&lt;/li&gt;
+&lt;/ol&gt;
+</description>
+        </item>
+        <item>
         <title>MySQL 完全学习指南：基本使用、底层原理与高频面试题</title>
         <link>https://Agsol701.github.io/p/mysql-%E5%AE%8C%E5%85%A8%E5%AD%A6%E4%B9%A0%E6%8C%87%E5%8D%97%E5%9F%BA%E6%9C%AC%E4%BD%BF%E7%94%A8%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/</link>
         <pubDate>Wed, 06 May 2026 00:00:00 +0000</pubDate>
