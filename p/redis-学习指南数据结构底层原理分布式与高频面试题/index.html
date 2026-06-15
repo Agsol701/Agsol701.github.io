@@ -1089,22 +1089,32 @@
 </ul>
 <h3 id="22-内存淘汰策略">2.2 内存淘汰策略
 </h3><h4 id="221-过期策略">2.2.1 过期策略
-</h4><p><strong>定时删除：</strong></p>
+</h4><p>Redis 有三种过期删除策略，实际使用的是<strong>惰性删除 + 定期删除</strong>的组合。</p>
+<p><strong>定时删除：</strong></p>
 <ul>
-<li>设置定时器，过期立即删除</li>
-<li>CPU 友好，但占用内存</li>
+<li>设置定时器，key 一过期立即删除</li>
+<li><strong>内存友好</strong>：过期 key 立即释放</li>
+<li><strong>CPU 不友好</strong>：大量定时器占用 CPU 资源</li>
+<li>Redis <strong>不使用</strong>此方案</li>
 </ul>
 <p><strong>惰性删除：</strong></p>
 <ul>
-<li>访问时检查，过期才删除</li>
-<li>内存不友好，但 CPU 友好</li>
+<li>访问 key 时才检查是否过期，过期则删除</li>
+<li><strong>CPU 友好</strong>：只在访问时触发，不主动消耗 CPU</li>
+<li><strong>内存不友好</strong>：过期 key 若未被访问，会一直堆积占用内存</li>
 </ul>
 <p><strong>定期删除：</strong></p>
 <ul>
-<li>定期抽样检查</li>
-<li>折中方案</li>
+<li>Redis 每隔一段时间（默认 100ms）随机抽查一批设置了过期时间的 key</li>
+<li>发现过期的则删除，并根据过期比例动态调整下次扫描频率</li>
+<li>是内存和 CPU 的折中方案</li>
 </ul>
 <p><strong>Redis 使用：惰性删除 + 定期删除</strong></p>
+<p>两者组合的原因：</p>
+<ul>
+<li>惰性删除保证访问到的 key 一定是有效的</li>
+<li>定期删除兜底清理那些永远不会被访问的过期 key，防止内存无限膨胀</li>
+</ul>
 <h4 id="222-淘汰策略">2.2.2 淘汰策略
 </h4><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
@@ -3462,11 +3472,40 @@
 <li><strong>Pipeline</strong>：减少网络往返</li>
 </ol>
 <h4 id="q2-redis-数据过期后立即删除吗">Q2: Redis 数据过期后立即删除吗？
-</h4><p>不是，有两种策略：</p>
+</h4><p>不是，Redis 采用<strong>惰性删除 + 定期删除</strong>的组合策略：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>策略</th>
+          <th>触发时机</th>
+          <th>内存</th>
+          <th>CPU</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>定时删除</td>
+          <td>到期立即删</td>
+          <td>友好</td>
+          <td>不友好（Redis 不用）</td>
+      </tr>
+      <tr>
+          <td>惰性删除</td>
+          <td>访问时检查</td>
+          <td>不友好</td>
+          <td>友好</td>
+      </tr>
+      <tr>
+          <td>定期删除</td>
+          <td>周期性抽查</td>
+          <td>折中</td>
+          <td>折中</td>
+      </tr>
+  </tbody>
+</table></div>
 <ul>
-<li><strong>惰性删除</strong>：访问时检查删除，内存友好但可能堆积</li>
-<li><strong>定期删除</strong>：定时抽查删除，折中方案</li>
-<li>Redis 两者结合使用</li>
+<li><strong>惰性删除</strong>：访问时才检查是否过期并删除，不消耗额外 CPU，但可能内存堆积</li>
+<li><strong>定期删除</strong>：每 100ms 随机抽查一批 key，清理过期的，防止长期无访问的 key 占用内存</li>
 </ul>
 <h4 id="q3-redis-持久化方式">Q3: Redis 持久化方式？
 </h4><ol>
