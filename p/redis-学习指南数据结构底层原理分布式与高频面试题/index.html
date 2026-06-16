@@ -276,18 +276,29 @@
     </li>
     <li><a href="#3-分布式">3. 分布式</a>
       <ol>
+        <li><a href="#30-三种分布式模式概览">3.0 三种分布式模式概览</a>
+          <ol>
+            <li><a href="#三者对比">三者对比</a></li>
+            <li><a href="#核心区别一句话">核心区别一句话</a></li>
+            <li><a href="#选型建议">选型建议</a></li>
+            <li><a href="#常见误区">常见误区</a></li>
+          </ol>
+        </li>
         <li><a href="#31-主从复制replication">3.1 主从复制（Replication）</a>
           <ol>
             <li><a href="#311-原理">3.1.1 原理</a></li>
-            <li><a href="#312-配置">3.1.2 配置</a></li>
-            <li><a href="#313-python-示例">3.1.3 Python 示例</a></li>
+            <li><a href="#312-主从复制的局限">3.1.2 主从复制的局限</a></li>
+            <li><a href="#313-配置">3.1.3 配置</a></li>
+            <li><a href="#314-python-示例">3.1.4 Python 示例</a></li>
           </ol>
         </li>
         <li><a href="#32-哨兵模式sentinel">3.2 哨兵模式（Sentinel）</a>
           <ol>
-            <li><a href="#321-原理">3.2.1 原理</a></li>
-            <li><a href="#322-配置">3.2.2 配置</a></li>
-            <li><a href="#323-python-示例">3.2.3 Python 示例</a></li>
+            <li><a href="#321-哨兵是什么">3.2.1 哨兵是什么</a></li>
+            <li><a href="#322-原理">3.2.2 原理</a></li>
+            <li><a href="#323-哨兵集群的高可用要求">3.2.3 哨兵集群的高可用要求</a></li>
+            <li><a href="#324-配置">3.2.4 配置</a></li>
+            <li><a href="#325-python-示例">3.2.5 Python 示例</a></li>
           </ol>
         </li>
         <li><a href="#33-cluster-集群模式">3.3 Cluster 集群模式</a>
@@ -334,7 +345,7 @@
         </li>
         <li><a href="#46-setnx-vs-redlock-怎么选">4.6 SETNX vs RedLock 怎么选</a>
           <ol>
-            <li><a href="#选型建议">选型建议</a></li>
+            <li><a href="#选型建议-1">选型建议</a></li>
           </ol>
         </li>
         <li><a href="#47-常见踩坑点">4.7 常见踩坑点</a></li>
@@ -1522,7 +1533,153 @@
 </ul>
 <hr>
 <h2 id="3-分布式">3. 分布式
-</h2><h3 id="31-主从复制replication">3.1 主从复制（Replication）
+</h2><h3 id="30-三种分布式模式概览">3.0 三种分布式模式概览
+</h3><p>Redis 的分布式方案是<strong>渐进式演进</strong>的，主从、哨兵、Cluster 不是并列关系，而是<strong>逐层叠加</strong>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">单机 Redis ──加副本──→ 主从 ──加哨兵──→ 哨兵架构 ──加分片──→ Cluster
+</span></span><span class="line"><span class="cl">   |                    |                  |                    |
+</span></span><span class="line"><span class="cl"> 数据丢失            手动切换         自动故障转移         自动分片+故障转移
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h4 id="三者对比">三者对比
+</h4><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>维度</th>
+          <th>主从复制</th>
+          <th>哨兵（Sentinel）</th>
+          <th>Cluster</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><strong>数据冗余</strong></td>
+          <td>✅</td>
+          <td>✅</td>
+          <td>✅</td>
+      </tr>
+      <tr>
+          <td><strong>读写分离</strong></td>
+          <td>✅</td>
+          <td>✅</td>
+          <td>✅</td>
+      </tr>
+      <tr>
+          <td><strong>自动故障转移</strong></td>
+          <td>❌（需人工切换）</td>
+          <td>✅</td>
+          <td>✅</td>
+      </tr>
+      <tr>
+          <td><strong>数据分片</strong></td>
+          <td>❌</td>
+          <td>❌</td>
+          <td>✅</td>
+      </tr>
+      <tr>
+          <td><strong>横向扩展写性能</strong></td>
+          <td>❌</td>
+          <td>❌</td>
+          <td>✅</td>
+      </tr>
+      <tr>
+          <td><strong>架构复杂度</strong></td>
+          <td>低</td>
+          <td>中</td>
+          <td>高</td>
+      </tr>
+      <tr>
+          <td><strong>存储上限</strong></td>
+          <td>单机内存</td>
+          <td>单机内存</td>
+          <td>集群总内存</td>
+      </tr>
+      <tr>
+          <td><strong>解决的核心问题</strong></td>
+          <td>数据备份、读分担</td>
+          <td>Master 自动切换</td>
+          <td>单机内存/写性能瓶颈</td>
+      </tr>
+  </tbody>
+</table></div>
+<h4 id="核心区别一句话">核心区别一句话
+</h4><ul>
+<li><strong>主从复制</strong>：数据层基础，解决&quot;备份和读分担&quot;，但 <strong>Master 挂了不会自动顶上</strong></li>
+<li><strong>哨兵</strong>：架在主从之上的<strong>控制层</strong>（不存数据，只监控），自动检测故障并切换 Master</li>
+<li><strong>Cluster</strong>：更高级的方案，<strong>数据分片 + 自带故障转移</strong>，不需要哨兵</li>
+</ul>
+<h4 id="选型建议">选型建议
+</h4><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>数据量</th>
+          <th>QPS</th>
+          <th>推荐方案</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>&lt; 10GB</td>
+          <td>&lt; 10w</td>
+          <td><strong>主从 + 哨兵</strong>（简单够用）</td>
+      </tr>
+      <tr>
+          <td>&lt; 10GB</td>
+          <td>&gt; 10w</td>
+          <td>主从 + 哨兵（多 Slave 分担读）</td>
+      </tr>
+      <tr>
+          <td>&gt; 10GB（单机装不下）</td>
+          <td>任意</td>
+          <td><strong>Cluster</strong></td>
+      </tr>
+      <tr>
+          <td>写 QPS 极高（&gt; 10w）</td>
+          <td>任意</td>
+          <td><strong>Cluster</strong>（多 Master 分担写）</td>
+      </tr>
+  </tbody>
+</table></div>
+<blockquote>
+<p>💡 <strong>互联网公司经验</strong>：中小业务用&quot;主从 + 哨兵&quot;够了，运维简单；大型业务直接上 Cluster。<strong>纯主从（不带哨兵）的生产部署几乎不存在</strong>——出故障没人值守很危险。</p></blockquote>
+<h4 id="常见误区">常见误区
+</h4><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>误区</th>
+          <th>实际情况</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>&ldquo;哨兵和主从是两种部署模式&rdquo;</td>
+          <td>❌ 哨兵是<strong>架在主从之上的监控层</strong>，必须先有主从</td>
+      </tr>
+      <tr>
+          <td>&ldquo;哨兵可以替代主从复制&rdquo;</td>
+          <td>❌ 哨兵不存数据，只监控</td>
+      </tr>
+      <tr>
+          <td>&ldquo;哨兵能解决数据分片问题&rdquo;</td>
+          <td>❌ 数据还是全部在 Master 上，分片要用 Cluster</td>
+      </tr>
+      <tr>
+          <td>&ldquo;哨兵故障转移期间业务不受影响&rdquo;</td>
+          <td>❌ 切换期间（10-30s）写操作会失败</td>
+      </tr>
+      <tr>
+          <td>&ldquo;用了 Cluster 还要哨兵吗&rdquo;</td>
+          <td>❌ Cluster 自带故障转移机制，不需要哨兵</td>
+      </tr>
+  </tbody>
+</table></div>
+<h3 id="31-主从复制replication">3.1 主从复制（Replication）
 </h3><h4 id="311-原理">3.1.1 原理
 </h4><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
@@ -1565,7 +1722,19 @@
 <li>全量复制：首次同步</li>
 <li>增量复制：断线重连后</li>
 </ul>
-<h4 id="312-配置">3.1.2 配置
+<h4 id="312-主从复制的局限">3.1.2 主从复制的局限
+</h4><p>主从复制只解决了<strong>数据冗余 + 读写分离</strong>，但有一个致命问题：</p>
+<blockquote>
+<p><strong>Master 宕机后，集群无法自动恢复，必须人工介入</strong>。</p></blockquote>
+<p>具体表现：</p>
+<ul>
+<li>❌ 写操作全部失败（Slave 默认只读）</li>
+<li>❌ Slave 不会自动升级为 Master</li>
+<li>❌ 客户端不知道 Master 挂了，仍然往老地址发请求</li>
+<li>❌ 运维需要：① 手动把某个 Slave 改为 Master ② 修改其他 Slave 的复制配置 ③ 通知所有客户端切换地址</li>
+</ul>
+<p>→ <strong>这就是为什么需要哨兵（Sentinel）</strong></p>
+<h4 id="313-配置">3.1.3 配置
 </h4><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
@@ -1586,7 +1755,7 @@
 </span></span><span class="line"><span class="cl">replica-read-only yes
 </span></span></code></pre></td></tr></table>
 </div>
-</div><h4 id="313-python-示例">3.1.3 Python 示例
+</div><h4 id="314-python-示例">3.1.4 Python 示例
 </h4><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -1626,7 +1795,23 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h3 id="32-哨兵模式sentinel">3.2 哨兵模式（Sentinel）
-</h3><h4 id="321-原理">3.2.1 原理
+</h3><h4 id="321-哨兵是什么">3.2.1 哨兵是什么
+</h4><blockquote>
+<p><strong>哨兵 = 主从复制 + 自动故障转移</strong></p></blockquote>
+<p>哨兵不是替代主从，而是<strong>架在主从之上的监控层</strong>。它本身是一个<strong>独立的 Redis 进程</strong>（不存数据），专门负责监控主从节点状态、在 Master 故障时自动选举新的 Master。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">角色分工：
+</span></span><span class="line"><span class="cl">- Redis Master / Slave  → 数据节点（存数据）
+</span></span><span class="line"><span class="cl">- Sentinel              → 控制节点（不存数据，只监控和决策）
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h4 id="322-原理">3.2.2 原理
 </h4><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -1666,21 +1851,88 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p><strong>Sentinel 功能：</strong></p>
-<ul>
-<li>监控：检查主从是否存活</li>
-<li>通知：异常时通知</li>
-<li>自动故障转移：从从节点选举新主节点</li>
-<li>配置提供者：提供当前主节点地址</li>
-</ul>
-<p><strong>故障转移流程：</strong></p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>功能</th>
+          <th>说明</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><strong>监控（Monitoring）</strong></td>
+          <td>持续 ping Master 和 Slave，检测是否存活</td>
+      </tr>
+      <tr>
+          <td><strong>故障转移（Failover）</strong></td>
+          <td>Master 挂了，自动选一个 Slave 升级为新 Master</td>
+      </tr>
+      <tr>
+          <td><strong>配置中心（Configuration Provider）</strong></td>
+          <td>客户端连哨兵问&quot;谁是 Master&quot;，地址变更后通知客户端</td>
+      </tr>
+      <tr>
+          <td><strong>通知（Notification）</strong></td>
+          <td>故障事件可推送给管理员</td>
+      </tr>
+  </tbody>
+</table></div>
+<p><strong>故障转移流程（详细版）：</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">1. 多个 Sentinel 持续 ping Master
+</span></span><span class="line"><span class="cl">        ↓
+</span></span><span class="line"><span class="cl">2. 某个 Sentinel 发现 Master 没响应 → 标记为 SDOWN（主观下线）
+</span></span><span class="line"><span class="cl">        ↓
+</span></span><span class="line"><span class="cl">3. 该 Sentinel 询问其他 Sentinel：你们也觉得 Master 挂了吗？
+</span></span><span class="line"><span class="cl">        ↓
+</span></span><span class="line"><span class="cl">4. 多数 Sentinel 同意 → 标记为 ODOWN（客观下线）
+</span></span><span class="line"><span class="cl">        ↓
+</span></span><span class="line"><span class="cl">5. Sentinel 之间选举出一个 Leader（基于 Raft 算法）
+</span></span><span class="line"><span class="cl">        ↓
+</span></span><span class="line"><span class="cl">6. Leader 从 Slave 中选出最适合的（数据最新、优先级高的）
+</span></span><span class="line"><span class="cl">        ↓
+</span></span><span class="line"><span class="cl">7. 执行 SLAVEOF NO ONE，把它升级为新 Master
+</span></span><span class="line"><span class="cl">        ↓
+</span></span><span class="line"><span class="cl">8. 让其他 Slave 改为复制新 Master
+</span></span><span class="line"><span class="cl">        ↓
+</span></span><span class="line"><span class="cl">9. 通知客户端：Master 地址变了
+</span></span><span class="line"><span class="cl">        ↓
+</span></span><span class="line"><span class="cl">10. 老 Master 恢复后自动降级为 Slave
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>整个过程<strong>自动完成，无需人工介入</strong>，通常 10-30 秒内恢复。</p>
+<h4 id="323-哨兵集群的高可用要求">3.2.3 哨兵集群的高可用要求
+</h4><p>⚠️ <strong>哨兵自身也必须做集群部署（至少 3 个）</strong>，原因：</p>
 <ol>
-<li>Sentinel 发现 Master 不可用</li>
-<li>选举领头的 Sentinel</li>
-<li>领头 Sentinel 从 Slave 选举新 Master</li>
-<li>其他 Slave 改为复制新 Master</li>
-<li>通知客户端新地址</li>
+<li><strong>避免单点</strong>：单个哨兵挂了就监控不了</li>
+<li><strong>多数派投票</strong>：判断 Master 是否真的下线、选举 Leader 都需要多数同意</li>
+<li><strong>防误判</strong>：单个哨兵可能因网络问题误判 Master 下线（SDOWN ≠ ODOWN）</li>
 </ol>
-<h4 id="322-配置">3.2.2 配置
+<blockquote>
+<p>至少 3 个哨兵 + Quorum（多数派）= 2，是最小生产配置。哨兵节点数应为<strong>奇数</strong>，避免投票时出现平票。</p></blockquote>
+<h4 id="324-配置">3.2.4 配置
 </h4><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
@@ -1697,8 +1949,10 @@
 </span></span><span class="line"><span class="cl">sentinel parallel-syncs mymaster <span class="m">1</span>
 </span></span></code></pre></td></tr></table>
 </div>
-</div><h4 id="323-python-示例">3.2.3 Python 示例
-</h4><div class="highlight"><div class="chroma">
+</div><h4 id="325-python-示例">3.2.5 Python 示例
+</h4><blockquote>
+<p><strong>关键点</strong>：客户端<strong>不直连 Master</strong>，而是连哨兵询问 Master 地址。Master 切换后，哨兵会自动告诉客户端新地址，应用代码<strong>不需要重启</strong>。</p></blockquote>
+<div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
 </span><span class="lnt"> 2
@@ -2768,7 +3022,7 @@
       </tr>
   </tbody>
 </table></div>
-<h4 id="选型建议">选型建议
+<h4 id="选型建议-1">选型建议
 </h4><div class="table-wrapper"><table>
   <thead>
       <tr>
