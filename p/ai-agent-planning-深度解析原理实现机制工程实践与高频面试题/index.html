@@ -1442,31 +1442,49 @@
 </span><span class="lnt">21
 </span><span class="lnt">22
 </span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span><span class="lnt">28
+</span><span class="lnt">29
+</span><span class="lnt">30
+</span><span class="lnt">31
+</span><span class="lnt">32
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│                   Plan-and-Execute 架构                       │
-</span></span><span class="line"><span class="cl">│                                                              │
-</span></span><span class="line"><span class="cl">│   [用户目标]                                                  │
-</span></span><span class="line"><span class="cl">│       │                                                      │
-</span></span><span class="line"><span class="cl">│       ▼                                                      │
-</span></span><span class="line"><span class="cl">│   ┌────────────┐    生成/修改计划                              │
-</span></span><span class="line"><span class="cl">│   │  Planner   │◀──────────────────┐                         │
-</span></span><span class="line"><span class="cl">│   │  (LLM-1)   │                    │                         │
-</span></span><span class="line"><span class="cl">│   └─────┬──────┘                    │                         │
-</span></span><span class="line"><span class="cl">│         │ 计划 [s1, s2, s3, ...]    │                         │
-</span></span><span class="line"><span class="cl">│         ▼                           │                         │
-</span></span><span class="line"><span class="cl">│   ┌────────────┐                    │                         │
-</span></span><span class="line"><span class="cl">│   │  Executor  │    执行当前步骤      │ 反馈（成功/失败/新信息）  │
-</span></span><span class="line"><span class="cl">│   │  (LLM-2)   │────────────────────┘                         │
-</span></span><span class="line"><span class="cl">│   └─────┬──────┘                                              │
-</span></span><span class="line"><span class="cl">│         │                                                     │
-</span></span><span class="line"><span class="cl">│         ▼                                                     │
-</span></span><span class="line"><span class="cl">│   ┌────────────┐                                              │
-</span></span><span class="line"><span class="cl">│   │   Tools    │    搜索/代码/API...                           │
-</span></span><span class="line"><span class="cl">│   └────────────┘                                              │
-</span></span><span class="line"><span class="cl">│                                                              │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────────────┘
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│                   Plan-and-Execute 架构                           │
+</span></span><span class="line"><span class="cl">│                                                                  │
+</span></span><span class="line"><span class="cl">│   [用户目标]                                                      │
+</span></span><span class="line"><span class="cl">│       │                                                          │
+</span></span><span class="line"><span class="cl">│       ▼                                                          │
+</span></span><span class="line"><span class="cl">│   ┌────────────┐                                                 │
+</span></span><span class="line"><span class="cl">│   │  Planner   │   生成初始计划（仅 1 次）                          │
+</span></span><span class="line"><span class="cl">│   │  (LLM-1)   │                                                 │
+</span></span><span class="line"><span class="cl">│   └─────┬──────┘                                                 │
+</span></span><span class="line"><span class="cl">│         │ 计划 [s1, s2, s3, ...]                                  │
+</span></span><span class="line"><span class="cl">│         ▼                                                        │
+</span></span><span class="line"><span class="cl">│   ┌────────────┐    调用工具      ┌──────────┐                    │
+</span></span><span class="line"><span class="cl">│   │  Executor  │─────────────────▶│  Tools   │  搜索/代码/API...    │
+</span></span><span class="line"><span class="cl">│   │  (LLM-2)   │◀─────────────────│          │                    │
+</span></span><span class="line"><span class="cl">│   └─────┬──────┘    工具结果       └──────────┘                    │
+</span></span><span class="line"><span class="cl">│         │ 当前步骤执行结果                                          │
+</span></span><span class="line"><span class="cl">│         ▼                                                        │
+</span></span><span class="line"><span class="cl">│   ┌────────────┐                                                 │
+</span></span><span class="line"><span class="cl">│   │ Replanner  │   读取已完成 + 剩余步骤 + 最新结果，输出决策         │
+</span></span><span class="line"><span class="cl">│   │  (LLM-3)   │                                                 │
+</span></span><span class="line"><span class="cl">│   └─────┬──────┘                                                 │
+</span></span><span class="line"><span class="cl">│         │                                                        │
+</span></span><span class="line"><span class="cl">│         ├── continue ─▶ 沿用原计划，回到 Executor 执行下一步         │
+</span></span><span class="line"><span class="cl">│         │                       │                                │
+</span></span><span class="line"><span class="cl">│         ├── replan   ─▶ 修改剩余步骤后回到 Executor                 │
+</span></span><span class="line"><span class="cl">│         │                       │                                │
+</span></span><span class="line"><span class="cl">│         │                       └──────────▶ 回到 Executor        │
+</span></span><span class="line"><span class="cl">│         │                                                        │
+</span></span><span class="line"><span class="cl">│         └── finish   ─▶ [最终回答]                                 │
+</span></span><span class="line"><span class="cl">│                                                                  │
+</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────────────────┘
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h2 id="42-与-react-的核心区别">4.2 与 ReAct 的核心区别
