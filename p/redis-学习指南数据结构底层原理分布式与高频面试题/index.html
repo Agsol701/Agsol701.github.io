@@ -1118,38 +1118,157 @@
 <h4 id="222-淘汰策略">2.2.2 淘汰策略
 </h4><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl"># —— LRU 系列：看「最后一次访问时间」，淘汰最久没被访问的 key ——
+</span></span><span class="line"><span class="cl">volatile-lru    # 仅在设置了过期时间的 key 中，淘汰最久没被访问的
+</span></span><span class="line"><span class="cl">allkeys-lru     # 在所有 key 中，淘汰最久没被访问的
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"># —— LFU 系列：看「历史访问次数」，淘汰被访问次数最少的 key ——
+</span></span><span class="line"><span class="cl">volatile-lfu    # 仅在设置了过期时间的 key 中，淘汰访问次数最少的
+</span></span><span class="line"><span class="cl">allkeys-lfu     # 在所有 key 中，淘汰访问次数最少的
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"># —— TTL：按剩余存活时间排序 ——
+</span></span><span class="line"><span class="cl">volatile-ttl    # 仅在设置了过期时间的 key 中，淘汰剩余存活时间最短的（快到期的先删）
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"># —— Random：随机挑选 ——
+</span></span><span class="line"><span class="cl">volatile-random # 仅在设置了过期时间的 key 中，随机淘汰一个
+</span></span><span class="line"><span class="cl">allkeys-random  # 在所有 key 中，随机淘汰一个
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"># —— 不淘汰 ——
+</span></span><span class="line"><span class="cl">noeviction      # 内存满后拒绝写入，返回错误（默认策略，读操作不受影响）
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>按&quot;淘汰范围&quot;分类：</strong></p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>前缀</th>
+          <th>含义</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>volatile-*</code></td>
+          <td>只在<strong>设置了过期时间</strong>（TTL）的 key 中淘汰</td>
+      </tr>
+      <tr>
+          <td><code>allkeys-*</code></td>
+          <td>在<strong>所有 key</strong> 中淘汰（不管有没有过期时间）</td>
+      </tr>
+  </tbody>
+</table></div>
+<p><strong>按&quot;淘汰算法&quot;分类：</strong></p>
+<ul>
+<li>
+<p><strong>LRU（Least Recently Used，最近最少使用）</strong></p>
+<ul>
+<li>淘汰最久没被访问的 key，关注<strong>访问时间</strong></li>
+<li><code>allkeys-lru</code> 是最常用的纯缓存场景配置</li>
+</ul>
+</li>
+<li>
+<p><strong>LFU（Least Frequently Used，最不常用）</strong>（Redis 4.0+）</p>
+<ul>
+<li>淘汰访问<strong>次数</strong>最少的 key，关注<strong>访问频率</strong></li>
+<li>比 LRU 更适合有&quot;突发热点&quot;的场景（避免一次性大量访问把真热点挤掉）</li>
+</ul>
+</li>
+<li>
+<p><strong>TTL（即将过期）</strong></p>
+<ul>
+<li><code>volatile-ttl</code>：从带 TTL 的 key 里，挑<strong>剩余存活时间最短</strong>的先淘汰</li>
+</ul>
+</li>
+<li>
+<p><strong>Random（随机）</strong></p>
+<ul>
+<li>随机挑选 key 淘汰，性能最好但命中率不可控</li>
+</ul>
+</li>
+<li>
+<p><strong>noeviction（不淘汰，默认）</strong></p>
+<ul>
+<li>内存满了就<strong>拒绝写入</strong>，返回 <code>OOM command not allowed</code> 错误</li>
+<li>读操作仍正常，适合&quot;数据不能丢&quot;的场景</li>
+</ul>
+</li>
+</ul>
+<p><strong>LRU vs LFU 直观区别：</strong></p>
+<p>假设有两个 key：</p>
+<ul>
+<li><code>A</code>：1 小时前被访问过 1000 次</li>
+<li><code>B</code>：1 分钟前刚被访问 1 次</li>
+</ul>
+<p>LRU 会淘汰 <code>A</code>（很久没访问了）；LFU 会淘汰 <code>B</code>（只用过 1 次，可能是冷数据偶然被碰到）。</p>
+<p><strong>选型建议：</strong></p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>场景</th>
+          <th>推荐</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>纯缓存（可丢失）</td>
+          <td><code>allkeys-lru</code> 或 <code>allkeys-lfu</code></td>
+      </tr>
+      <tr>
+          <td>有热点访问、希望保留高频数据</td>
+          <td><code>allkeys-lfu</code></td>
+      </tr>
+      <tr>
+          <td>缓存 + 持久化数据混存，只想淘汰缓存部分</td>
+          <td><code>volatile-lru</code> / <code>volatile-lfu</code></td>
+      </tr>
+      <tr>
+          <td>数据都很重要，宁可写失败也不丢</td>
+          <td><code>noeviction</code></td>
+      </tr>
+      <tr>
+          <td>业务自己控制过期，按 TTL 顺序淘汰</td>
+          <td><code>volatile-ttl</code></td>
+      </tr>
+  </tbody>
+</table></div>
+<p><strong>配置：</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
 </span><span class="lnt">2
 </span><span class="lnt">3
 </span><span class="lnt">4
 </span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">volatile-lru    # 从已设置过期时间的数据中挑选最近最少使用
-</span></span><span class="line"><span class="cl">allkeys-lru    # 从所有数据中挑选最近最少使用
-</span></span><span class="line"><span class="cl">volatile-ttl   # 从已设置过期时间的数据中挑选即将过期
-</span></span><span class="line"><span class="cl">volatile-random # 从已设置过期时间的数据中随机选择
-</span></span><span class="line"><span class="cl">allkeys-random # 从所有数据中随机选择
-</span></span><span class="line"><span class="cl">noeviction     # 不淘汰，返回错误（默认）
-</span></span><span class="line"><span class="cl">volatile-lfu   # 从已设置过期时间的数据中挑选最不常用
-</span></span><span class="line"><span class="cl">allkeys-lfu    # 从所有数据中挑选最不常用
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>配置：</strong></p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
 </span></code></pre></td>
 <td class="lntd">
 <pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">maxmemory 2gb
 </span></span><span class="line"><span class="cl">maxmemory-policy allkeys-lru
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 运行时动态修改</span>
+</span></span><span class="line"><span class="cl">CONFIG SET maxmemory-policy allkeys-lru
 </span></span></code></pre></td></tr></table>
 </div>
-</div><h3 id="23-持久化机制">2.3 持久化机制
+</div><blockquote>
+<p>⚠️ Redis 的 LRU/LFU 都是<strong>近似算法</strong>（采样实现，不是精确的全局排序），通过 <code>maxmemory-samples</code>（默认 5）控制采样数 —— 调大更准但更耗 CPU。</p></blockquote>
+<h3 id="23-持久化机制">2.3 持久化机制
 </h3><h4 id="231-rdbredis-database">2.3.1 RDB（Redis Database）
 </h4><p><strong>原理：</strong></p>
 <ul>
