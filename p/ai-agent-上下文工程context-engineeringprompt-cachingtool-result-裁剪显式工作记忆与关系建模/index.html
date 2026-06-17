@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 写过 agent 的人都有这种感受：demo 跑得很顺，真实任务一上规模就开始失控。\n任务跑到第 20 轮 tool call，模型开始遗忘前面的关键决定； 日志里看到一次请求 80K 输入 token，一个简单任务花了几美元； 中途 context 被压缩，下一轮模型回到了&quot;它以为是起点&quot;的状态，把已经做过的事又做了一遍； sub-agent 返回了一段叙述性总结，主 agent 却不知道哪些文件改过、哪些字段还没填。\n这些问题的共性是：模型本身没坏，是 context 没管好。\n这篇文章聚焦在我之前几篇 agent 系列文章里覆盖较浅的几个盲区，把 context engineering 单独拿出来讲透：\nPrompt Caching —— Agent 成本的胜负手，不会用就是烧钱 Tool Result 裁剪策略 —— context 膨胀的头号元凶，工程上有大量技巧 显式工作记忆（Scratchpad / Todo） —— 跨轮信息保持的核心手段 Context 关系建模 —— 让模型知道&quot;这条 result 来自哪次调用、哪个文件、哪一行&quot; Context 预算管理与 Sub-agent 隔离 —— 在窗口有限下处理任意长度任务 本文不会再重复 token 窗口、压缩算法、memory 分层这些 agent-llm-basics 和 agent-memory 已经讲过的内容，而是把工程实践层面的&quot;硬骨头&quot;集中聚合。\n一、Context Engineering 是什么 1.1 从 Prompt Engineering 到 Context Engineering 早期我们叫它 Prompt Engineering：怎么写好一段提示词让模型给出想要的结果。\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 写过 agent 的人都有这种感受：demo 跑得很顺，真实任务一上规模就开始失控。\n任务跑到第 20 轮 tool call，模型开始遗忘前面的关键决定； 日志里看到一次请求 80K 输入 token，一个简单任务花了几美元； 中途 context 被压缩，下一轮模型回到了&quot;它以为是起点&quot;的状态，把已经做过的事又做了一遍； sub-agent 返回了一段叙述性总结，主 agent 却不知道哪些文件改过、哪些字段还没填。\n这些问题的共性是：模型本身没坏，是 context 没管好。\n这篇文章聚焦在我之前几篇 agent 系列文章里覆盖较浅的几个盲区，把 context engineering 单独拿出来讲透：\nPrompt Caching —— Agent 成本的胜负手，不会用就是烧钱 Tool Result 裁剪策略 —— context 膨胀的头号元凶，工程上有大量技巧 显式工作记忆（Scratchpad / Todo） —— 跨轮信息保持的核心手段 Context 关系建模 —— 让模型知道&quot;这条 result 来自哪次调用、哪个文件、哪一行&quot; Context 预算管理与 Sub-agent 隔离 —— 在窗口有限下处理任意长度任务 本文不会再重复 token 窗口、压缩算法、memory 分层这些 agent-llm-basics.md 和 agent-memory.md 已经讲过的内容，而是把工程实践层面的&quot;硬骨头&quot;集中聚合。\n一、Context Engineering 是什么 1.1 从 Prompt Engineering 到 Context Engineering 早期我们叫它 Prompt Engineering：怎么写好一段提示词让模型给出想要的结果。\n">
 <title>AI Agent 上下文工程（Context Engineering）：Prompt Caching、Tool Result 裁剪、显式工作记忆与关系建模</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/ai-agent-%E4%B8%8A%E4%B8%8B%E6%96%87%E5%B7%A5%E7%A8%8Bcontext-engineeringprompt-cachingtool-result-%E8%A3%81%E5%89%AA%E6%98%BE%E5%BC%8F%E5%B7%A5%E4%BD%9C%E8%AE%B0%E5%BF%86%E4%B8%8E%E5%85%B3%E7%B3%BB%E5%BB%BA%E6%A8%A1/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="AI Agent 上下文工程（Context Engineering）：Prompt Caching、Tool Result 裁剪、显式工作记忆与关系建模">
-<meta property='og:description' content="写在前面 写过 agent 的人都有这种感受：demo 跑得很顺，真实任务一上规模就开始失控。\n任务跑到第 20 轮 tool call，模型开始遗忘前面的关键决定； 日志里看到一次请求 80K 输入 token，一个简单任务花了几美元； 中途 context 被压缩，下一轮模型回到了&quot;它以为是起点&quot;的状态，把已经做过的事又做了一遍； sub-agent 返回了一段叙述性总结，主 agent 却不知道哪些文件改过、哪些字段还没填。\n这些问题的共性是：模型本身没坏，是 context 没管好。\n这篇文章聚焦在我之前几篇 agent 系列文章里覆盖较浅的几个盲区，把 context engineering 单独拿出来讲透：\nPrompt Caching —— Agent 成本的胜负手，不会用就是烧钱 Tool Result 裁剪策略 —— context 膨胀的头号元凶，工程上有大量技巧 显式工作记忆（Scratchpad / Todo） —— 跨轮信息保持的核心手段 Context 关系建模 —— 让模型知道&quot;这条 result 来自哪次调用、哪个文件、哪一行&quot; Context 预算管理与 Sub-agent 隔离 —— 在窗口有限下处理任意长度任务 本文不会再重复 token 窗口、压缩算法、memory 分层这些 agent-llm-basics 和 agent-memory 已经讲过的内容，而是把工程实践层面的&quot;硬骨头&quot;集中聚合。\n一、Context Engineering 是什么 1.1 从 Prompt Engineering 到 Context Engineering 早期我们叫它 Prompt Engineering：怎么写好一段提示词让模型给出想要的结果。\n">
+<meta property='og:description' content="写在前面 写过 agent 的人都有这种感受：demo 跑得很顺，真实任务一上规模就开始失控。\n任务跑到第 20 轮 tool call，模型开始遗忘前面的关键决定； 日志里看到一次请求 80K 输入 token，一个简单任务花了几美元； 中途 context 被压缩，下一轮模型回到了&quot;它以为是起点&quot;的状态，把已经做过的事又做了一遍； sub-agent 返回了一段叙述性总结，主 agent 却不知道哪些文件改过、哪些字段还没填。\n这些问题的共性是：模型本身没坏，是 context 没管好。\n这篇文章聚焦在我之前几篇 agent 系列文章里覆盖较浅的几个盲区，把 context engineering 单独拿出来讲透：\nPrompt Caching —— Agent 成本的胜负手，不会用就是烧钱 Tool Result 裁剪策略 —— context 膨胀的头号元凶，工程上有大量技巧 显式工作记忆（Scratchpad / Todo） —— 跨轮信息保持的核心手段 Context 关系建模 —— 让模型知道&quot;这条 result 来自哪次调用、哪个文件、哪一行&quot; Context 预算管理与 Sub-agent 隔离 —— 在窗口有限下处理任意长度任务 本文不会再重复 token 窗口、压缩算法、memory 分层这些 agent-llm-basics.md 和 agent-memory.md 已经讲过的内容，而是把工程实践层面的&quot;硬骨头&quot;集中聚合。\n一、Context Engineering 是什么 1.1 从 Prompt Engineering 到 Context Engineering 早期我们叫它 Prompt Engineering：怎么写好一段提示词让模型给出想要的结果。\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/ai-agent-%E4%B8%8A%E4%B8%8B%E6%96%87%E5%B7%A5%E7%A8%8Bcontext-engineeringprompt-cachingtool-result-%E8%A3%81%E5%89%AA%E6%98%BE%E5%BC%8F%E5%B7%A5%E4%BD%9C%E8%AE%B0%E5%BF%86%E4%B8%8E%E5%85%B3%E7%B3%BB%E5%BB%BA%E6%A8%A1/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='context' /><meta property='article:published_time' content='2026-06-17T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-06-17T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="AI Agent 上下文工程（Context Engineering）：Prompt Caching、Tool Result 裁剪、显式工作记忆与关系建模">
-<meta name="twitter:description" content="写在前面 写过 agent 的人都有这种感受：demo 跑得很顺，真实任务一上规模就开始失控。\n任务跑到第 20 轮 tool call，模型开始遗忘前面的关键决定； 日志里看到一次请求 80K 输入 token，一个简单任务花了几美元； 中途 context 被压缩，下一轮模型回到了&quot;它以为是起点&quot;的状态，把已经做过的事又做了一遍； sub-agent 返回了一段叙述性总结，主 agent 却不知道哪些文件改过、哪些字段还没填。\n这些问题的共性是：模型本身没坏，是 context 没管好。\n这篇文章聚焦在我之前几篇 agent 系列文章里覆盖较浅的几个盲区，把 context engineering 单独拿出来讲透：\nPrompt Caching —— Agent 成本的胜负手，不会用就是烧钱 Tool Result 裁剪策略 —— context 膨胀的头号元凶，工程上有大量技巧 显式工作记忆（Scratchpad / Todo） —— 跨轮信息保持的核心手段 Context 关系建模 —— 让模型知道&quot;这条 result 来自哪次调用、哪个文件、哪一行&quot; Context 预算管理与 Sub-agent 隔离 —— 在窗口有限下处理任意长度任务 本文不会再重复 token 窗口、压缩算法、memory 分层这些 agent-llm-basics 和 agent-memory 已经讲过的内容，而是把工程实践层面的&quot;硬骨头&quot;集中聚合。\n一、Context Engineering 是什么 1.1 从 Prompt Engineering 到 Context Engineering 早期我们叫它 Prompt Engineering：怎么写好一段提示词让模型给出想要的结果。\n">
+<meta name="twitter:description" content="写在前面 写过 agent 的人都有这种感受：demo 跑得很顺，真实任务一上规模就开始失控。\n任务跑到第 20 轮 tool call，模型开始遗忘前面的关键决定； 日志里看到一次请求 80K 输入 token，一个简单任务花了几美元； 中途 context 被压缩，下一轮模型回到了&quot;它以为是起点&quot;的状态，把已经做过的事又做了一遍； sub-agent 返回了一段叙述性总结，主 agent 却不知道哪些文件改过、哪些字段还没填。\n这些问题的共性是：模型本身没坏，是 context 没管好。\n这篇文章聚焦在我之前几篇 agent 系列文章里覆盖较浅的几个盲区，把 context engineering 单独拿出来讲透：\nPrompt Caching —— Agent 成本的胜负手，不会用就是烧钱 Tool Result 裁剪策略 —— context 膨胀的头号元凶，工程上有大量技巧 显式工作记忆（Scratchpad / Todo） —— 跨轮信息保持的核心手段 Context 关系建模 —— 让模型知道&quot;这条 result 来自哪次调用、哪个文件、哪一行&quot; Context 预算管理与 Sub-agent 隔离 —— 在窗口有限下处理任意长度任务 本文不会再重复 token 窗口、压缩算法、memory 分层这些 agent-llm-basics.md 和 agent-memory.md 已经讲过的内容，而是把工程实践层面的&quot;硬骨头&quot;集中聚合。\n一、Context Engineering 是什么 1.1 从 Prompt Engineering 到 Context Engineering 早期我们叫它 Prompt Engineering：怎么写好一段提示词让模型给出想要的结果。\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -310,6 +310,27 @@
     <li><a href="#关系建模层">关系建模层</a></li>
     <li><a href="#容量管理层">容量管理层</a></li>
   </ol>
+
+  <ol>
+    <li>
+      <ol>
+        <li><a href="#101-context-engineering-和-prompt-engineering-的本质区别是什么">10.1 Context Engineering 和 Prompt Engineering 的本质区别是什么？</a></li>
+        <li><a href="#102-prompt-caching-的命中率为什么会很低怎么提升">10.2 Prompt Caching 的命中率为什么会很低？怎么提升？</a></li>
+        <li><a href="#103-tool-result-裁剪有哪些常见策略什么时候用哪种">10.3 Tool Result 裁剪有哪些常见策略？什么时候用哪种？</a></li>
+        <li><a href="#104-scratchpadmemorycontext-三者有什么区别">10.4 Scratchpad、Memory、Context 三者有什么区别？</a></li>
+        <li><a href="#105-什么时候该用-sub-agent-隔离什么时候不该用">10.5 什么时候该用 Sub-agent 隔离？什么时候不该用？</a></li>
+        <li><a href="#106-context-快满了是压缩还是丢弃怎么决定">10.6 Context 快满了，是压缩还是丢弃？怎么决定？</a></li>
+        <li><a href="#107-怎么度量一个-agent-的-context-engineering-做得好不好">10.7 怎么度量一个 Agent 的 Context Engineering 做得好不好？</a></li>
+        <li><a href="#108-file_pathline-这种引用为什么比直接贴代码内容好">10.8 <code>file_path:line</code> 这种引用为什么比直接贴代码内容好？</a></li>
+      </ol>
+    </li>
+  </ol>
+
+  <ol>
+    <li><a href="#111-官方文档一手来源">11.1 官方文档（一手来源）</a></li>
+    <li><a href="#112-本博客相关文章">11.2 本博客相关文章</a></li>
+    <li><a href="#113-一句话总结">11.3 一句话总结</a></li>
+  </ol>
 </nav>
         </div>
     </section>
@@ -389,7 +410,7 @@ sub-agent 返回了一段叙述性总结，主 agent 却不知道哪些文件改
 <li><strong>Context 关系建模</strong> —— 让模型知道&quot;这条 result 来自哪次调用、哪个文件、哪一行&quot;</li>
 <li><strong>Context 预算管理与 Sub-agent 隔离</strong> —— 在窗口有限下处理任意长度任务</li>
 </ul>
-<p>本文不会再重复 token 窗口、压缩算法、memory 分层这些 <a class="link" href="https://Agsol701.github.io/p/ai-agent-%E4%B8%AD%E7%9A%84-llm-%E8%B0%83%E7%94%A8%E5%9F%BA%E7%A1%80%E6%B6%88%E6%81%AF%E7%BB%93%E6%9E%84%E5%8F%82%E6%95%B0%E6%8E%A7%E5%88%B6%E6%B5%81%E5%BC%8F%E8%BE%93%E5%87%BA%E7%BB%93%E6%9E%84%E5%8C%96%E7%BB%93%E6%9E%9C%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/" >agent-llm-basics</a> 和 <a class="link" href="https://Agsol701.github.io/p/ai-agent-memory-%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%B8%8E-langchain-1.0-%E6%BA%90%E7%A0%81%E5%89%96%E6%9E%90/" >agent-memory</a> 已经讲过的内容，而是把工程实践层面的&quot;硬骨头&quot;集中聚合。</p>
+<p>本文不会再重复 token 窗口、压缩算法、memory 分层这些 <a class="link" href="agent-llm-basics.md" >agent-llm-basics.md</a> 和 <a class="link" href="agent-memory.md" >agent-memory.md</a> 已经讲过的内容，而是把工程实践层面的&quot;硬骨头&quot;集中聚合。</p>
 <hr>
 <h1 id="一context-engineering-是什么">一、Context Engineering 是什么
 </h1><h2 id="11-从-prompt-engineering-到-context-engineering">1.1 从 Prompt Engineering 到 Context Engineering
@@ -1186,7 +1207,7 @@ sub-agent 返回了一段叙述性总结，主 agent 却不知道哪些文件改
 </span></span><span class="line"><span class="cl"><span class="c1"># ...</span>
 </span></span></code></pre></td></tr></table>
 </div>
-</div><p>每个节点接收完整 state，返回 partial state，框架自动 merge。优点是<strong>状态显式可见、可序列化、可回放</strong>。详见 <a class="link" href="https://Agsol701.github.io/p/ai-agent-workflow-%E4%B8%8E%E7%8A%B6%E6%80%81%E6%9C%BA%E6%B7%B1%E5%85%A5%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5%E4%B8%8E%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90/" >agent-workflow-state-machine</a>。</p>
+</div><p>每个节点接收完整 state，返回 partial state，框架自动 merge。优点是<strong>状态显式可见、可序列化、可回放</strong>。详见 <a class="link" href="agent-workflow-state-machine.md" >agent-workflow-state-machine.md</a>。</p>
 <h2 id="46-注入策略什么时候放-scratchpad-进-context">4.6 注入策略：什么时候放 scratchpad 进 context
 </h2><p>不是每轮都把整个 todo 塞进去。常见策略：</p>
 <p><strong>策略 A：每轮固定注入摘要</strong></p>
@@ -1840,22 +1861,22 @@ execution 阶段（具体改某个文件）→ 只注入当前 task</p>
       <tr>
           <td>Token 窗口、压缩算法</td>
           <td>略讲</td>
-          <td><a class="link" href="https://Agsol701.github.io/p/ai-agent-%E4%B8%AD%E7%9A%84-llm-%E8%B0%83%E7%94%A8%E5%9F%BA%E7%A1%80%E6%B6%88%E6%81%AF%E7%BB%93%E6%9E%84%E5%8F%82%E6%95%B0%E6%8E%A7%E5%88%B6%E6%B5%81%E5%BC%8F%E8%BE%93%E5%87%BA%E7%BB%93%E6%9E%84%E5%8C%96%E7%BB%93%E6%9E%9C%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/" >agent-llm-basics</a> §10</td>
+          <td><a class="link" href="agent-llm-basics.md" >agent-llm-basics.md</a> §10</td>
       </tr>
       <tr>
           <td>Memory 分层、外部存储</td>
           <td>略讲</td>
-          <td><a class="link" href="https://Agsol701.github.io/p/ai-agent-memory-%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%B8%8E-langchain-1.0-%E6%BA%90%E7%A0%81%E5%89%96%E6%9E%90/" >agent-memory</a></td>
+          <td><a class="link" href="agent-memory.md" >agent-memory.md</a></td>
       </tr>
       <tr>
           <td>Sub-agent 拆分原则</td>
           <td>工程细节</td>
-          <td><a class="link" href="https://Agsol701.github.io/p/multi-agent-%E7%B3%BB%E7%BB%9F%E5%AD%A6%E4%B9%A0%E6%8C%87%E5%8D%97%E5%8F%91%E5%B1%95%E8%84%89%E7%BB%9C%E6%A0%B8%E5%BF%83%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/" >multi-agent-systems</a></td>
+          <td><a class="link" href="multi-agent-systems.md" >multi-agent-systems.md</a></td>
       </tr>
       <tr>
           <td>状态机 / LangGraph</td>
           <td>引用</td>
-          <td><a class="link" href="https://Agsol701.github.io/p/ai-agent-workflow-%E4%B8%8E%E7%8A%B6%E6%80%81%E6%9C%BA%E6%B7%B1%E5%85%A5%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5%E4%B8%8E%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90/" >agent-workflow-state-machine</a></td>
+          <td><a class="link" href="agent-workflow-state-machine.md" >agent-workflow-state-machine.md</a></td>
       </tr>
       <tr>
           <td><strong>Prompt Caching</strong></td>
@@ -2013,35 +2034,131 @@ execution 阶段（具体改某个文件）→ 只注入当前 task</p>
 <li><input disabled="" type="checkbox"> 关键信息是否不被压缩 / 有 pin 机制？</li>
 </ul>
 <hr>
-<h1 id="十写在最后">十、写在最后
-</h1><p>回到开头那个对比：两个 agent 跑同样的任务，一个 demo 顺利但生产翻车，一个朴实无华但稳定高效。</p>
-<p>差别从来不是模型，是<strong>模型看到了什么</strong>。</p>
-<p>Context Engineering 的核心理念可以归纳为五句话：</p>
-<ol>
-<li><strong>把变化的东西放在尾部，把稳定的东西放在前面</strong> —— 为 cache 让路</li>
-<li><strong>大输出不进 context，大输出走文件</strong> —— tool result 裁剪</li>
-<li><strong>重要状态从对话里抽出来，单独维护</strong> —— 显式工作记忆</li>
-<li><strong>每条信息都要有地址</strong> —— 关系建模</li>
-<li><strong>超过 context 容量就拆，不要硬塞</strong> —— sub-agent 隔离</li>
-</ol>
-<p>这五条原则没有银弹，需要在每一个 agent 的具体场景里反复打磨。但只要按这个方向走，agent 的成本和稳定性都会上一个台阶。</p>
-<p>下一步可以读：</p>
+<h1 id="十常见高频面试题">十、常见高频面试题
+</h1><h3 id="101-context-engineering-和-prompt-engineering-的本质区别是什么">10.1 Context Engineering 和 Prompt Engineering 的本质区别是什么？
+</h3><p><strong>答：</strong></p>
+<p>Prompt Engineering 关注的是<strong>单次请求</strong>里怎么把指令、示例、约束写好，让模型一次性给出好结果。它的优化对象是 system prompt 和 user prompt 这两段静态文本。</p>
+<p>Context Engineering 关注的是<strong>多轮、长任务</strong>里 context 这块&quot;工作内存&quot;怎么管理。它的优化对象不止 prompt，还包括：</p>
 <ul>
-<li><a class="link" href="https://Agsol701.github.io/p/ai-agent-%E4%B8%AD%E7%9A%84-llm-%E8%B0%83%E7%94%A8%E5%9F%BA%E7%A1%80%E6%B6%88%E6%81%AF%E7%BB%93%E6%9E%84%E5%8F%82%E6%95%B0%E6%8E%A7%E5%88%B6%E6%B5%81%E5%BC%8F%E8%BE%93%E5%87%BA%E7%BB%93%E6%9E%84%E5%8C%96%E7%BB%93%E6%9E%9C%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/" >agent-llm-basics</a> —— 模型调用基础</li>
-<li><a class="link" href="https://Agsol701.github.io/p/ai-agent-memory-%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%B8%8E-langchain-1.0-%E6%BA%90%E7%A0%81%E5%89%96%E6%9E%90/" >agent-memory</a> —— Memory 的分层与实现</li>
-<li><a class="link" href="https://Agsol701.github.io/p/ai-agent-tool-calling-%E8%AF%A6%E8%A7%A3/" >agent-tool-calling</a> —— Tool Calling 协议细节</li>
-<li><a class="link" href="https://Agsol701.github.io/p/multi-agent-%E7%B3%BB%E7%BB%9F%E5%AD%A6%E4%B9%A0%E6%8C%87%E5%8D%97%E5%8F%91%E5%B1%95%E8%84%89%E7%BB%9C%E6%A0%B8%E5%BF%83%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/" >multi-agent-systems</a> —— 多 agent 协作范式</li>
-<li><a class="link" href="https://Agsol701.github.io/p/ai-agent-workflow-%E4%B8%8E%E7%8A%B6%E6%80%81%E6%9C%BA%E6%B7%B1%E5%85%A5%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5%E4%B8%8E%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90/" >agent-workflow-state-machine</a> —— 状态机驱动的 agent</li>
+<li>Tool 定义的稳定性（影响 cache）</li>
+<li>Tool result 的裁剪策略</li>
+<li>跨轮的工作记忆（scratchpad / todo / state）</li>
+<li>引用关系建模（让模型知道每条信息的来源）</li>
+<li>Context 容量管理（压缩、隔离、子任务拆分）</li>
 </ul>
+<p>简单说：Prompt Engineering 是&quot;写好一封信&quot;，Context Engineering 是&quot;管好一个长期通信的邮箱&quot;。Agent 场景下，后者的工程量和影响远大于前者。</p>
+<h3 id="102-prompt-caching-的命中率为什么会很低怎么提升">10.2 Prompt Caching 的命中率为什么会很低？怎么提升？
+</h3><p><strong>答：</strong></p>
+<p>命中率低通常是这几类原因：</p>
+<ul>
+<li><strong>System prompt 里带了动态变量</strong>（时间、用户名、随机 ID），导致前缀每次都不同</li>
+<li><strong>Tool 定义不稳定</strong>：每次请求按插件加载顺序生成，字段顺序、可选字段都可能变</li>
+<li><strong>Cache 断点没设</strong>：默认只在 message 末尾缓存一次，前面的稳定部分没有被显式标记</li>
+<li><strong>Memory / 长文档插在不该插的位置</strong>，把后面所有内容的前缀都&quot;染色&quot;了</li>
+</ul>
+<p>提升手段对应这几条：</p>
+<ul>
+<li>静态部分（system + tools）和动态部分（user message + 当前轮 tool result）严格分开</li>
+<li>Tool 定义按字典序排序，序列化时显式控制字段顺序</li>
+<li>用 <code>cache_control</code> 显式打 2-4 个断点（system 后、tools 后、长 memory 后、对话历史后）</li>
+<li>监控指标：<code>cache_read_input_tokens / total_input_tokens &gt; 70%</code> 才算合格</li>
+</ul>
+<h3 id="103-tool-result-裁剪有哪些常见策略什么时候用哪种">10.3 Tool Result 裁剪有哪些常见策略？什么时候用哪种？
+</h3><p><strong>答：</strong></p>
+<p>主要有四种策略，按&quot;输出体积&quot;递增使用：</p>
+<ul>
+<li><strong>分页读取</strong>：文件类工具的标配，read 接口必须支持 <code>offset</code> + <code>limit</code>，每次返回固定上限（比如 2000 行）</li>
+<li><strong>截断 + 摘要</strong>：命令输出超过阈值时，截到前 N 行 + 后 M 行，中间用 <code>... (truncated, full output at /tmp/xxx.log)</code> 占位</li>
+<li><strong>摘要化重写</strong>：网页 fetch 这类天然冗长的内容，让一个小模型先做摘要，主模型只看摘要</li>
+<li><strong>落盘 + 路径</strong>：极大输出（构建产物、数据 dump）直接写到磁盘，context 里只保留路径，按需再 read</li>
+</ul>
+<p>判断标准很简单：<strong>单次 tool_result 平均不超过 5K token</strong>，超过就要降级到下一档策略。</p>
+<h3 id="104-scratchpadmemorycontext-三者有什么区别">10.4 Scratchpad、Memory、Context 三者有什么区别？
+</h3><p><strong>答：</strong></p>
+<p>三者都和&quot;信息保存&quot;有关，但作用域和生命周期完全不同：</p>
+<ul>
+<li><strong>Context</strong>：模型一次推理能看到的全部 token，物理上限就是窗口大小，是<strong>易失的工作内存</strong></li>
+<li><strong>Scratchpad</strong>：当前任务内显式维护的工作记忆（todo、state、关键变量），生命周期 = 一次任务，每轮按需注入到 context</li>
+<li><strong>Memory</strong>：跨任务、跨会话的长期知识（用户偏好、项目约定、历史经验），生命周期 = 长期，按相关性检索后注入</li>
+</ul>
+<p>类比的话：Context 是 CPU 寄存器，Scratchpad 是栈帧上的局部变量，Memory 是磁盘上的数据库。</p>
+<h3 id="105-什么时候该用-sub-agent-隔离什么时候不该用">10.5 什么时候该用 Sub-agent 隔离？什么时候不该用？
+</h3><p><strong>答：</strong></p>
+<p><strong>该用</strong>的典型场景：</p>
+<ul>
+<li>子任务的 context 量很大但产出可压缩（比如&quot;读这 50 个文件然后告诉我哪些有 bug&quot;）</li>
+<li>子任务并行度高且互相独立（多文件修改、多源信息检索）</li>
+<li>子任务有明确的结构化产出 schema</li>
+</ul>
+<p><strong>不该用</strong>的场景：</p>
+<ul>
+<li>子任务和主任务高度耦合，频繁需要主任务的上下文</li>
+<li>子任务输出本身就很大（隔离没省 context，反而多了一次模型调用）</li>
+<li>任务很短就能完成，sub-agent 启动开销 &gt; 节省</li>
+</ul>
+<p>判断公式很粗糙：<strong>主任务 context 节省量 ÷ sub-agent 调用成本 &gt; 1</strong> 才值得隔离。</p>
+<h3 id="106-context-快满了是压缩还是丢弃怎么决定">10.6 Context 快满了，是压缩还是丢弃？怎么决定？
+</h3><p><strong>答：</strong></p>
+<p>优先级从高到低：</p>
+<ol>
+<li><strong>不压缩任何用户原始输入</strong>：用户最初的需求和澄清是 anchor，丢了 agent 就跑偏</li>
+<li><strong>不压缩关键决策点</strong>：用户拒绝过的方案、明确的约束、已经写进 scratchpad 的状态</li>
+<li><strong>可压缩 tool_result 的中段</strong>：保留头尾，中间换成摘要</li>
+<li><strong>可丢弃过期的中间推理</strong>：模型自己说过又被推翻的&quot;思路&quot;</li>
+</ol>
+<p>实操上，先压缩到不影响任务的程度；如果压缩到 50% 还是不够用，就该考虑 sub-agent 隔离或者把任务拆成两个会话，而不是继续压。</p>
+<h3 id="107-怎么度量一个-agent-的-context-engineering-做得好不好">10.7 怎么度量一个 Agent 的 Context Engineering 做得好不好？
+</h3><p><strong>答：</strong></p>
+<p>四个核心指标：</p>
+<ul>
+<li><strong>Cache 命中率</strong>：<code>cache_read_tokens / total_input_tokens</code>，目标 &gt; 70%</li>
+<li><strong>平均单轮输入 token</strong>：随轮次变化曲线应是平稳的，不能线性膨胀</li>
+<li><strong>任务完成率 vs context 占用率</strong>：占用率 80% 时完成率不能崩盘</li>
+<li><strong>跨轮信息丢失率</strong>：故意在第 5 轮埋一个事实，第 30 轮 probe 模型是否还记得</li>
+</ul>
+<p>光看模型成功率不够，因为很多 agent 是<strong>靠浪费 context 换成功率</strong>的，成本和稳定性会在生产里翻车。</p>
+<h3 id="108-file_pathline-这种引用为什么比直接贴代码内容好">10.8 <code>file_path:line</code> 这种引用为什么比直接贴代码内容好？
+</h3><p><strong>答：</strong></p>
+<p>三个原因：</p>
+<ul>
+<li><strong>Cache 友好</strong>：路径是稳定字符串，文件内容会变，把内容塞进 prompt 会让 cache 频繁失效</li>
+<li><strong>可验证</strong>：模型说&quot;<code>auth.py:42</code> 有 bug&quot;，harness 或人类可以直接跳过去看；说&quot;代码里有 bug&quot;则无法定位</li>
+<li><strong>可压缩</strong>：长文件不进 context，模型按需用 read 工具加载片段，且每次只加载相关行</li>
+</ul>
+<p>更一般的原则：<strong>context 里放的是地址（pointer），不是值（value）</strong>。值大、易变、可重新获取的东西，永远只放地址。</p>
 <hr>
-<p><em>Context 是 agent 的命脉，工程化它，agent 才能活得久。</em></p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"></code></pre></td></tr></table>
-</div>
-</div>
+<h1 id="十一附录进一步阅读">十一、附录：进一步阅读
+</h1><h2 id="111-官方文档一手来源">11.1 官方文档（一手来源）
+</h2><p>本文涉及的事实和工程建议主要参考这些一手资料：</p>
+<ul>
+<li><a class="link" href="https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching"  target="_blank" rel="noopener"
+    >Anthropic：Prompt Caching</a></li>
+<li><a class="link" href="https://www.anthropic.com/engineering/building-effective-agents"  target="_blank" rel="noopener"
+    >Anthropic Engineering：Building effective agents</a></li>
+<li><a class="link" href="https://www.anthropic.com/engineering/multi-agent-research-system"  target="_blank" rel="noopener"
+    >Anthropic Engineering：How we built our multi-agent research system</a></li>
+<li><a class="link" href="https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview"  target="_blank" rel="noopener"
+    >Anthropic：Tool use overview</a></li>
+<li><a class="link" href="https://langchain-ai.github.io/langgraph/concepts/low_level/"  target="_blank" rel="noopener"
+    >LangGraph：State and memory</a></li>
+<li><a class="link" href="https://platform.openai.com/docs/guides/function-calling"  target="_blank" rel="noopener"
+    >OpenAI：Function calling guide</a></li>
+</ul>
+<h2 id="112-本博客相关文章">11.2 本博客相关文章
+</h2><ul>
+<li><a class="link" href="what-is-ai-agent.md" >什么是 AI Agent</a></li>
+<li><a class="link" href="agent-llm-basics.md" >AI Agent 的模型调用基础</a></li>
+<li><a class="link" href="agent-memory.md" >AI Agent Memory 的分层与实现</a></li>
+<li><a class="link" href="agent-tool-calling.md" >AI Agent Tool Calling 协议细节</a></li>
+<li><a class="link" href="agent-loop-react.md" >AI Agent Loop 与 ReAct</a></li>
+<li><a class="link" href="agent-workflow-state-machine.md" >AI Agent Workflow 与状态机</a></li>
+<li><a class="link" href="multi-agent-systems.md" >Multi-Agent 多智能体系统</a></li>
+<li><a class="link" href="agent-production-architecture.md" >生产级 AI Agent 架构</a></li>
+<li><a class="link" href="agent-observability-evaluation.md" >AI Agent 可观测性与评估</a></li>
+</ul>
+<h2 id="113-一句话总结">11.3 一句话总结
+</h2><p>Context Engineering 的五条铁律：变量后置让 cache 命中、tool result 走文件、状态显式独立维护、每条信息都有地址、超容量就拆不要硬塞——做到这五条，agent 的成本和稳定性会同时上一个台阶。</p>
+
 </section>
 
 
