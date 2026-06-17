@@ -92,6 +92,8 @@ sub-agent 返回了一段叙述性总结，主 agent 却不知道哪些文件改
 &lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;54
 &lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;55
 &lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;56
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;57
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;58
 &lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
 &lt;td class=&#34;lntd&#34;&gt;
 &lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;[System Prompt]
@@ -137,10 +139,291 @@ sub-agent 返回了一段叙述性总结，主 agent 却不知道哪些文件改
 &lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;差距不在模型能力，而在**工程**。
 &lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;## 1.3 Context Engineering 的四个维度
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;## 1.3 幻觉与注意力漂移：Context 失控的两种表现
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Agent 的很多异常，表面看是&amp;#34;模型不够聪明&amp;#34;，实际往往是 context 失控。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;最典型的两类表现是：**幻觉**和**注意力漂移**。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;### 1.3.1 什么是模型幻觉
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;模型幻觉指的是：模型生成了看起来合理、语气自信，但实际上不正确、无依据或不存在的内容。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;例如：
 &lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;```text
-&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;┌────────────────────────────────────────────────┐
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;用户：某篇论文是谁写的？
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;模型：作者是 A、B、C，并发表于 2021 年。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;但真实情况可能是这篇论文不存在，或者作者、年份、结论都是错的。&lt;/p&gt;
+&lt;p&gt;在 Agent 场景里，幻觉经常表现为：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;编造不存在的 API、函数、配置项或工具名&lt;/li&gt;
+&lt;li&gt;错误引用文档、论文、数据、日志或代码位置&lt;/li&gt;
+&lt;li&gt;把相似概念混在一起，给出看似合理但实际错误的解释&lt;/li&gt;
+&lt;li&gt;没有查工具结果，却假装已经查过&lt;/li&gt;
+&lt;li&gt;对不确定的信息给出过度确定的结论&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这不是简单的&amp;quot;模型撒谎&amp;quot;。LLM 本质是在根据上下文预测下一个 token，它天然擅长生成语言上顺滑的内容，但不天然保证事实正确。&lt;/p&gt;
+&lt;p&gt;所以降低幻觉的关键不是让模型更自信，而是让它&lt;strong&gt;少猜，多查，多引用证据&lt;/strong&gt;。&lt;/p&gt;
+&lt;h3 id=&#34;132-什么是注意力漂移&#34;&gt;1.3.2 什么是注意力漂移
+&lt;/h3&gt;&lt;p&gt;注意力漂移指的是：模型在长上下文、多轮对话或复杂任务中，逐渐偏离最重要的信息，把注意力放到了次要、错误或过时的信息上。&lt;/p&gt;
+&lt;p&gt;例如，用户一开始明确说：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;只修改 A 文件，不要动 B 文件。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;但任务执行到第 20 轮后，context 里塞满了工具结果、历史对话、错误尝试和中间总结，模型可能开始忘记这个约束，甚至真的去改了 B 文件。&lt;/p&gt;
+&lt;p&gt;在 Agent 场景里，注意力漂移常见表现是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;忘记用户最初的关键约束&lt;/li&gt;
+&lt;li&gt;被无关 tool result、旧总结或历史尝试带偏&lt;/li&gt;
+&lt;li&gt;优先处理低价值细节，忽略当前核心目标&lt;/li&gt;
+&lt;li&gt;context 压缩后丢失关键决策，导致重复执行或状态回退&lt;/li&gt;
+&lt;li&gt;只看局部代码，忽略整体调用链&lt;/li&gt;
+&lt;li&gt;把旧指令当成最新指令，把过时信息当成当前事实&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果说幻觉是&amp;quot;编造事实&amp;quot;，注意力漂移就是&amp;quot;执行跑偏&amp;quot;。&lt;/p&gt;
+&lt;h3 id=&#34;133-为什么长任务里更容易发生&#34;&gt;1.3.3 为什么长任务里更容易发生
+&lt;/h3&gt;&lt;p&gt;Agent 比普通聊天更容易出现这两个问题，因为它的输入不是一段干净 prompt，而是一条不断增长的执行轨迹：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;system prompt
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;工具定义
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;用户目标
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;历史对话
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;工具调用参数
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;工具返回结果
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;中间计划
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;错误信息
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;压缩摘要
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;新的用户补充
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这些内容混在一起后，会产生几个工程问题：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;事实源不清楚&lt;/strong&gt;：模型不知道哪些内容来自真实工具，哪些只是自己之前的推测。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;信噪比下降&lt;/strong&gt;：无关内容越多，关键信息越容易被淹没。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;位置敏感&lt;/strong&gt;：LLM 对 context 中间位置的信息关注度可能下降，也就是 lost in the middle。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;状态不可见&lt;/strong&gt;：如果没有显式 todo、scratchpad 或状态表，模型只能从长对话里猜当前进度。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;约束被稀释&lt;/strong&gt;：用户最重要的边界条件可能只在很早的一轮出现过，后面再也没有被强化。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;这也是 Context Engineering 的价值：它不是把所有信息都塞给模型，而是让模型在每一轮都看到&lt;strong&gt;当前最需要、最可信、最可执行&lt;/strong&gt;的信息。&lt;/p&gt;
+&lt;h3 id=&#34;134-如何降低幻觉&#34;&gt;1.3.4 如何降低幻觉
+&lt;/h3&gt;&lt;p&gt;降低幻觉的核心策略是：&lt;strong&gt;让模型基于证据回答，而不是基于语言模式补全答案&lt;/strong&gt;。&lt;/p&gt;
+&lt;p&gt;常见做法包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;接入可靠信息源&lt;/strong&gt;：代码仓库、官方文档、知识库、数据库、日志、监控、搜索结果。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;工具结果优先&lt;/strong&gt;：有工具返回结果时，以工具结果为准，而不是以模型记忆为准。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;证据绑定&lt;/strong&gt;：回答代码问题时给出文件路径和行号，回答文档问题时给出文档来源。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;不确定时拒答&lt;/strong&gt;：没有依据就说不确定，不要用流畅语言补空白。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;结构化输出&lt;/strong&gt;：把&amp;quot;确定信息、推测信息、不确定信息&amp;quot;拆开，减少混淆。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;测试和评估兜底&lt;/strong&gt;：代码改动要跑测试、类型检查、lint 或构建，用真实反馈校验模型结论。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;一个反幻觉 prompt 不应该只写：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;不要幻觉。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;更有效的是写成可执行规则：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;回答事实问题前，必须先检查给定文档或工具结果。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;如果上下文没有依据，明确说&amp;#34;不确定&amp;#34;。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;涉及代码时必须给出文件路径和行号。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;不要编造不存在的 API、字段、链接或工具名。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h3 id=&#34;135-如何降低注意力漂移&#34;&gt;1.3.5 如何降低注意力漂移
+&lt;/h3&gt;&lt;p&gt;降低注意力漂移的核心策略是：&lt;strong&gt;持续把模型拉回当前目标、当前状态和当前约束&lt;/strong&gt;。&lt;/p&gt;
+&lt;p&gt;常见做法包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;明确任务边界&lt;/strong&gt;：只分析这个 bug，不做重构；只修改后端，不动前端；保持现有 API 不变。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;维护显式工作状态&lt;/strong&gt;：用 todo、scratchpad、状态机或任务表记录 pending / in_progress / done / skipped。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;每轮注入短目标&lt;/strong&gt;：让模型在执行前重新看到当前目标、关键约束和下一步动作。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;裁剪无关结果&lt;/strong&gt;：工具返回结果只保留和当前决策有关的片段，避免把整份日志、整篇文档、整个文件都塞进去。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;优先使用最新指令&lt;/strong&gt;：当历史上下文和用户最新消息冲突时，以最新消息为准。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;阶段性校验&lt;/strong&gt;：计划、执行、验证分开，每完成一步检查是否仍然对齐原目标。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;对于长任务，一个更稳的 context 片段通常长这样：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;当前目标：修复登录失败时错误提示不展示的问题。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;关键约束：不改认证协议，不调整 UI 文案，只修复错误展示链路。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;当前状态：已确认接口返回 error.message；前端 Toast 未触发。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;下一步：检查 login mutation 的 onError 分支。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这类短而硬的状态，比把二十轮历史对话全部塞给模型更有用。&lt;/p&gt;
+&lt;h3 id=&#34;136-用-md-文档和-skills-给-agent-加锚点&#34;&gt;1.3.6 用 md 文档和 Skills 给 Agent 加锚点
+&lt;/h3&gt;&lt;p&gt;在工程实践里，很多团队会用 md 文档或 Skills 来降低幻觉和注意力漂移。这个方向是对的，但要注意：它们不能消灭问题，只能把问题变得更可控。&lt;/p&gt;
+&lt;p&gt;md 文档通常承担两类角色：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;稳定事实源&lt;/strong&gt;：例如项目架构、API 约定、代码规范、排查手册、业务规则。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;稳定行为约束&lt;/strong&gt;：例如哪些文件不能改、测试必须怎么跑、上线前必须检查什么。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;它能减少幻觉，是因为模型不再完全凭训练记忆猜，而是可以基于当前文档回答。它能减少注意力漂移，是因为文档相当于一个固定锚点，模型每次执行前都能重新读到任务边界和操作规则。&lt;/p&gt;
+&lt;p&gt;但 md 文档也有局限：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;文档太长，模型仍然可能看漏重点&lt;/li&gt;
+&lt;li&gt;文档过期，会让模型基于错误事实行动&lt;/li&gt;
+&lt;li&gt;文档只是软约束，模型仍可能不遵守&lt;/li&gt;
+&lt;li&gt;文档没有被正确注入 context，就等于不存在&lt;/li&gt;
+&lt;li&gt;把所有文档都塞进 context，会引入噪声，反而加重漂移&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以，给 Agent 用的 md 文档最好短、结构化、可引用、可执行。例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;事实源：回答项目问题前，优先读取当前仓库文件，不使用模型记忆猜测。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;边界：未经用户要求，不做无关重构，不修改生成文件。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;验证：修改可观察行为后，必须运行对应测试或说明未运行原因。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;输出：涉及代码结论时，必须给出 file:line。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;Skills 比普通 md 文档更进一步。md 文档主要告诉模型&amp;quot;应该相信什么&amp;quot;，Skills 则把某类任务封装成固定流程、固定工具和固定输出格式。&lt;/p&gt;
+&lt;p&gt;例如 code review skill 可以把一次审查固定成：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;读取 diff
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;识别 bug / 安全 / 性能 / 回归风险
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;按严重级别排序
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;给出文件行号
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;只输出有依据的问题
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这会同时降低两类风险：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;降低幻觉：因为 skill 要求基于真实 diff、真实文件和真实工具结果判断。&lt;/li&gt;
+&lt;li&gt;降低漂移：因为 skill 固定了执行路径，模型不会从&amp;quot;审查代码&amp;quot;漂到&amp;quot;顺手重构&amp;quot;。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;可以简单概括为：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;手段&lt;/th&gt;
+          &lt;th&gt;解决的问题&lt;/th&gt;
+          &lt;th&gt;典型作用&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;md 文档&lt;/td&gt;
+          &lt;td&gt;模型应该相信什么&lt;/td&gt;
+          &lt;td&gt;提供事实、规则和边界&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Skills&lt;/td&gt;
+          &lt;td&gt;模型应该按什么流程做&lt;/td&gt;
+          &lt;td&gt;固化步骤、工具和输出协议&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Tools&lt;/td&gt;
+          &lt;td&gt;当前真实状态是什么&lt;/td&gt;
+          &lt;td&gt;用真实结果替代猜测&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Todo / Scratchpad&lt;/td&gt;
+          &lt;td&gt;当前任务进展到哪了&lt;/td&gt;
+          &lt;td&gt;防止遗忘和重复执行&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Tests / Evals&lt;/td&gt;
+          &lt;td&gt;结果到底对不对&lt;/td&gt;
+          &lt;td&gt;用外部反馈发现错误&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;所以更准确的说法是：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;md 文档和 Skills 不是直接防止模型产生幻觉或漂移，而是通过提供稳定上下文、明确边界、固定流程、强制查证和状态管理，降低幻觉与注意力漂移的发生概率。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;h3 id=&#34;137-一个更完整的-agent-防漂移工作流&#34;&gt;1.3.7 一个更完整的 Agent 防漂移工作流
+&lt;/h3&gt;&lt;p&gt;把上面的手段组合起来，一个更稳的 Agent 工作流通常是：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;8
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;理解用户最新目标
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;读取相关 md / skill 规则
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;检索当前代码、文档或外部事实源
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;生成短计划和显式 todo
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;小步执行，每步只保留必要 context
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;工具结果结构化摘要，重要证据保留引用
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;执行后运行测试或检查
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;最终回答前，对照用户最新指令做一次校验
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这里最重要的不是某一个 prompt 技巧，而是把&amp;quot;事实、目标、状态、证据、验证&amp;quot;拆开管理。&lt;/p&gt;
+&lt;p&gt;这就是 Context Engineering 和普通 Prompt Engineering 的区别：Prompt Engineering 主要控制模型怎么说，Context Engineering 负责控制模型每一轮&lt;strong&gt;看见什么、相信什么、记住什么、忽略什么&lt;/strong&gt;。&lt;/p&gt;
+&lt;h2 id=&#34;14-context-engineering-的四个维度&#34;&gt;1.4 Context Engineering 的四个维度
+&lt;/h2&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;┌────────────────────────────────────────────────┐
 &lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│              Context Engineering               │
 &lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;├──────────────┬─────────────┬──────────┬────────┤
 &lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;│   成本维度    │   质量维度   │  容量维度 │ 关系维度  │
