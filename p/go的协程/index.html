@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="Go 语言还提供 chan在多个 goroutine 间进行通信。goroutine 和 chan 是 Go 语言秉承的 CSP（Communicating Sequential Process）并发模式的重要实现基础。\n协程与线程的区别 一个线程可以多个协程，一个进程也可以单独拥有多个协程。 线程进程都是同步机制，而协程则是异步。 协程能保留上一次调用时的状态，每次过程重入时，就相当于进入上一次调用的状态。 线程是抢占式，而协程是非抢占式的，所以需要用户自己释放使用权来切换到其他协程，因此同一时间其实只有一个协程拥有运行权，相当于单线程的能力。 协程并不是取代线程, 而且抽象于线程之上, 线程是被分割的 CPU 资源, 协程是组织好的代码流程, 协程需要线程来承载运行, 线程是协程的资源, 但协程不会直接使用线程, 协程直接利用的是执行器(Interceptor), 执行器可以关联任意线程或线程池, 可以使当前线程, UI线程, 或新建新程.。 线程是协程的资源。协程通过 Interceptor 来间接使用线程这个资源。 Go语言协程(goroutine) 什么是Go语言协程(goroutine) goroutine 可以看作是 协程 的 Go 语言 实现。\ngo的main函数会在后台自己调用一个协程\nmian函数退出，程序退出\ngoroutine特点 goroutine 是协程的 Go 语言实现，它是语言原生支持的，相对于一般由库实现协程的方式，goroutine 更加强大，它的调度一定程度上是由 go 运行时（runtime）管理。 其好处之一是，当某 goroutine 发生阻塞时（例如同步IO操作等），会自动出让 CPU 给其它 goroutine。\ngoroutine是非常轻量级的，它就是一段代码，一个 函数 入口，以及在堆上为其分配的一个堆栈（初始大小为4K，会随着程序的执行自动增长删除）。所以它非常廉价，我们可以很轻松的创建上万个 goroutine。\ngo运行时调度 默认的，所有 goroutine 会在一个原生线程里跑，也就是只使用了一个 CPU 核。在同一个原生线程里，如果当前goroutine 不发生阻塞，它是不会让出 CPU 时间给其他同线程的 goroutines 的。除了被系统调用阻塞的线程外，Go 运行库最多会启动 $GOMAXPROCS 个线程来运行 goroutine。\n那么 goroutine 究竟是如何被调度的呢？我们从 go 程序启动开始说起。在go程序启动时会首先创建一个特殊的内核线程 sysmon，从名字就可以看出来它的职责是负责监控的，goroutine 背后的调度可以说就是靠它来搞定。\n接下来，我们再看看它的调度模型，go 语言当前的实现是 N:M。即一定数量的用户线程映射到一定数量的 OS 线程上，这里的用户线程在 go 中指的就是 goroutine。go语言的调度模型需要弄清楚三个概念：M、P 和 G，如下图表示：\n其中：\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="Go 语言还提供 chan 在多个 goroutine 间进行通信。goroutine 和 chan 是 Go 语言秉承的 CSP（Communicating Sequential Process）并发模式的重要实现基础。\n协程与线程的区别 一个线程可以承载多个协程，一个进程也可以拥有多个协程。 线程是操作系统调度的执行单元，协程通常由语言运行时或用户态调度器调度。 协程能保留上一次调用时的状态，每次过程重入时，就相当于进入上一次调用的状态。 传统协程多为协作式调度，需要主动让出执行权；Go 的 goroutine 由 runtime 调度，并支持抢占式调度。 协程并不是取代线程，而是在线程之上的更轻量抽象。Go 的 goroutine 需要由 M（操作系统线程）承载运行，并通过 runtime scheduler 完成调度。 Go 语言协程（goroutine） 什么是 Go 语言协程（goroutine） goroutine 可以看作是 协程 的 Go 语言 实现。\nGo 的 main 函数运行在 main goroutine 中。main 函数退出后，程序会直接退出，其他尚未完成的 goroutine 也会随之结束。\ngoroutine 特点 goroutine 是协程的 Go 语言实现，它是语言原生支持的，相对于一般由库实现协程的方式，goroutine 更加强大，它的调度一定程度上是由 Go 运行时（runtime）管理。 其好处之一是，当某 goroutine 发生阻塞时（例如同步 I/O 操作等），会自动出让 CPU 给其它 goroutine。 goroutine 是非常轻量级的，它就是一段代码，一个 函数 入口，以及为其分配的一个可动态增长的栈。所以它非常廉价，我们可以很轻松地创建上万个 goroutine。\n">
 <title>go的协程</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/go%E7%9A%84%E5%8D%8F%E7%A8%8B/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="go的协程">
-<meta property='og:description' content="Go 语言还提供 chan在多个 goroutine 间进行通信。goroutine 和 chan 是 Go 语言秉承的 CSP（Communicating Sequential Process）并发模式的重要实现基础。\n协程与线程的区别 一个线程可以多个协程，一个进程也可以单独拥有多个协程。 线程进程都是同步机制，而协程则是异步。 协程能保留上一次调用时的状态，每次过程重入时，就相当于进入上一次调用的状态。 线程是抢占式，而协程是非抢占式的，所以需要用户自己释放使用权来切换到其他协程，因此同一时间其实只有一个协程拥有运行权，相当于单线程的能力。 协程并不是取代线程, 而且抽象于线程之上, 线程是被分割的 CPU 资源, 协程是组织好的代码流程, 协程需要线程来承载运行, 线程是协程的资源, 但协程不会直接使用线程, 协程直接利用的是执行器(Interceptor), 执行器可以关联任意线程或线程池, 可以使当前线程, UI线程, 或新建新程.。 线程是协程的资源。协程通过 Interceptor 来间接使用线程这个资源。 Go语言协程(goroutine) 什么是Go语言协程(goroutine) goroutine 可以看作是 协程 的 Go 语言 实现。\ngo的main函数会在后台自己调用一个协程\nmian函数退出，程序退出\ngoroutine特点 goroutine 是协程的 Go 语言实现，它是语言原生支持的，相对于一般由库实现协程的方式，goroutine 更加强大，它的调度一定程度上是由 go 运行时（runtime）管理。 其好处之一是，当某 goroutine 发生阻塞时（例如同步IO操作等），会自动出让 CPU 给其它 goroutine。\ngoroutine是非常轻量级的，它就是一段代码，一个 函数 入口，以及在堆上为其分配的一个堆栈（初始大小为4K，会随着程序的执行自动增长删除）。所以它非常廉价，我们可以很轻松的创建上万个 goroutine。\ngo运行时调度 默认的，所有 goroutine 会在一个原生线程里跑，也就是只使用了一个 CPU 核。在同一个原生线程里，如果当前goroutine 不发生阻塞，它是不会让出 CPU 时间给其他同线程的 goroutines 的。除了被系统调用阻塞的线程外，Go 运行库最多会启动 $GOMAXPROCS 个线程来运行 goroutine。\n那么 goroutine 究竟是如何被调度的呢？我们从 go 程序启动开始说起。在go程序启动时会首先创建一个特殊的内核线程 sysmon，从名字就可以看出来它的职责是负责监控的，goroutine 背后的调度可以说就是靠它来搞定。\n接下来，我们再看看它的调度模型，go 语言当前的实现是 N:M。即一定数量的用户线程映射到一定数量的 OS 线程上，这里的用户线程在 go 中指的就是 goroutine。go语言的调度模型需要弄清楚三个概念：M、P 和 G，如下图表示：\n其中：\n">
+<meta property='og:description' content="Go 语言还提供 chan 在多个 goroutine 间进行通信。goroutine 和 chan 是 Go 语言秉承的 CSP（Communicating Sequential Process）并发模式的重要实现基础。\n协程与线程的区别 一个线程可以承载多个协程，一个进程也可以拥有多个协程。 线程是操作系统调度的执行单元，协程通常由语言运行时或用户态调度器调度。 协程能保留上一次调用时的状态，每次过程重入时，就相当于进入上一次调用的状态。 传统协程多为协作式调度，需要主动让出执行权；Go 的 goroutine 由 runtime 调度，并支持抢占式调度。 协程并不是取代线程，而是在线程之上的更轻量抽象。Go 的 goroutine 需要由 M（操作系统线程）承载运行，并通过 runtime scheduler 完成调度。 Go 语言协程（goroutine） 什么是 Go 语言协程（goroutine） goroutine 可以看作是 协程 的 Go 语言 实现。\nGo 的 main 函数运行在 main goroutine 中。main 函数退出后，程序会直接退出，其他尚未完成的 goroutine 也会随之结束。\ngoroutine 特点 goroutine 是协程的 Go 语言实现，它是语言原生支持的，相对于一般由库实现协程的方式，goroutine 更加强大，它的调度一定程度上是由 Go 运行时（runtime）管理。 其好处之一是，当某 goroutine 发生阻塞时（例如同步 I/O 操作等），会自动出让 CPU 给其它 goroutine。 goroutine 是非常轻量级的，它就是一段代码，一个 函数 入口，以及为其分配的一个可动态增长的栈。所以它非常廉价，我们可以很轻松地创建上万个 goroutine。\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/go%E7%9A%84%E5%8D%8F%E7%A8%8B/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='Go' /><meta property='article:published_time' content='2025-10-06T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2025-10-06T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="go的协程">
-<meta name="twitter:description" content="Go 语言还提供 chan在多个 goroutine 间进行通信。goroutine 和 chan 是 Go 语言秉承的 CSP（Communicating Sequential Process）并发模式的重要实现基础。\n协程与线程的区别 一个线程可以多个协程，一个进程也可以单独拥有多个协程。 线程进程都是同步机制，而协程则是异步。 协程能保留上一次调用时的状态，每次过程重入时，就相当于进入上一次调用的状态。 线程是抢占式，而协程是非抢占式的，所以需要用户自己释放使用权来切换到其他协程，因此同一时间其实只有一个协程拥有运行权，相当于单线程的能力。 协程并不是取代线程, 而且抽象于线程之上, 线程是被分割的 CPU 资源, 协程是组织好的代码流程, 协程需要线程来承载运行, 线程是协程的资源, 但协程不会直接使用线程, 协程直接利用的是执行器(Interceptor), 执行器可以关联任意线程或线程池, 可以使当前线程, UI线程, 或新建新程.。 线程是协程的资源。协程通过 Interceptor 来间接使用线程这个资源。 Go语言协程(goroutine) 什么是Go语言协程(goroutine) goroutine 可以看作是 协程 的 Go 语言 实现。\ngo的main函数会在后台自己调用一个协程\nmian函数退出，程序退出\ngoroutine特点 goroutine 是协程的 Go 语言实现，它是语言原生支持的，相对于一般由库实现协程的方式，goroutine 更加强大，它的调度一定程度上是由 go 运行时（runtime）管理。 其好处之一是，当某 goroutine 发生阻塞时（例如同步IO操作等），会自动出让 CPU 给其它 goroutine。\ngoroutine是非常轻量级的，它就是一段代码，一个 函数 入口，以及在堆上为其分配的一个堆栈（初始大小为4K，会随着程序的执行自动增长删除）。所以它非常廉价，我们可以很轻松的创建上万个 goroutine。\ngo运行时调度 默认的，所有 goroutine 会在一个原生线程里跑，也就是只使用了一个 CPU 核。在同一个原生线程里，如果当前goroutine 不发生阻塞，它是不会让出 CPU 时间给其他同线程的 goroutines 的。除了被系统调用阻塞的线程外，Go 运行库最多会启动 $GOMAXPROCS 个线程来运行 goroutine。\n那么 goroutine 究竟是如何被调度的呢？我们从 go 程序启动开始说起。在go程序启动时会首先创建一个特殊的内核线程 sysmon，从名字就可以看出来它的职责是负责监控的，goroutine 背后的调度可以说就是靠它来搞定。\n接下来，我们再看看它的调度模型，go 语言当前的实现是 N:M。即一定数量的用户线程映射到一定数量的 OS 线程上，这里的用户线程在 go 中指的就是 goroutine。go语言的调度模型需要弄清楚三个概念：M、P 和 G，如下图表示：\n其中：\n">
+<meta name="twitter:description" content="Go 语言还提供 chan 在多个 goroutine 间进行通信。goroutine 和 chan 是 Go 语言秉承的 CSP（Communicating Sequential Process）并发模式的重要实现基础。\n协程与线程的区别 一个线程可以承载多个协程，一个进程也可以拥有多个协程。 线程是操作系统调度的执行单元，协程通常由语言运行时或用户态调度器调度。 协程能保留上一次调用时的状态，每次过程重入时，就相当于进入上一次调用的状态。 传统协程多为协作式调度，需要主动让出执行权；Go 的 goroutine 由 runtime 调度，并支持抢占式调度。 协程并不是取代线程，而是在线程之上的更轻量抽象。Go 的 goroutine 需要由 M（操作系统线程）承载运行，并通过 runtime scheduler 完成调度。 Go 语言协程（goroutine） 什么是 Go 语言协程（goroutine） goroutine 可以看作是 协程 的 Go 语言 实现。\nGo 的 main 函数运行在 main goroutine 中。main 函数退出后，程序会直接退出，其他尚未完成的 goroutine 也会随之结束。\ngoroutine 特点 goroutine 是协程的 Go 语言实现，它是语言原生支持的，相对于一般由库实现协程的方式，goroutine 更加强大，它的调度一定程度上是由 Go 运行时（runtime）管理。 其好处之一是，当某 goroutine 发生阻塞时（例如同步 I/O 操作等），会自动出让 CPU 给其它 goroutine。 goroutine 是非常轻量级的，它就是一段代码，一个 函数 入口，以及为其分配的一个可动态增长的栈。所以它非常廉价，我们可以很轻松地创建上万个 goroutine。\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -227,18 +227,18 @@
         <div class="widget--toc">
             <nav id="TableOfContents">
   <ol>
-    <li><a href="#什么是go语言协程goroutine">什么是Go语言协程(goroutine)</a></li>
-    <li><a href="#goroutine特点">goroutine特点</a></li>
-    <li><a href="#go运行时调度">go运行时调度</a></li>
-    <li><a href="#goroutine的调度点">goroutine的调度点</a>
+    <li><a href="#什么是-go-语言协程goroutine">什么是 Go 语言协程（goroutine）</a></li>
+    <li><a href="#goroutine-特点">goroutine 特点</a></li>
+    <li><a href="#go-运行时调度">Go 运行时调度</a></li>
+    <li><a href="#goroutine-的调度点">goroutine 的调度点</a>
       <ol>
-        <li><a href="#调用-runtimegosched-函数">调用 runtime·gosched 函数</a></li>
-        <li><a href="#调用runtimepark函数">调用runtime·park函数</a></li>
+        <li><a href="#调用-runtimegosched-函数">调用 <code>runtime.Gosched</code> 函数</a></li>
+        <li><a href="#调用-runtimegopark-函数">调用 <code>runtime.gopark</code> 函数</a></li>
         <li><a href="#慢系统调用">慢系统调用</a></li>
       </ol>
     </li>
     <li><a href="#gomaxprocs">GOMAXPROCS</a></li>
-    <li><a href="#go语言协程创建教程总结">Go语言协程创建教程总结</a></li>
+    <li><a href="#go-语言协程创建教程总结">Go 语言协程创建教程总结</a></li>
   </ol>
 
   <ol>
@@ -354,33 +354,31 @@
     <section class="article-content">
     
     
-    <p>Go 语言还提供 chan在多个 goroutine 间进行通信。goroutine 和 chan 是 Go 语言秉承的 CSP（Communicating Sequential Process）并发模式的重要实现基础。</p>
+    <p>Go 语言还提供 chan 在多个 goroutine 间进行通信。goroutine 和 chan 是 Go 语言秉承的 CSP（Communicating Sequential Process）并发模式的重要实现基础。</p>
 <h1 id="协程与线程的区别">协程与线程的区别
 </h1><ul>
-<li>一个线程可以多个协程，一个进程也可以单独拥有多个协程。</li>
-<li>线程进程都是同步机制，而协程则是异步。</li>
+<li>一个线程可以承载多个协程，一个进程也可以拥有多个协程。</li>
+<li>线程是操作系统调度的执行单元，协程通常由语言运行时或用户态调度器调度。</li>
 <li>协程能保留上一次调用时的状态，每次过程重入时，就相当于进入上一次调用的状态。</li>
-<li>线程是抢占式，而协程是非抢占式的，所以需要用户自己释放使用权来切换到其他协程，因此同一时间其实只有一个协程拥有运行权，相当于单线程的能力。</li>
-<li>协程并不是取代线程, 而且抽象于线程之上, 线程是被分割的 CPU 资源, 协程是组织好的代码流程, 协程需要线程来承载运行, 线程是协程的资源, 但协程不会直接使用线程, 协程直接利用的是执行器(Interceptor), 执行器可以关联任意线程或线程池, 可以使当前线程, UI线程, 或新建新程.。</li>
-<li>线程是协程的资源。协程通过 Interceptor 来间接使用线程这个资源。</li>
+<li>传统协程多为协作式调度，需要主动让出执行权；Go 的 goroutine 由 runtime 调度，并支持抢占式调度。</li>
+<li>协程并不是取代线程，而是在线程之上的更轻量抽象。Go 的 goroutine 需要由 M（操作系统线程）承载运行，并通过 runtime scheduler 完成调度。</li>
 </ul>
-<h1 id="go语言协程goroutine">Go语言协程(goroutine)
-</h1><h2 id="什么是go语言协程goroutine">什么是Go语言协程(goroutine)
+<h1 id="go-语言协程goroutine">Go 语言协程（goroutine）
+</h1><h2 id="什么是-go-语言协程goroutine">什么是 Go 语言协程（goroutine）
 </h2><p>goroutine 可以看作是 <strong><a class="link" href="https://haicoder.net/golang/golang-goroutine.html"  target="_blank" rel="noopener"
     >协程</a></strong> 的 <strong><a class="link" href="https://haicoder.net/golang/golang-tutorial.html"  target="_blank" rel="noopener"
-    >Go 语言</a></strong> 实现。<br>
-go的main函数会在后台自己调用一个协程<br>
-mian函数退出，程序退出</p>
-<h2 id="goroutine特点">goroutine特点
-</h2><p>goroutine 是协程的 <code>Go</code> 语言实现，它是语言原生支持的，相对于一般由库实现协程的方式，goroutine 更加强大，它的调度一定程度上是由 go 运行时（runtime）管理。 <br>
-其好处之一是，当某 goroutine 发生阻塞时（例如同步IO操作等），会自动出让 CPU 给其它 goroutine。<br>
-goroutine是非常轻量级的，它就是一段代码，一个 <strong><a class="link" href="https://haicoder.net/golang/golang-func.html"  target="_blank" rel="noopener"
-    >函数</a></strong> 入口，以及在堆上为其分配的一个堆栈（初始大小为4K，会随着程序的执行自动增长删除）。所以它非常廉价，我们可以很轻松的创建上万个 goroutine。</p>
-<h2 id="go运行时调度">go运行时调度
-</h2><p>默认的，所有 goroutine 会在一个原生线程里跑，也就是只使用了一个 CPU 核。在同一个原生线程里，如果当前goroutine 不发生阻塞，它是不会让出 CPU 时间给其他同线程的 goroutines 的。除了被系统调用阻塞的线程外，Go 运行库最多会启动 $GOMAXPROCS 个线程来运行 goroutine。<br>
-那么 goroutine 究竟是如何被调度的呢？我们从 go 程序启动开始说起。在go程序启动时会首先创建一个特殊的内核线程 sysmon，从名字就可以看出来它的职责是负责监控的，goroutine 背后的调度可以说就是靠它来搞定。<br>
-接下来，我们再看看它的调度模型，go 语言当前的实现是 N:M。即一定数量的用户线程映射到一定数量的 OS 线程上，这里的用户线程在 go 中指的就是 goroutine。go语言的调度模型需要弄清楚三个概念：M、P 和 G，如下图表示：<br>
-<img src="/img_1.png"
+    >Go 语言</a></strong> 实现。</p>
+<p>Go 的 main 函数运行在 main goroutine 中。main 函数退出后，程序会直接退出，其他尚未完成的 goroutine 也会随之结束。</p>
+<h2 id="goroutine-特点">goroutine 特点
+</h2><p>goroutine 是协程的 <code>Go</code> 语言实现，它是语言原生支持的，相对于一般由库实现协程的方式，goroutine 更加强大，它的调度一定程度上是由 Go 运行时（runtime）管理。
+其好处之一是，当某 goroutine 发生阻塞时（例如同步 I/O 操作等），会自动出让 CPU 给其它 goroutine。
+goroutine 是非常轻量级的，它就是一段代码，一个 <strong><a class="link" href="https://haicoder.net/golang/golang-func.html"  target="_blank" rel="noopener"
+    >函数</a></strong> 入口，以及为其分配的一个可动态增长的栈。所以它非常廉价，我们可以很轻松地创建上万个 goroutine。</p>
+<h2 id="go-运行时调度">Go 运行时调度
+</h2><p>默认情况下，Go 运行时会根据 <code>GOMAXPROCS</code> 决定同时执行 Go 代码的 P 的数量。Go 1.5 之后，<code>GOMAXPROCS</code> 默认等于机器的 CPU 逻辑核心数。</p>
+<p>那么 goroutine 究竟是如何被调度的呢？我们从 Go 程序启动开始说起。Go 程序启动时会创建一个特殊的监控线程 sysmon，它负责监控运行时状态，并参与抢占、网络轮询、定时器等调度相关工作。
+接下来，我们再看看它的调度模型，Go 语言当前的实现是 N:M。即一定数量的用户线程映射到一定数量的 OS 线程上，这里的用户线程在 Go 中指的就是 goroutine。Go 语言的调度模型需要弄清楚三个概念：M、P 和 G，如下图表示：</p>
+<p><img src="/img_1.png"
 	
 	
 	
@@ -389,31 +387,31 @@ goroutine是非常轻量级的，它就是一段代码，一个 <strong><a class
 		alt="img_1.png"
 	
 	
-><br>
-其中：</p>
+></p>
+<p>其中：</p>
 <ul>
-<li>G：表示 goroutine，每执行一次go f()就创建一个 G，包含要执行的函数和上下文信息。</li>
+<li>G：表示 goroutine，每执行一次 <code>go f()</code> 就创建一个 G，包含要执行的函数和上下文信息。</li>
 <li>全局队列（Global Queue）：存放等待运行的 G。</li>
-<li>P：表示 goroutine 执行所需的资源，最多有 GOMAXPROCS 个。</li>
-<li>P 的本地队列：同全局队列类似，存放的也是等待运行的G，存的数量有限，不超过256个。新建 G 时，G 优先加入到 P 的本地队列，如果本地队列满了会批量移动部分 G 到全局队列。</li>
-<li>M：线程想运行任务就得获取 P，从 P 的本地队列获取 G，当 P 的本地队列为空时，M 也会尝试从全局队列或其他 P 的本地队列获取 G。M 运行 G，G 执行之后，M 会从 P 获取下一个 G，不断重复下去。
-Goroutine 调度器和操作系统调度器是通过 M 结合起来的，每个 M 都代表了1个内核线程，操作系统调度器负责把内核线程分配到 CPU 的核上执行。</li>
+<li>P：表示 goroutine 执行所需的资源，最多有 <code>GOMAXPROCS</code> 个。</li>
+<li>P 的本地队列：同全局队列类似，存放的也是等待运行的 G，存的数量有限，不超过 256 个。新建 G 时，G 优先加入到 P 的本地队列，如果本地队列满了会批量移动部分 G 到全局队列。</li>
+<li>M：线程想运行任务就得获取 P，从 P 的本地队列获取 G，当 P 的本地队列为空时，M 也会尝试从全局队列或其他 P 的本地队列获取 G。M 运行 G，G 执行之后，M 会从 P 获取下一个 G，不断重复下去。</li>
 </ul>
-<h2 id="goroutine的调度点">goroutine的调度点
-</h2><h3 id="调用-runtimegosched-函数">调用 runtime·gosched 函数
-</h3><p>goroutine 主动放弃 CPU，该 goroutine 会被设置为 runnable 状态，然后放入一个全局等待队列中，而 P 将继续执行下一个 goroutine。使用 runtime·gosched 函数是一个主动的行为，一般是在执行长任务时又想其它goroutine 得到执行的机会时调用。</p>
-<h3 id="调用runtimepark函数">调用runtime·park函数
-</h3><p>goroutine 进入 waitting 状态，除非对其调用 runtime·ready 函数，否则该 goroutine 将永远不会得到执行。而 P 将继续执行下一个 goroutine。使用 runtime·park 函数一般是在某个条件如果得不到满足就不能继续运行下去时调用，当条件满足后需要使用 runtime·ready 以唤醒它（这里唤醒之后是否会加入全局等待队列还有待研究）。像 channel 操作，定时器中，网络 poll 等都有可能 park goroutine。</p>
+<p>Goroutine 调度器和操作系统调度器是通过 M 结合起来的，每个 M 都代表了 1 个内核线程，操作系统调度器负责把内核线程分配到 CPU 的核上执行。</p>
+<h2 id="goroutine-的调度点">goroutine 的调度点
+</h2><h3 id="调用-runtimegosched-函数">调用 <code>runtime.Gosched</code> 函数
+</h3><p>goroutine 主动放弃 CPU，该 goroutine 会被设置为 runnable 状态，然后放入等待队列中，而 P 将继续执行下一个 goroutine。使用 <code>runtime.Gosched</code> 函数是一个主动的行为，一般是在执行长任务时又想让其它 goroutine 得到执行机会时调用。</p>
+<h3 id="调用-runtimegopark-函数">调用 <code>runtime.gopark</code> 函数
+</h3><p>goroutine 进入 waiting 状态，除非被重新唤醒，否则该 goroutine 不会继续执行。而 P 将继续执行下一个 goroutine。<code>runtime.gopark</code> 是运行时内部函数，常见于 channel 操作、定时器、网络 poll 等需要挂起 goroutine 的场景。</p>
 <h3 id="慢系统调用">慢系统调用
-</h3><p>这样的系统调用会阻塞等待，为了使该 P 上挂着的其它 G 也能得到执行的机会，需要将这些 goroutine 转到另一个 OS 线程上去。具体的做法是：首先将该 P 设置为 syscall 状态，然后该线程进入系统调用阻塞等待。之前提到过的 sysmom 线程会定期扫描所有的 P，发现一个 P 处于了 syscall 的状态，就将 M 和 P 分离（实际上只有当 Syscall 执行时间超出某个阈值时，才会将 M 与 P 分离）。RUNTIME 会再分配一个 M 和这个 P 绑定，从而继续执行队列中的其它 G。而当之前阻塞的 M 从系统调用中返回后，会将该 goroutine 放入全局等待队列中，自己则sleep 去。<br>
-调度点的情况说清楚了，但整个模型还并不完整。我们知道当使用 go 去调用一个函数，会生成一个新的goroutine 放入当前P的队列中，那么什么时候生成别的 OS 线程，各个 OS 线程又是如何做负载均衡的呢？
-当 M 从队列中拿到一个可执行的 G 后，首先会去检查一下，自己的队列中是否还有等待的 G，如果还有等待的 G，并且也还有空闲的 P，此时就会通知 runtime 分配一个新的 M（如果有在睡觉的OS线程，则直接唤醒它，没有的话则生成一个新的OS线程）来分担任务。
-如果某个 M 发现队列为空之后，会首先从全局队列中取一个 G 来处理。如果全局队列也空了，则会随机从别的 P那里直接截取一半的队列过来（偷窃任务），如果发现所有的 P 都没有可供偷窃的 G 了，该 M 就会陷入沉睡。
-整个调度模型大致就是这样子了，和所有协程的调度一样，在响应时间上，这种协作式调度是硬伤。很容易导致某个协程长时间无法得到执行。但总体来说，它带来的好处更加让人惊叹。</p>
+</h3><p>这样的系统调用会阻塞等待。为了使该 P 上挂着的其它 G 也能得到执行机会，需要把 P 与当前阻塞的 M 分离，再把 P 交给其它 M 继续运行。具体来说，M 进入系统调用时，P 会被设置为 syscall 状态；sysmon 线程会定期扫描所有的 P，如果发现某个 P 长时间处于 syscall 状态，就会将 M 和 P 分离。runtime 会再分配或唤醒一个 M 与这个 P 绑定，从而继续执行队列中的其它 G。当之前阻塞的 M 从系统调用中返回后，会尝试重新获取 P；如果获取不到，就会将当前 G 放回可运行队列，M 进入休眠。</p>
+<p>调度点的情况说清楚了，但整个模型还并不完整。我们知道当使用 <code>go</code> 去调用一个函数，会生成一个新的 goroutine 放入当前 P 的队列中，那么什么时候生成别的 OS 线程，各个 OS 线程又是如何做负载均衡的呢？</p>
+<p>当 M 从队列中拿到一个可执行的 G 后，会检查自己的队列中是否还有等待的 G。如果还有等待的 G，并且也还有空闲的 P，此时就会通知 runtime 分配一个新的 M（如果有在睡眠的 OS 线程，则直接唤醒它，没有的话则生成一个新的 OS 线程）来分担任务。
+如果某个 M 发现队列为空，会首先从全局队列中取一个 G 来处理。如果全局队列也空了，则会随机从别的 P 那里截取一部分队列过来（work stealing）。如果所有的 P 都没有可供偷取的 G，该 M 就会进入休眠。</p>
+<p>整个调度模型大致就是这样。Go 的调度器既保留了 goroutine 轻量、创建成本低的优势，也通过抢占、系统调用监控、work stealing 等机制尽量避免单个 goroutine 长时间占用执行资源。</p>
 <h2 id="gomaxprocs">GOMAXPROCS
-</h2><p>Go运行时的调度器使用<code>GOMAXPROCS</code>参数来确定需要使用多少个 OS 线程来同时执行 Go 代码。默认值是机器上的 CPU 核心数。例如在一个 8 核心的机器上，GOMAXPROCS 默认为 8。Go语言中可以通过<code>runtime.GOMAXPROCS</code>函数设置当前程序并发时占用的 CPU逻辑核心数。（Go1.5版本之前，默认使用的是单核心执行。Go1.5 版本之后，默认使用全部的CPU 逻辑核心数。）</p>
-<h2 id="go语言协程创建教程总结">Go语言协程创建教程总结
-</h2><p>在 Go 程序中使用 go 关键字为一个函数创建一个 goroutine。在 golang 中，创建 goroutine 有两种方法，分别为：使用普通函数创建和使用匿名函数创建。普通函数创建 goroutine 语法：</p>
+</h2><p>Go 运行时的调度器使用 <code>GOMAXPROCS</code> 参数来确定可以同时执行 Go 代码的 P 的数量。默认值是机器上的 CPU 逻辑核心数。例如在一个 8 核心的机器上，<code>GOMAXPROCS</code> 默认为 8。Go 语言中可以通过 <code>runtime.GOMAXPROCS</code> 函数设置当前程序并发时占用的 CPU 逻辑核心数。（Go 1.5 版本之前，默认使用的是单核心执行。Go 1.5 版本之后，默认使用全部的 CPU 逻辑核心数。）</p>
+<h2 id="go-语言协程创建教程总结">Go 语言协程创建教程总结
+</h2><p>在 Go 程序中使用 <code>go</code> 关键字为一个函数创建一个 goroutine。在 Go 中，创建 goroutine 有两种方法，分别为：使用普通函数创建和使用匿名函数创建。普通函数创建 goroutine 语法：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
@@ -654,11 +652,11 @@ Goroutine 调度器和操作系统调度器是通过 M 结合起来的，每个 
 </span></span><span class="line"><span class="cl"><span class="o">//</span> <span class="err">锁住需要写入的数据</span>
 </span></span><span class="line"><span class="cl"><span class="n">rwMux</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>
 </span></span><span class="line"><span class="cl"><span class="o">//</span> <span class="err">释放锁</span>
-</span></span><span class="line"><span class="cl"><span class="n">rwMux</span><span class="o">.</span><span class="n">UnLock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="n">rwMux</span><span class="o">.</span><span class="n">Unlock</span><span class="p">()</span>
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h4 id="说明-2">说明
-</h4><p>首先，我们使用 sync.RWMutex 定义一个读写锁，接着使用 rwMux.Lock() 锁住需要写的数据，写完之后，使用 rwMux.UnLock() 释放锁。</p>
+</h4><p>首先，我们使用 sync.RWMutex 定义一个读写锁，接着使用 rwMux.Lock() 锁住需要写的数据，写完之后，使用 rwMux.Unlock() 释放锁。</p>
 <h3 id="读写锁读数据">读写锁读数据
 </h3><h4 id="语法-2">语法
 </h4><div class="highlight"><div class="chroma">
@@ -676,11 +674,11 @@ Goroutine 调度器和操作系统调度器是通过 M 结合起来的，每个 
 </span></span><span class="line"><span class="cl"><span class="o">//</span> <span class="err">锁住需要读取的数据</span>
 </span></span><span class="line"><span class="cl"><span class="n">rwMux</span><span class="o">.</span><span class="n">RLock</span><span class="p">()</span>
 </span></span><span class="line"><span class="cl"><span class="o">//</span> <span class="err">释放锁</span>
-</span></span><span class="line"><span class="cl"><span class="n">rwMux</span><span class="o">.</span><span class="n">RUnLock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="n">rwMux</span><span class="o">.</span><span class="n">RUnlock</span><span class="p">()</span>
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h4 id="说明-3">说明
-</h4><p>首先，我们使用 sync.RWMutex 定义一个读写锁，接着使用 rwMux.RLock() 锁住需要读的数据，读完之后，使用 rwMux.RUnLock() 释放锁。</p>
+</h4><p>首先，我们使用 sync.RWMutex 定义一个读写锁，接着使用 rwMux.RLock() 锁住需要读的数据，读完之后，使用 rwMux.RUnlock() 释放锁。</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -1219,11 +1217,11 @@ Go语言中的sync包中提供了一个针对只执行一次场景的解决方�
 </span></span><span class="line"><span class="cl">	<span class="nx">counter</span> <span class="kt">int64</span>
 </span></span><span class="line"><span class="cl"><span class="p">}</span>
 </span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="nx">CommonCounter</span><span class="p">)</span> <span class="nf">Inc</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">CommonCounter</span><span class="p">)</span> <span class="nf">Inc</span><span class="p">()</span> <span class="p">{</span>
 </span></span><span class="line"><span class="cl">	<span class="nx">c</span><span class="p">.</span><span class="nx">counter</span><span class="o">++</span>
 </span></span><span class="line"><span class="cl"><span class="p">}</span>
 </span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="nx">CommonCounter</span><span class="p">)</span> <span class="nf">Load</span><span class="p">()</span> <span class="kt">int64</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">CommonCounter</span><span class="p">)</span> <span class="nf">Load</span><span class="p">()</span> <span class="kt">int64</span> <span class="p">{</span>
 </span></span><span class="line"><span class="cl">	<span class="k">return</span> <span class="nx">c</span><span class="p">.</span><span class="nx">counter</span>
 </span></span><span class="line"><span class="cl"><span class="p">}</span>
 </span></span><span class="line"><span class="cl">
@@ -1275,7 +1273,7 @@ Go语言中的sync包中提供了一个针对只执行一次场景的解决方�
 </span></span><span class="line"><span class="cl">
 </span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
 </span></span><span class="line"><span class="cl">	<span class="nx">c1</span> <span class="o">:=</span> <span class="nx">CommonCounter</span><span class="p">{}</span> <span class="c1">// 非并发安全</span>
-</span></span><span class="line"><span class="cl">	<span class="nf">test</span><span class="p">(</span><span class="nx">c1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">	<span class="nf">test</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c1</span><span class="p">)</span>
 </span></span><span class="line"><span class="cl">	<span class="nx">c2</span> <span class="o">:=</span> <span class="nx">MutexCounter</span><span class="p">{}</span> <span class="c1">// 使用互斥锁实现并发安全</span>
 </span></span><span class="line"><span class="cl">	<span class="nf">test</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">c2</span><span class="p">)</span>
 </span></span><span class="line"><span class="cl">	<span class="nx">c3</span> <span class="o">:=</span> <span class="nx">AtomicCounter</span><span class="p">{}</span> <span class="c1">// 并发安全且比互斥锁效率更高</span>
