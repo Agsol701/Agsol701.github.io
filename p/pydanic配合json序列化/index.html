@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="pydanic配合json序列化\nCustomEncoder 与 json.dumps 的协作机制说明文档 一、背景与问题说明 在实际工程中，直接使用 json.dumps() 序列化复杂对象（如 Pydantic 对象、HTTP Header、流式对象等）往往会失败。失败原因在于：这些对象并非 JSON 原生支持的类型。\n为解决该问题，引入了一个 自定义 JSONEncoder（CustomEncoder），用于在序列化过程中对“问题对象”进行兜底处理。\n二、CustomEncoder 定义 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 class CustomEncoder(json.JSONEncoder): &#34;&#34;&#34; 直接dump pydantic 对象存在问题，这里加一个 hack &#34;&#34;&#34; def default(self, obj): &#34;&#34;&#34;json dump default&#34;&#34;&#34; if obj.__class__.__name__ == &#34;SerializationIterator&#34;: return None if obj.__class__.__name__ == &#34;CaseInsensitiveDict&#34;: return dict(obj) if isinstance(obj, StreamingValue): return &#34;&#34; return super().default(obj) 该类的核心在于 重写 JSONEncoder.default() 方法。\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="本文先系统讲解 Pydantic 的核心用法，再深入分析在涉及 Pydantic 对象的 json.dumps 场景中，如何通过自定义 JSONEncoder 解决序列化失败问题。\n一、Pydantic 用法系统讲解 1. Pydantic 是什么 Pydantic 是 Python 中最流行的数据验证与序列化库，核心特性：\n基于 Python 类型注解（type hints）声明数据模型 运行时自动完成类型校验、类型强转、字段约束 提供 JSON / dict 双向转换能力 是 FastAPI、LangChain、OpenAI SDK 等主流框架的事实标准 当前主流版本为 Pydantic v2（基于 Rust 实现，性能比 v1 提升 5~50 倍） 本文均以 Pydantic v2 为准，并在差异点上对比 v1。\n2. 基本模型定义 1 2 3 4 5 6 7 8 9 10 11 12 from pydantic import BaseModel from typing import Optional, List from datetime import datetime class User(BaseModel): &#34;&#34;&#34; 用户模型 &#34;&#34;&#34; id: int name: str email: Optional[str] = None tags: List[str] = [] created_at: datetime 特性：\n">
 <title>pydanic配合json序列化</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/pydanic%E9%85%8D%E5%90%88json%E5%BA%8F%E5%88%97%E5%8C%96/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="pydanic配合json序列化">
-<meta property='og:description' content="pydanic配合json序列化\nCustomEncoder 与 json.dumps 的协作机制说明文档 一、背景与问题说明 在实际工程中，直接使用 json.dumps() 序列化复杂对象（如 Pydantic 对象、HTTP Header、流式对象等）往往会失败。失败原因在于：这些对象并非 JSON 原生支持的类型。\n为解决该问题，引入了一个 自定义 JSONEncoder（CustomEncoder），用于在序列化过程中对“问题对象”进行兜底处理。\n二、CustomEncoder 定义 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 class CustomEncoder(json.JSONEncoder): &#34;&#34;&#34; 直接dump pydantic 对象存在问题，这里加一个 hack &#34;&#34;&#34; def default(self, obj): &#34;&#34;&#34;json dump default&#34;&#34;&#34; if obj.__class__.__name__ == &#34;SerializationIterator&#34;: return None if obj.__class__.__name__ == &#34;CaseInsensitiveDict&#34;: return dict(obj) if isinstance(obj, StreamingValue): return &#34;&#34; return super().default(obj) 该类的核心在于 重写 JSONEncoder.default() 方法。\n">
+<meta property='og:description' content="本文先系统讲解 Pydantic 的核心用法，再深入分析在涉及 Pydantic 对象的 json.dumps 场景中，如何通过自定义 JSONEncoder 解决序列化失败问题。\n一、Pydantic 用法系统讲解 1. Pydantic 是什么 Pydantic 是 Python 中最流行的数据验证与序列化库，核心特性：\n基于 Python 类型注解（type hints）声明数据模型 运行时自动完成类型校验、类型强转、字段约束 提供 JSON / dict 双向转换能力 是 FastAPI、LangChain、OpenAI SDK 等主流框架的事实标准 当前主流版本为 Pydantic v2（基于 Rust 实现，性能比 v1 提升 5~50 倍） 本文均以 Pydantic v2 为准，并在差异点上对比 v1。\n2. 基本模型定义 1 2 3 4 5 6 7 8 9 10 11 12 from pydantic import BaseModel from typing import Optional, List from datetime import datetime class User(BaseModel): &#34;&#34;&#34; 用户模型 &#34;&#34;&#34; id: int name: str email: Optional[str] = None tags: List[str] = [] created_at: datetime 特性：\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/pydanic%E9%85%8D%E5%90%88json%E5%BA%8F%E5%88%97%E5%8C%96/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='python' /><meta property='article:tag' content='Pydanic' /><meta property='article:published_time' content='2025-12-21T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2025-12-21T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="pydanic配合json序列化">
-<meta name="twitter:description" content="pydanic配合json序列化\nCustomEncoder 与 json.dumps 的协作机制说明文档 一、背景与问题说明 在实际工程中，直接使用 json.dumps() 序列化复杂对象（如 Pydantic 对象、HTTP Header、流式对象等）往往会失败。失败原因在于：这些对象并非 JSON 原生支持的类型。\n为解决该问题，引入了一个 自定义 JSONEncoder（CustomEncoder），用于在序列化过程中对“问题对象”进行兜底处理。\n二、CustomEncoder 定义 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 class CustomEncoder(json.JSONEncoder): &#34;&#34;&#34; 直接dump pydantic 对象存在问题，这里加一个 hack &#34;&#34;&#34; def default(self, obj): &#34;&#34;&#34;json dump default&#34;&#34;&#34; if obj.__class__.__name__ == &#34;SerializationIterator&#34;: return None if obj.__class__.__name__ == &#34;CaseInsensitiveDict&#34;: return dict(obj) if isinstance(obj, StreamingValue): return &#34;&#34; return super().default(obj) 该类的核心在于 重写 JSONEncoder.default() 方法。\n">
+<meta name="twitter:description" content="本文先系统讲解 Pydantic 的核心用法，再深入分析在涉及 Pydantic 对象的 json.dumps 场景中，如何通过自定义 JSONEncoder 解决序列化失败问题。\n一、Pydantic 用法系统讲解 1. Pydantic 是什么 Pydantic 是 Python 中最流行的数据验证与序列化库，核心特性：\n基于 Python 类型注解（type hints）声明数据模型 运行时自动完成类型校验、类型强转、字段约束 提供 JSON / dict 双向转换能力 是 FastAPI、LangChain、OpenAI SDK 等主流框架的事实标准 当前主流版本为 Pydantic v2（基于 Rust 实现，性能比 v1 提升 5~50 倍） 本文均以 Pydantic v2 为准，并在差异点上对比 v1。\n2. 基本模型定义 1 2 3 4 5 6 7 8 9 10 11 12 from pydantic import BaseModel from typing import Optional, List from datetime import datetime class User(BaseModel): &#34;&#34;&#34; 用户模型 &#34;&#34;&#34; id: int name: str email: Optional[str] = None tags: List[str] = [] created_at: datetime 特性：\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -227,6 +227,39 @@
         <div class="widget--toc">
             <nav id="TableOfContents">
   <ol>
+    <li><a href="#1-pydantic-是什么">1. Pydantic 是什么</a></li>
+    <li><a href="#2-基本模型定义">2. 基本模型定义</a>
+      <ol>
+        <li><a href="#21-类型校验的核心逻辑先强转转不过去就报错">2.1 类型校验的核心逻辑：先强转，转不过去就报错</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-field字段级约束与元信息">3. Field：字段级约束与元信息</a></li>
+    <li><a href="#4-校验器validator">4. 校验器（Validator）</a>
+      <ol>
+        <li><a href="#41-字段校验器-field_validator">4.1 字段校验器 <code>@field_validator</code></a></li>
+        <li><a href="#42-模型校验器-model_validator">4.2 模型校验器 <code>@model_validator</code></a>
+          <ol>
+            <li><a href="#421-modebefore字段解析前介入">4.2.1 <code>mode=&quot;before&quot;</code>：字段解析前介入</a></li>
+            <li><a href="#422-modeafter字段解析后介入">4.2.2 <code>mode=&quot;after&quot;</code>：字段解析后介入</a></li>
+            <li><a href="#423-典型场景">4.2.3 典型场景</a></li>
+            <li><a href="#424-before-vs-after-对比">4.2.4 before vs after 对比</a></li>
+            <li><a href="#425-执行顺序">4.2.5 执行顺序</a></li>
+            <li><a href="#426-v1--v2-迁移">4.2.6 v1 → v2 迁移</a></li>
+          </ol>
+        </li>
+      </ol>
+    </li>
+    <li><a href="#5-序列化模型--dict--json">5. 序列化（模型 → dict / JSON）</a></li>
+    <li><a href="#6-反序列化dict--json--模型">6. 反序列化（dict / JSON → 模型）</a></li>
+    <li><a href="#7-模型配置-model_config">7. 模型配置 <code>model_config</code></a></li>
+    <li><a href="#8-嵌套模型与组合">8. 嵌套模型与组合</a></li>
+    <li><a href="#9-常见类型支持">9. 常见类型支持</a></li>
+    <li><a href="#10-错误处理">10. 错误处理</a></li>
+    <li><a href="#11-v1-vs-v2-关键-api-对照速查">11. v1 vs v2 关键 API 对照速查</a></li>
+    <li><a href="#12-进入下文的衔接">12. 进入下文的衔接</a></li>
+  </ol>
+
+  <ol>
     <li><a href="#一背景与问题说明">一、背景与问题说明</a></li>
     <li><a href="#二customencoder-定义">二、CustomEncoder 定义</a></li>
     <li><a href="#三jsondumps-clscustomencoder-的工作机制">三、json.dumps(&hellip;, cls=CustomEncoder) 的工作机制</a>
@@ -324,8 +357,906 @@
     <section class="article-content">
     
     
-    <p>pydanic配合json序列化</p>
-<h1 id="customencoder-与-jsondumps-的协作机制说明文档">CustomEncoder 与 json.dumps 的协作机制说明文档
+    <p>本文先系统讲解 Pydantic 的核心用法，再深入分析在涉及 Pydantic 对象的 <code>json.dumps</code> 场景中，如何通过自定义 <code>JSONEncoder</code> 解决序列化失败问题。</p>
+<hr>
+<h1 id="一pydantic-用法系统讲解">一、Pydantic 用法系统讲解
+</h1><h2 id="1-pydantic-是什么">1. Pydantic 是什么
+</h2><p>Pydantic 是 Python 中最流行的数据验证与序列化库，核心特性：</p>
+<ul>
+<li>基于 Python 类型注解（type hints）声明数据模型</li>
+<li>运行时自动完成类型校验、类型强转、字段约束</li>
+<li>提供 JSON / dict 双向转换能力</li>
+<li>是 FastAPI、LangChain、OpenAI SDK 等主流框架的事实标准</li>
+<li>当前主流版本为 <strong>Pydantic v2</strong>（基于 Rust 实现，性能比 v1 提升 5~50 倍）</li>
+</ul>
+<blockquote>
+<p>本文均以 Pydantic v2 为准，并在差异点上对比 v1。</p></blockquote>
+<h2 id="2-基本模型定义">2. 基本模型定义
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">List</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">User</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34; 用户模型 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
+</span></span><span class="line"><span class="cl">    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+</span></span><span class="line"><span class="cl">    <span class="n">email</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+</span></span><span class="line"><span class="cl">    <span class="n">tags</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">created_at</span><span class="p">:</span> <span class="n">datetime</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>特性：</p>
+<ul>
+<li>字段类型由类型注解推导</li>
+<li>没有默认值 = 必填字段</li>
+<li><code>Optional[X]</code> 表示允许 <code>None</code>，但仍是必填（除非有默认值）</li>
+<li>实例化时自动校验和类型强转：</li>
+</ul>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="n">user</span> <span class="o">=</span> <span class="n">User</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="s2">&#34;1&#34;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&#34;alice&#34;</span><span class="p">,</span> <span class="n">created_at</span><span class="o">=</span><span class="s2">&#34;2026-06-23T10:00:00&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># id 自动从 &#34;1&#34; 转为 1</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># created_at 自动从 ISO 字符串转为 datetime 对象</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="21-类型校验的核心逻辑先强转转不过去就报错">2.1 类型校验的核心逻辑：先强转，转不过去就报错
+</h3><p>Pydantic v2 默认运行在 <strong>lax mode（宽松模式）</strong> 下，整体逻辑可以总结为一句话：</p>
+<blockquote>
+<p><strong>先尝试把输入强转成声明的类型，能转就用转换后的值，转不过去就抛 <code>ValidationError</code>。</strong></p></blockquote>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart LR
+</span></span><span class="line"><span class="cl">    A[输入值] --&gt; B{类型匹配?}
+</span></span><span class="line"><span class="cl">    B -- 是 --&gt; E[直接使用]
+</span></span><span class="line"><span class="cl">    B -- 否 --&gt; C{能强转?}
+</span></span><span class="line"><span class="cl">    C -- 能 --&gt; D[转换后使用]
+</span></span><span class="line"><span class="cl">    C -- 不能 --&gt; F[ValidationError]
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>具体表现（以 <code>id: int</code> 为例）：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>输入</th>
+          <th>结果</th>
+          <th>说明</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>id=1</code></td>
+          <td>✅ <code>1</code></td>
+          <td>类型完全匹配</td>
+      </tr>
+      <tr>
+          <td><code>id=&quot;1&quot;</code></td>
+          <td>✅ <code>1</code></td>
+          <td>字符串可解析为整数，自动强转</td>
+      </tr>
+      <tr>
+          <td><code>id=True</code></td>
+          <td>✅ <code>1</code></td>
+          <td>Python 中 <code>bool</code> 是 <code>int</code> 子类</td>
+      </tr>
+      <tr>
+          <td><code>id=1.5</code></td>
+          <td>❌ 报错</td>
+          <td>默认不允许有损转换（float → int）</td>
+      </tr>
+      <tr>
+          <td><code>id=&quot;abc&quot;</code></td>
+          <td>❌ 报错</td>
+          <td>字符串无法解析为整数</td>
+      </tr>
+      <tr>
+          <td><code>id=None</code></td>
+          <td>❌ 报错</td>
+          <td>类型不是 <code>Optional[int]</code></td>
+      </tr>
+  </tbody>
+</table></div>
+<p>报错示例：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">ValidationError</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">try</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="n">User</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="s2">&#34;abc&#34;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&#34;alice&#34;</span><span class="p">,</span> <span class="n">created_at</span><span class="o">=</span><span class="s2">&#34;2026-06-23T10:00:00&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">except</span> <span class="n">ValidationError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 1 validation error for User</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># id</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   Input should be a valid integer, unable to parse string as an integer</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   [type=int_parsing, input_value=&#39;abc&#39;, input_type=str]</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>设计含义：</p>
+<ul>
+<li><strong>不会静默吞掉脏数据</strong>：转换失败立即报错，模型内部字段类型是可信的</li>
+<li><strong>兼容真实世界的输入</strong>：HTTP、表单、JSON、环境变量等场景下入参大多是字符串，自动强转省去大量手工 <code>int()</code> / <code>parse_datetime()</code></li>
+</ul>
+<p>如果不希望走自动强转，有两种收紧方式：</p>
+<p><strong>方式 1：字段级使用 Strict 类型</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">StrictInt</span><span class="p">,</span> <span class="n">StrictStr</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">User</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34; 严格类型的用户模型 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">id</span><span class="p">:</span> <span class="n">StrictInt</span>    <span class="c1"># 只接受 int，&#34;1&#34; 会直接报错</span>
+</span></span><span class="line"><span class="cl">    <span class="n">name</span><span class="p">:</span> <span class="n">StrictStr</span>  <span class="c1"># 只接受 str</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>方式 2：全局开启 strict 模式</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">ConfigDict</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">User</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34; 全局严格模式 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">model_config</span> <span class="o">=</span> <span class="n">ConfigDict</span><span class="p">(</span><span class="n">strict</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
+</span></span><span class="line"><span class="cl">    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>开启后所有字段都不再做隐式强转，必须类型完全匹配，否则报错。</p>
+<h2 id="3-field字段级约束与元信息">3. Field：字段级约束与元信息
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">Product</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34; 商品模型 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">min_length</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_length</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&#34;商品名&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">price</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">gt</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&#34;单价，必须大于 0&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">stock</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">sku</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="s2">&#34;SKU-&#34;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">timestamp</span><span class="p">())))</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>常用约束参数：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>参数</th>
+          <th>含义</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>...</code>（Ellipsis）</td>
+          <td>必填</td>
+      </tr>
+      <tr>
+          <td><code>default</code> / <code>default_factory</code></td>
+          <td>默认值 / 默认值工厂函数</td>
+      </tr>
+      <tr>
+          <td><code>gt / ge / lt / le</code></td>
+          <td>数值范围</td>
+      </tr>
+      <tr>
+          <td><code>min_length / max_length</code></td>
+          <td>字符串/列表长度</td>
+      </tr>
+      <tr>
+          <td><code>pattern</code></td>
+          <td>正则约束（v1 中是 <code>regex</code>）</td>
+      </tr>
+      <tr>
+          <td><code>alias</code></td>
+          <td>序列化/反序列化使用的别名</td>
+      </tr>
+  </tbody>
+</table></div>
+<h2 id="4-校验器validator">4. 校验器（Validator）
+</h2><h3 id="41-字段校验器-field_validator">4.1 字段校验器 <code>@field_validator</code>
+</h3><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">field_validator</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">User</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34; 用户模型 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+</span></span><span class="line"><span class="cl">    <span class="n">email</span><span class="p">:</span> <span class="nb">str</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nd">@field_validator</span><span class="p">(</span><span class="s2">&#34;email&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nd">@classmethod</span>
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">check_email</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;&#34;&#34; 校验 email 格式 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="s2">&#34;@&#34;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">v</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&#34;邮箱格式不合法&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="n">v</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="42-模型校验器-model_validator">4.2 模型校验器 <code>@model_validator</code>
+</h3><p>用于<strong>跨字段</strong>或<strong>整体对象</strong>的校验，与 <code>@field_validator</code>（只能看到单字段）互补。有两种 mode：</p>
+<h4 id="421-modebefore字段解析前介入">4.2.1 <code>mode=&quot;before&quot;</code>：字段解析前介入
+</h4><p>接收<strong>原始输入</strong>（通常是 dict），可以做字段补全、字段重写、输入归一化。此时字段还未做类型转换。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Any</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">model_validator</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">Order</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34; 订单 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">price</span><span class="p">:</span> <span class="nb">float</span>
+</span></span><span class="line"><span class="cl">    <span class="n">quantity</span><span class="p">:</span> <span class="nb">int</span>
+</span></span><span class="line"><span class="cl">    <span class="n">total</span><span class="p">:</span> <span class="nb">float</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nd">@model_validator</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">&#34;before&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nd">@classmethod</span>
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">fill_total</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;&#34;&#34; 字段校验前自动补算 total &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="ow">and</span> <span class="s2">&#34;total&#34;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">            <span class="n">data</span><span class="p">[</span><span class="s2">&#34;total&#34;</span><span class="p">]</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&#34;price&#34;</span><span class="p">]</span> <span class="o">*</span> <span class="n">data</span><span class="p">[</span><span class="s2">&#34;quantity&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="n">data</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>要点：</p>
+<ul>
+<li>必须 <code>@classmethod</code>，第一个参数是 <code>cls</code></li>
+<li>入参是<strong>未校验的原始数据</strong>，类型不一定是 dict，需要 <code>isinstance</code> 判断</li>
+<li>返回值会继续传给字段解析</li>
+</ul>
+<h5 id="为什么-data-不一定是-dict">为什么 <code>data</code> 不一定是 dict
+</h5><p>直觉上&quot;传给模型的就是 dict&quot;，但 Pydantic 的入口不止一个，<code>data</code> 可能是以下几种来源：</p>
+<p><strong>① 直接传 dict —— 最常见，<code>data</code> 是 dict</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="n">Order</span><span class="o">.</span><span class="n">model_validate</span><span class="p">({</span><span class="s2">&#34;price&#34;</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span> <span class="s2">&#34;quantity&#34;</span><span class="p">:</span> <span class="mi">2</span><span class="p">})</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># before 收到的 data = {&#34;price&#34;: 10, &#34;quantity&#34;: 2}  ← dict</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>② 用另一个模型实例去构建 —— <code>data</code> 是模型实例</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="n">old</span> <span class="o">=</span> <span class="n">Order</span><span class="p">(</span><span class="n">price</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">quantity</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">total</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="n">new</span> <span class="o">=</span> <span class="n">Order</span><span class="o">.</span><span class="n">model_validate</span><span class="p">(</span><span class="n">old</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># before 收到的 data = old (Order 实例)  ← 不是 dict</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>③ 从 ORM / 任意对象构建（<code>from_attributes=True</code>）—— <code>data</code> 是任意对象</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">Order</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34; 订单 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">model_config</span> <span class="o">=</span> <span class="n">ConfigDict</span><span class="p">(</span><span class="n">from_attributes</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">price</span><span class="p">:</span> <span class="nb">float</span>
+</span></span><span class="line"><span class="cl">    <span class="n">quantity</span><span class="p">:</span> <span class="nb">int</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">Order</span><span class="o">.</span><span class="n">model_validate</span><span class="p">(</span><span class="n">order_orm</span><span class="p">)</span>  <span class="c1"># SQLAlchemy 对象</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># before 收到的 data = order_orm (ORM 实例)  ← 不是 dict</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>④ 嵌套模型 —— 子模型字段收到的是子模型实例</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">Address</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34; 地址 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">city</span><span class="p">:</span> <span class="nb">str</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">User</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34; 用户 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">addr</span><span class="p">:</span> <span class="n">Address</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">addr</span> <span class="o">=</span> <span class="n">Address</span><span class="p">(</span><span class="n">city</span><span class="o">=</span><span class="s2">&#34;bj&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="n">User</span><span class="o">.</span><span class="n">model_validate</span><span class="p">({</span><span class="s2">&#34;addr&#34;</span><span class="p">:</span> <span class="n">addr</span><span class="p">})</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Address 的 before 校验器看到的 data = addr (Address 实例)  ← 不是 dict</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h5 id="所以必须-isinstancedata-dict-判断">所以必须 <code>isinstance(data, dict)</code> 判断
+</h5><p>如果直接写 <code>data[&quot;xxx&quot;] = ...</code>，当 <code>data</code> 是模型实例或 ORM 对象时会 <code>TypeError</code> 崩溃。安全模式是：<strong>只在 dict 分支里做改写，其他类型原样透传</strong>，Pydantic 自己会处理对象到字段的取值。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="nd">@model_validator</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">&#34;before&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nd">@classmethod</span>
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">fill_total</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34; 字段校验前自动补算 total &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="ow">and</span> <span class="s2">&#34;total&#34;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="n">data</span><span class="p">[</span><span class="s2">&#34;total&#34;</span><span class="p">]</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&#34;price&#34;</span><span class="p">]</span> <span class="o">*</span> <span class="n">data</span><span class="p">[</span><span class="s2">&#34;quantity&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">data</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h4 id="422-modeafter字段解析后介入">4.2.2 <code>mode=&quot;after&quot;</code>：字段解析后介入
+</h4><p>接收<strong>已构造好的模型实例</strong> <code>self</code>，所有字段已完成类型转换，适合做跨字段一致性检查。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">PasswordReset</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34; 重置密码请求 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">password</span><span class="p">:</span> <span class="nb">str</span>
+</span></span><span class="line"><span class="cl">    <span class="n">password_confirm</span><span class="p">:</span> <span class="nb">str</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nd">@model_validator</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">&#34;after&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">passwords_match</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&#34;PasswordReset&#34;</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;&#34;&#34; 跨字段一致性校验 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">password</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">password_confirm</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&#34;两次密码不一致&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="bp">self</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>要点：</p>
+<ul>
+<li><strong>不是</strong> <code>@classmethod</code>，第一个参数是 <code>self</code></li>
+<li>必须返回 <code>self</code>（或一个新实例）</li>
+<li>抛 <code>ValueError</code> / <code>AssertionError</code> 即可，Pydantic 会自动包成 <code>ValidationError</code>，不要直接抛 <code>ValidationError</code></li>
+</ul>
+<h4 id="423-典型场景">4.2.3 典型场景
+</h4><p><strong>场景 1：跨字段约束</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">DateRange</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34; 日期区间 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">start</span><span class="p">:</span> <span class="n">datetime</span>
+</span></span><span class="line"><span class="cl">    <span class="n">end</span><span class="p">:</span> <span class="n">datetime</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nd">@model_validator</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">&#34;after&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">check_order</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&#34;DateRange&#34;</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;&#34;&#34; end 必须晚于 start &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">end</span> <span class="o">&lt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">start</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&#34;end 必须晚于 start&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="bp">self</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>场景 2：互斥/必选其一（oneOf / anyOf）</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">LoginRequest</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34; 登录请求，三选一 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">username</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+</span></span><span class="line"><span class="cl">    <span class="n">email</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+</span></span><span class="line"><span class="cl">    <span class="n">phone</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+</span></span><span class="line"><span class="cl">    <span class="n">password</span><span class="p">:</span> <span class="nb">str</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nd">@model_validator</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">&#34;after&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">at_least_one_identifier</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&#34;LoginRequest&#34;</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;&#34;&#34; username/email/phone 至少提供一个 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="ow">not</span> <span class="nb">any</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">username</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">email</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">phone</span><span class="p">]):</span>
+</span></span><span class="line"><span class="cl">            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&#34;username/email/phone 至少提供一个&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="bp">self</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>场景 3：输入归一化（before 最适合）</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">User</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34; 兼容驼峰/下划线 key 的用户模型 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+</span></span><span class="line"><span class="cl">    <span class="n">email</span><span class="p">:</span> <span class="nb">str</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nd">@model_validator</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">&#34;before&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nd">@classmethod</span>
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">normalize_keys</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;&#34;&#34; 兼容驼峰/下划线两种 key &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="s2">&#34;userName&#34;</span> <span class="ow">in</span> <span class="n">data</span> <span class="ow">and</span> <span class="s2">&#34;name&#34;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">                <span class="n">data</span><span class="p">[</span><span class="s2">&#34;name&#34;</span><span class="p">]</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&#34;userName&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="s2">&#34;email&#34;</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">                <span class="n">data</span><span class="p">[</span><span class="s2">&#34;email&#34;</span><span class="p">]</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&#34;email&#34;</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="n">data</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>场景 4：根据条件动态填充默认值</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">Job</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34; 任务模型 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">type</span><span class="p">:</span> <span class="nb">str</span>
+</span></span><span class="line"><span class="cl">    <span class="n">timeout</span><span class="p">:</span> <span class="nb">int</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nd">@model_validator</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">&#34;before&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nd">@classmethod</span>
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">default_timeout_by_type</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;&#34;&#34; 不同 type 走不同默认 timeout &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="ow">and</span> <span class="s2">&#34;timeout&#34;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">            <span class="n">data</span><span class="p">[</span><span class="s2">&#34;timeout&#34;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&#34;quick&#34;</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span> <span class="s2">&#34;long&#34;</span><span class="p">:</span> <span class="mi">600</span><span class="p">}</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&#34;type&#34;</span><span class="p">),</span> <span class="mi">60</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="n">data</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h4 id="424-before-vs-after-对比">4.2.4 before vs after 对比
+</h4><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>维度</th>
+          <th>mode=&ldquo;before&rdquo;</th>
+          <th>mode=&ldquo;after&rdquo;</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>时机</td>
+          <td>字段解析<strong>前</strong></td>
+          <td>字段解析<strong>后</strong></td>
+      </tr>
+      <tr>
+          <td>入参</td>
+          <td>原始数据（通常是 dict）</td>
+          <td>已构造的实例 <code>self</code></td>
+      </tr>
+      <tr>
+          <td>装饰器</td>
+          <td>必须 <code>@classmethod</code></td>
+          <td>不要 <code>@classmethod</code></td>
+      </tr>
+      <tr>
+          <td>返回</td>
+          <td>返回处理后的数据</td>
+          <td>返回 <code>self</code></td>
+      </tr>
+      <tr>
+          <td>适合</td>
+          <td>数据清洗、字段补全、归一化</td>
+          <td>跨字段校验、不变式检查</td>
+      </tr>
+      <tr>
+          <td>类型安全</td>
+          <td>字段还没转，类型不可信</td>
+          <td>字段已转，类型可信</td>
+      </tr>
+  </tbody>
+</table></div>
+<h4 id="425-执行顺序">4.2.5 执行顺序
+</h4><p>校验器按以下顺序执行：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart LR
+</span></span><span class="line"><span class="cl">    A[原始输入] --&gt; B[model_validator&lt;br/&gt;mode=before]
+</span></span><span class="line"><span class="cl">    B --&gt; C[field_validator&lt;br/&gt;各字段校验]
+</span></span><span class="line"><span class="cl">    C --&gt; D[model_validator&lt;br/&gt;mode=after]
+</span></span><span class="line"><span class="cl">    D --&gt; E[模型实例]
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>多个同 mode 的校验器，按定义顺序执行。</p>
+<h4 id="426-v1--v2-迁移">4.2.6 v1 → v2 迁移
+</h4><p>v1 的 <code>@root_validator(pre=True/False)</code> 在 v2 中对应 <code>@model_validator(mode=&quot;before&quot;/&quot;after&quot;)</code>，签名也变了：</p>
+<ul>
+<li>v1 <code>after</code>：<code>def f(cls, values: dict) -&gt; dict</code></li>
+<li>v2 <code>after</code>：<code>def f(self) -&gt; Self</code></li>
+</ul>
+<h2 id="5-序列化模型--dict--json">5. 序列化（模型 → dict / JSON）
+</h2><p>Pydantic v2 提供两个核心方法：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="n">user</span><span class="o">.</span><span class="n">model_dump</span><span class="p">()</span>        <span class="c1"># → dict</span>
+</span></span><span class="line"><span class="cl"><span class="n">user</span><span class="o">.</span><span class="n">model_dump_json</span><span class="p">()</span>   <span class="c1"># → str (JSON)</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>常用参数：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="n">user</span><span class="o">.</span><span class="n">model_dump</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">exclude</span><span class="o">=</span><span class="p">{</span><span class="s2">&#34;email&#34;</span><span class="p">},</span>          <span class="c1"># 排除字段</span>
+</span></span><span class="line"><span class="cl">    <span class="n">include</span><span class="o">=</span><span class="p">{</span><span class="s2">&#34;id&#34;</span><span class="p">,</span> <span class="s2">&#34;name&#34;</span><span class="p">},</span>     <span class="c1"># 只保留字段</span>
+</span></span><span class="line"><span class="cl">    <span class="n">exclude_none</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>          <span class="c1"># 排除 None 值</span>
+</span></span><span class="line"><span class="cl">    <span class="n">exclude_unset</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>         <span class="c1"># 排除未显式设置的字段</span>
+</span></span><span class="line"><span class="cl">    <span class="n">exclude_defaults</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>      <span class="c1"># 排除等于默认值的字段</span>
+</span></span><span class="line"><span class="cl">    <span class="n">by_alias</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>              <span class="c1"># 使用 alias 作为 key</span>
+</span></span><span class="line"><span class="cl">    <span class="n">mode</span><span class="o">=</span><span class="s2">&#34;json&#34;</span><span class="p">,</span>                <span class="c1"># 让 datetime/Decimal 等转为 JSON 兼容类型</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><blockquote>
+<p>v1 对应的是 <code>dict()</code> 和 <code>json()</code>，v2 中已废弃但仍兼容。</p></blockquote>
+<h2 id="6-反序列化dict--json--模型">6. 反序列化（dict / JSON → 模型）
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="n">User</span><span class="o">.</span><span class="n">model_validate</span><span class="p">({</span><span class="s2">&#34;id&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&#34;name&#34;</span><span class="p">:</span> <span class="s2">&#34;alice&#34;</span><span class="p">,</span> <span class="s2">&#34;created_at&#34;</span><span class="p">:</span> <span class="s2">&#34;2026-06-23T10:00:00&#34;</span><span class="p">})</span>
+</span></span><span class="line"><span class="cl"><span class="n">User</span><span class="o">.</span><span class="n">model_validate_json</span><span class="p">(</span><span class="s1">&#39;{&#34;id&#34;: 1, &#34;name&#34;: &#34;alice&#34;, &#34;created_at&#34;: &#34;2026-06-23T10:00:00&#34;}&#39;</span><span class="p">)</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><ul>
+<li><code>model_validate</code>：从 dict / 任意对象构建</li>
+<li><code>model_validate_json</code>：直接从 JSON 字符串构建（性能更优，省一次 <code>json.loads</code>）</li>
+</ul>
+<h2 id="7-模型配置-model_config">7. 模型配置 <code>model_config</code>
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">ConfigDict</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">Strict</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34; 严格模式模型 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">model_config</span> <span class="o">=</span> <span class="n">ConfigDict</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">        <span class="n">extra</span><span class="o">=</span><span class="s2">&#34;forbid&#34;</span><span class="p">,</span>          <span class="c1"># 出现未声明字段直接报错（默认 ignore）</span>
+</span></span><span class="line"><span class="cl">        <span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>             <span class="c1"># 实例不可变（hashable）</span>
+</span></span><span class="line"><span class="cl">        <span class="n">str_strip_whitespace</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="n">populate_by_name</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>   <span class="c1"># 允许同时通过字段名和 alias 赋值</span>
+</span></span><span class="line"><span class="cl">        <span class="n">arbitrary_types_allowed</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>  <span class="c1"># 允许任意类型字段（不做校验）</span>
+</span></span><span class="line"><span class="cl">    <span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h2 id="8-嵌套模型与组合">8. 嵌套模型与组合
+</h2><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">Address</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34; 地址 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">city</span><span class="p">:</span> <span class="nb">str</span>
+</span></span><span class="line"><span class="cl">    <span class="n">zipcode</span><span class="p">:</span> <span class="nb">str</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">UserWithAddress</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34; 带地址的用户 &#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+</span></span><span class="line"><span class="cl">    <span class="n">addresses</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Address</span><span class="p">]</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>model_dump()</code> 会自动递归处理嵌套结构，无需手动展开。</p>
+<h2 id="9-常见类型支持">9. 常见类型支持
+</h2><p>Pydantic 原生支持的类型远不止基础类型：</p>
+<ul>
+<li>标准库：<code>datetime / date / time / timedelta / UUID / Decimal / Enum / Path</code></li>
+<li>容器：<code>List / Dict / Set / Tuple / Optional / Union / Literal</code></li>
+<li>网络类型：<code>HttpUrl / EmailStr / IPvAnyAddress</code>（部分需要安装 <code>pydantic[email]</code>）</li>
+<li>自定义：通过 <code>arbitrary_types_allowed</code> 或 <code>__get_pydantic_core_schema__</code> 接入</li>
+</ul>
+<h2 id="10-错误处理">10. 错误处理
+</h2><p>校验失败会抛出 <code>ValidationError</code>，结构化清晰：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">ValidationError</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">try</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="n">User</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="s2">&#34;abc&#34;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&#34;x&#34;</span><span class="p">,</span> <span class="n">created_at</span><span class="o">=</span><span class="s2">&#34;bad&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">except</span> <span class="n">ValidationError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">errors</span><span class="p">())</span>  <span class="c1"># 返回 [{loc, msg, type, input, ...}]</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">json</span><span class="p">())</span>    <span class="c1"># JSON 化的错误详情</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>适合直接透传给前端做表单错误提示。</p>
+<h2 id="11-v1-vs-v2-关键-api-对照速查">11. v1 vs v2 关键 API 对照速查
+</h2><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>场景</th>
+          <th>v1</th>
+          <th>v2</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>dict 化</td>
+          <td><code>obj.dict()</code></td>
+          <td><code>obj.model_dump()</code></td>
+      </tr>
+      <tr>
+          <td>JSON 化</td>
+          <td><code>obj.json()</code></td>
+          <td><code>obj.model_dump_json()</code></td>
+      </tr>
+      <tr>
+          <td>从 dict 构建</td>
+          <td><code>Model.parse_obj()</code></td>
+          <td><code>Model.model_validate()</code></td>
+      </tr>
+      <tr>
+          <td>从 JSON 构建</td>
+          <td><code>Model.parse_raw()</code></td>
+          <td><code>Model.model_validate_json()</code></td>
+      </tr>
+      <tr>
+          <td>字段校验器</td>
+          <td><code>@validator</code></td>
+          <td><code>@field_validator</code></td>
+      </tr>
+      <tr>
+          <td>模型校验器</td>
+          <td><code>@root_validator</code></td>
+          <td><code>@model_validator</code></td>
+      </tr>
+      <tr>
+          <td>配置</td>
+          <td><code>class Config:</code></td>
+          <td><code>model_config = ConfigDict(...)</code></td>
+      </tr>
+      <tr>
+          <td>正则约束</td>
+          <td><code>Field(regex=...)</code></td>
+          <td><code>Field(pattern=...)</code></td>
+      </tr>
+  </tbody>
+</table></div>
+<h2 id="12-进入下文的衔接">12. 进入下文的衔接
+</h2><p>Pydantic 自带的 <code>model_dump_json()</code> 已经能很好地处理&quot;模型对象 → JSON&quot;。但在实际工程中，我们经常面对的不是一个干净的 Pydantic 模型，而是 <strong>混合对象</strong>：</p>
+<ul>
+<li>dict 里同时塞着 Pydantic 实例、<code>requests</code> 的响应头、流式对象</li>
+<li>来源不一、类型不统一，无法保证都实现了 JSON 序列化</li>
+<li>但又必须 <code>json.dumps</code> 落盘 / 打日志 / 上报</li>
+</ul>
+<p>这时直接 <code>json.dumps(obj)</code> 会失败，需要一个 <strong>自定义 JSONEncoder 兜底</strong>——这正是下文 <code>CustomEncoder</code> 要解决的问题。</p>
+<hr>
+<h1 id="二customencoder-与-jsondumps-的协作机制说明文档">二、CustomEncoder 与 json.dumps 的协作机制说明文档
 </h1><h2 id="一背景与问题说明">一、背景与问题说明
 </h2><p>在实际工程中，<strong>直接使用 <strong><code>json.dumps()</code></strong> 序列化复杂对象（如 Pydantic 对象、HTTP Header、流式对象等）往往会失败</strong>。失败原因在于：这些对象并非 JSON 原生支持的类型。</p>
 <p>为解决该问题，引入了一个 <strong>自定义 JSONEncoder（CustomEncoder）</strong>，用于在序列化过程中对“问题对象”进行兜底处理。</p>
@@ -378,11 +1309,9 @@
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">json.dumps(last_item, cls=CustomEncoder)
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">json.dumps(last_item, cls=CustomEncoder)
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>内部逻辑等价于（简化后）：</p>
@@ -390,11 +1319,9 @@
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
 </span><span class="lnt">2
-</span><span class="lnt">3
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">encoder = CustomEncoder()
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">encoder = CustomEncoder()
 </span></span><span class="line"><span class="cl">encoder.encode(last_item)
 </span></span></code></pre></td></tr></table>
 </div>
@@ -422,11 +1349,9 @@
 </h3><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">if obj.__class__.__name__ == &#34;SerializationIterator&#34;:    returnNone
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">if obj.__class__.__name__ == &#34;SerializationIterator&#34;:    returnNone
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p><strong>常见来源：</strong></p>
@@ -445,11 +1370,9 @@
 </h3><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">if obj.__class__.__name__ == &#34;CaseInsensitiveDict&#34;:    returndict(obj)
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">if obj.__class__.__name__ == &#34;CaseInsensitiveDict&#34;:    returndict(obj)
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p><strong>常见来源：</strong></p>
@@ -467,11 +1390,9 @@
 </h3><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">ifisinstance(obj, StreamingValue):    return&#34;&#34;
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">ifisinstance(obj, StreamingValue):    return&#34;&#34;
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p><strong>常见来源：</strong></p>
@@ -490,11 +1411,9 @@
 </h3><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">returnsuper().default(obj)
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">returnsuper().default(obj)
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p><strong>行为：</strong></p>
@@ -514,51 +1433,27 @@
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
 </span><span class="lnt">2
 </span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">json.dumps(last_item, cls=CustomEncoder)            │            ▼     CustomEncoder.encode()
-</span></span><span class="line"><span class="cl">            │
-</span></span><span class="line"><span class="cl">            ▼
-</span></span><span class="line"><span class="cl">   深度递归遍历对象树
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[&#34;json.dumps(last_item, cls=CustomEncoder)&#34;] --&gt; B[&#34;CustomEncoder.encode()&#34;]
+</span></span><span class="line"><span class="cl">    B --&gt; C[深度递归遍历对象树]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><hr>
 <h3 id="2-每个节点的判断逻辑">2. 每个节点的判断逻辑
 </h3><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">┌──────────────────────────────┐
-</span></span><span class="line"><span class="cl">│ 当前对象 obj                  │
-</span></span><span class="line"><span class="cl">└───────────────┬──────────────┘
-</span></span><span class="line"><span class="cl">                │
-</span></span><span class="line"><span class="cl">                ▼
-</span></span><span class="line"><span class="cl">     obj 是否 JSON 原生类型？
-</span></span><span class="line"><span class="cl">                │
-</span></span><span class="line"><span class="cl">        ┌───────┴────────┐
-</span></span><span class="line"><span class="cl">        │                │
-</span></span><span class="line"><span class="cl">       是               否
-</span></span><span class="line"><span class="cl">        │                │
-</span></span><span class="line"><span class="cl">        ▼                ▼
-</span></span><span class="line"><span class="cl">  直接序列化        调用 default(obj)
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[当前对象 obj] --&gt; B{obj 是否 JSON 原生类型?}
+</span></span><span class="line"><span class="cl">    B -- 是 --&gt; C[直接序列化]
+</span></span><span class="line"><span class="cl">    B -- 否 --&gt; D[&#34;调用 default(obj)&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><hr>
@@ -570,13 +1465,21 @@
 </span><span class="lnt">3
 </span><span class="lnt">4
 </span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">CustomEncoder.default(obj)        │        ▼SerializationIterator ?        │Yes → returnNone → JSON: null        │        ▼ NoCaseInsensitiveDict ?        │Yes → return dict(obj)        │        ▼ NoStreamingValue ?        │Yes → return &#34;&#34;        │        ▼ Nosuper().default(obj)
-</span></span><span class="line"><span class="cl">        │
-</span></span><span class="line"><span class="cl">        ▼
-</span></span><span class="line"><span class="cl">TypeError
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[&#34;CustomEncoder.default(obj)&#34;] --&gt; B{SerializationIterator?}
+</span></span><span class="line"><span class="cl">    B -- Yes --&gt; B1[&#34;return None → JSON: null&#34;]
+</span></span><span class="line"><span class="cl">    B -- No --&gt; C{CaseInsensitiveDict?}
+</span></span><span class="line"><span class="cl">    C -- Yes --&gt; C1[&#34;return dict(obj)&#34;]
+</span></span><span class="line"><span class="cl">    C -- No --&gt; D{StreamingValue?}
+</span></span><span class="line"><span class="cl">    D -- Yes --&gt; D1[&#34;return &#39;&#39;&#34;]
+</span></span><span class="line"><span class="cl">    D -- No --&gt; E[&#34;super().default(obj)&#34;]
+</span></span><span class="line"><span class="cl">    E --&gt; F[TypeError]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><hr>
@@ -587,11 +1490,15 @@
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
 </span><span class="lnt">2
 </span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">last_item = {    &#34;headers&#34;: response.headers,      # CaseInsensitiveDict&#34;stream&#34;: streaming_value,        # StreamingValue&#34;data&#34;: pydantic_model            # 内含 SerializationIterator
-</span></span><span class="line"><span class="cl">}
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="n">last_item</span> <span class="o">=</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;headers&#34;</span><span class="p">:</span> <span class="n">response</span><span class="o">.</span><span class="n">headers</span><span class="p">,</span>      <span class="c1"># CaseInsensitiveDict</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;stream&#34;</span><span class="p">:</span> <span class="n">streaming_value</span><span class="p">,</span>        <span class="c1"># StreamingValue</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;data&#34;</span><span class="p">:</span> <span class="n">pydantic_model</span>            <span class="c1"># 内含 SerializationIterator</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h3 id="实际递归路径">实际递归路径
@@ -599,10 +1506,22 @@
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
 </span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">last_item (dict)│├── headers → CaseInsensitiveDict│       └─ default() → dict(obj)│├── stream → StreamingValue│       └─ default() → &#34;&#34;│└── data → PydanticModel        └─ SerializationIterator                └─ default() → None
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[&#34;last_item (dict)&#34;] --&gt; B[headers]
+</span></span><span class="line"><span class="cl">    A --&gt; C[stream]
+</span></span><span class="line"><span class="cl">    A --&gt; D[data]
+</span></span><span class="line"><span class="cl">    B --&gt; B1[&#34;CaseInsensitiveDict&lt;br/&gt;default() → dict(obj)&#34;]
+</span></span><span class="line"><span class="cl">    C --&gt; C1[&#34;StreamingValue&lt;br/&gt;default() → &#39;&#39;&#34;]
+</span></span><span class="line"><span class="cl">    D --&gt; D1[PydanticModel]
+</span></span><span class="line"><span class="cl">    D1 --&gt; D2[&#34;SerializationIterator&lt;br/&gt;default() → None&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><hr>

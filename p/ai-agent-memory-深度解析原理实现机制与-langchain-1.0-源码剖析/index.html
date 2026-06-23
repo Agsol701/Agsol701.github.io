@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 Agent 要完成连续任务，就需要记住上下文。\n但 Agent Memory 不等于把所有聊天记录都塞回模型，也不等于简单做一个 RAG 知识库。\n本文将深入讲解 Agent Memory 的设计原理、底层机制、工程实现，并结合 LangChain 1.3+ / LangGraph 1.2+ 的源码进行分析，帮助你从理论到实践全面掌握 Agent 记忆系统。\n一、Memory 解决什么问题 1.1 为什么需要记忆 LLM 本身是无状态的。每次请求都是独立的函数调用 f(prompt) -&gt; response，模型不记得上一次对话。\n没有记忆的 Agent 会遇到：\n忘记用户偏好（&ldquo;我上次说了用中文回复&rdquo;） 重复询问信息（&ldquo;你的邮箱是什么&quot;问了三遍） 不知道任务进展（多步骤任务断档重来） 无法利用历史经验（同类任务反复试错） 长对话上下文超限（token 溢出截断） 1.2 记忆的本质 从计算机科学角度，Agent Memory 本质是一个带有读写策略的状态管理系统：\n1 2 3 4 +------------------+ write +----------------+ | Agent 运行时 | ------------&gt; | Memory Store | | (当前对话/任务) | &lt;------------ | (持久化存储) | +------------------+ read +----------------+ 核心问题是：什么时候写、写什么、什么时候读、读什么、怎么淘汰过期信息。\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 Agent 要完成连续任务，就需要记住上下文。\n但 Agent Memory 不等于把所有聊天记录都塞回模型，也不等于简单做一个 RAG（Retrieval-Augmented Generation，检索增强生成）知识库。\n本文将深入讲解 Agent Memory 的设计原理、底层机制、工程实现，并结合 LangChain 1.3+ / LangGraph 1.2+ 的源码进行分析，帮助你从理论到实践全面掌握 Agent 记忆系统。\n一、Memory 解决什么问题 1.1 为什么需要记忆 LLM（Large Language Model，大语言模型）本身是无状态的。每次请求都是独立的函数调用 f(prompt) -&gt; response，模型不记得上一次对话。\n没有记忆的 Agent 会遇到：\n忘记用户偏好（&ldquo;我上次说了用中文回复&rdquo;） 重复询问信息（&ldquo;你的邮箱是什么&quot;问了三遍） 不知道任务进展（多步骤任务断档重来） 无法利用历史经验（同类任务反复试错） 长对话上下文超限（token 溢出截断） 1.2 记忆的本质 从计算机科学角度，Agent Memory 本质是一个带有读写策略的状态管理系统：\n1 2 3 4 +------------------+ write +----------------+ | Agent 运行时 | ------------&gt; | Memory Store | | (当前对话/任务) | &lt;------------ | (持久化存储) | +------------------+ read +----------------+ 核心问题是：什么时候写、写什么、什么时候读、读什么、怎么淘汰过期信息。\n">
 <title>AI Agent Memory 深度解析：原理、实现机制与 LangChain 1.0&#43; 源码剖析</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/ai-agent-memory-%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%B8%8E-langchain-1.0-%E6%BA%90%E7%A0%81%E5%89%96%E6%9E%90/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="AI Agent Memory 深度解析：原理、实现机制与 LangChain 1.0+ 源码剖析">
-<meta property='og:description' content="写在前面 Agent 要完成连续任务，就需要记住上下文。\n但 Agent Memory 不等于把所有聊天记录都塞回模型，也不等于简单做一个 RAG 知识库。\n本文将深入讲解 Agent Memory 的设计原理、底层机制、工程实现，并结合 LangChain 1.3+ / LangGraph 1.2+ 的源码进行分析，帮助你从理论到实践全面掌握 Agent 记忆系统。\n一、Memory 解决什么问题 1.1 为什么需要记忆 LLM 本身是无状态的。每次请求都是独立的函数调用 f(prompt) -&gt; response，模型不记得上一次对话。\n没有记忆的 Agent 会遇到：\n忘记用户偏好（&ldquo;我上次说了用中文回复&rdquo;） 重复询问信息（&ldquo;你的邮箱是什么&quot;问了三遍） 不知道任务进展（多步骤任务断档重来） 无法利用历史经验（同类任务反复试错） 长对话上下文超限（token 溢出截断） 1.2 记忆的本质 从计算机科学角度，Agent Memory 本质是一个带有读写策略的状态管理系统：\n1 2 3 4 +------------------+ write +----------------+ | Agent 运行时 | ------------&gt; | Memory Store | | (当前对话/任务) | &lt;------------ | (持久化存储) | +------------------+ read +----------------+ 核心问题是：什么时候写、写什么、什么时候读、读什么、怎么淘汰过期信息。\n">
+<meta property='og:description' content="写在前面 Agent 要完成连续任务，就需要记住上下文。\n但 Agent Memory 不等于把所有聊天记录都塞回模型，也不等于简单做一个 RAG（Retrieval-Augmented Generation，检索增强生成）知识库。\n本文将深入讲解 Agent Memory 的设计原理、底层机制、工程实现，并结合 LangChain 1.3+ / LangGraph 1.2+ 的源码进行分析，帮助你从理论到实践全面掌握 Agent 记忆系统。\n一、Memory 解决什么问题 1.1 为什么需要记忆 LLM（Large Language Model，大语言模型）本身是无状态的。每次请求都是独立的函数调用 f(prompt) -&gt; response，模型不记得上一次对话。\n没有记忆的 Agent 会遇到：\n忘记用户偏好（&ldquo;我上次说了用中文回复&rdquo;） 重复询问信息（&ldquo;你的邮箱是什么&quot;问了三遍） 不知道任务进展（多步骤任务断档重来） 无法利用历史经验（同类任务反复试错） 长对话上下文超限（token 溢出截断） 1.2 记忆的本质 从计算机科学角度，Agent Memory 本质是一个带有读写策略的状态管理系统：\n1 2 3 4 +------------------+ write +----------------+ | Agent 运行时 | ------------&gt; | Memory Store | | (当前对话/任务) | &lt;------------ | (持久化存储) | +------------------+ read +----------------+ 核心问题是：什么时候写、写什么、什么时候读、读什么、怎么淘汰过期信息。\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/ai-agent-memory-%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%B8%8E-langchain-1.0-%E6%BA%90%E7%A0%81%E5%89%96%E6%9E%90/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='memory' /><meta property='article:tag' content='langchain' /><meta property='article:tag' content='langgraph' /><meta property='article:published_time' content='2026-05-18T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-18T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="AI Agent Memory 深度解析：原理、实现机制与 LangChain 1.0+ 源码剖析">
-<meta name="twitter:description" content="写在前面 Agent 要完成连续任务，就需要记住上下文。\n但 Agent Memory 不等于把所有聊天记录都塞回模型，也不等于简单做一个 RAG 知识库。\n本文将深入讲解 Agent Memory 的设计原理、底层机制、工程实现，并结合 LangChain 1.3+ / LangGraph 1.2+ 的源码进行分析，帮助你从理论到实践全面掌握 Agent 记忆系统。\n一、Memory 解决什么问题 1.1 为什么需要记忆 LLM 本身是无状态的。每次请求都是独立的函数调用 f(prompt) -&gt; response，模型不记得上一次对话。\n没有记忆的 Agent 会遇到：\n忘记用户偏好（&ldquo;我上次说了用中文回复&rdquo;） 重复询问信息（&ldquo;你的邮箱是什么&quot;问了三遍） 不知道任务进展（多步骤任务断档重来） 无法利用历史经验（同类任务反复试错） 长对话上下文超限（token 溢出截断） 1.2 记忆的本质 从计算机科学角度，Agent Memory 本质是一个带有读写策略的状态管理系统：\n1 2 3 4 +------------------+ write +----------------+ | Agent 运行时 | ------------&gt; | Memory Store | | (当前对话/任务) | &lt;------------ | (持久化存储) | +------------------+ read +----------------+ 核心问题是：什么时候写、写什么、什么时候读、读什么、怎么淘汰过期信息。\n">
+<meta name="twitter:description" content="写在前面 Agent 要完成连续任务，就需要记住上下文。\n但 Agent Memory 不等于把所有聊天记录都塞回模型，也不等于简单做一个 RAG（Retrieval-Augmented Generation，检索增强生成）知识库。\n本文将深入讲解 Agent Memory 的设计原理、底层机制、工程实现，并结合 LangChain 1.3+ / LangGraph 1.2+ 的源码进行分析，帮助你从理论到实践全面掌握 Agent 记忆系统。\n一、Memory 解决什么问题 1.1 为什么需要记忆 LLM（Large Language Model，大语言模型）本身是无状态的。每次请求都是独立的函数调用 f(prompt) -&gt; response，模型不记得上一次对话。\n没有记忆的 Agent 会遇到：\n忘记用户偏好（&ldquo;我上次说了用中文回复&rdquo;） 重复询问信息（&ldquo;你的邮箱是什么&quot;问了三遍） 不知道任务进展（多步骤任务断档重来） 无法利用历史经验（同类任务反复试错） 长对话上下文超限（token 溢出截断） 1.2 记忆的本质 从计算机科学角度，Agent Memory 本质是一个带有读写策略的状态管理系统：\n1 2 3 4 +------------------+ write +----------------+ | Agent 运行时 | ------------&gt; | Memory Store | | (当前对话/任务) | &lt;------------ | (持久化存储) | +------------------+ read +----------------+ 核心问题是：什么时候写、写什么、什么时候读、读什么、怎么淘汰过期信息。\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -283,7 +283,7 @@
         <li><a href="#操作类型">操作类型</a></li>
         <li><a href="#批处理流程inmemorystorebatch">批处理流程（InMemoryStore.batch）</a></li>
         <li><a href="#向量索引的写入流程">向量索引的写入流程</a></li>
-        <li><a href="#ttltime-to-live-过期淘汰机制">TTL（Time To Live 过期淘汰）机制</a></li>
+        <li><a href="#ttltime-to-live存活时间过期淘汰机制">TTL（Time To Live，存活时间）过期淘汰机制</a></li>
       </ol>
     </li>
     <li><a href="#44-chathistory-机制消息持久化">4.4 ChatHistory 机制（消息持久化）</a>
@@ -428,12 +428,12 @@
     
     <h1 id="写在前面">写在前面
 </h1><p>Agent 要完成连续任务，就需要记住上下文。</p>
-<p>但 Agent Memory 不等于把所有聊天记录都塞回模型，也不等于简单做一个 RAG 知识库。</p>
+<p>但 Agent Memory 不等于把所有聊天记录都塞回模型，也不等于简单做一个 RAG（Retrieval-Augmented Generation，检索增强生成）知识库。</p>
 <p>本文将深入讲解 Agent Memory 的<strong>设计原理、底层机制、工程实现</strong>，并结合 <strong>LangChain 1.3+ / LangGraph 1.2+</strong> 的源码进行分析，帮助你从理论到实践全面掌握 Agent 记忆系统。</p>
 <hr>
 <h1 id="一memory-解决什么问题">一、Memory 解决什么问题
 </h1><h2 id="11-为什么需要记忆">1.1 为什么需要记忆
-</h2><p>LLM 本身是<strong>无状态</strong>的。每次请求都是独立的函数调用 <code>f(prompt) -&gt; response</code>，模型不记得上一次对话。</p>
+</h2><p>LLM（Large Language Model，大语言模型）本身是<strong>无状态</strong>的。每次请求都是独立的函数调用 <code>f(prompt) -&gt; response</code>，模型不记得上一次对话。</p>
 <p>没有记忆的 Agent 会遇到：</p>
 <ul>
 <li>忘记用户偏好（&ldquo;我上次说了用中文回复&rdquo;）</li>
@@ -511,7 +511,7 @@
 <p><strong>关键特征</strong>：</p>
 <ul>
 <li>容量受限于 LLM 的 context window</li>
-<li>先进先出（FIFO）淘汰或基于 token 数截断</li>
+<li>FIFO（First In First Out，先进先出）淘汰或基于 token 数截断</li>
 <li>会话级隔离，不同 thread 互不可见</li>
 </ul>
 <p><strong>工程实现中的典型操作</strong>：</p>
@@ -643,7 +643,7 @@
 </span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="n">m</span><span class="o">.</span><span class="n">id</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
 </span></span><span class="line"><span class="cl">            <span class="n">m</span><span class="o">.</span><span class="n">id</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">())</span>
 </span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">    <span class="c1"># 3. 特殊处理: RemoveMessage(id=REMOVE_ALL_MESSAGES) 清空所有</span>
+</span></span><span class="line"><span class="cl">    <span class="c1"># 3. 特殊处理: RemoveMessage(id=REMOVE_ALL_MElasticsearch（ES）SAGES) 清空所有</span>
 </span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nb">any</span> <span class="n">RemoveMessage</span> <span class="k">with</span> <span class="n">REMOVE_ALL_MESSAGES</span> <span class="ow">in</span> <span class="n">right</span><span class="p">:</span>
 </span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="n">right</span><span class="p">[</span><span class="n">remove_all_idx</span> <span class="o">+</span> <span class="mi">1</span><span class="p">:]</span>
 </span></span><span class="line"><span class="cl">
@@ -988,7 +988,7 @@
 </span></code></pre></td>
 <td class="lntd">
 <pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">+-------------+--------+--------+--------+--------+--------+--------+
-</span></span><span class="line"><span class="cl">|   记忆类型   |  内存   | Redis  |  SQLite | PostgreSQL |  ES   | 向量DB  |
+</span></span><span class="line"><span class="cl">|   记忆类型   |  内存   | Redis  |  SQLite | PostgreSQL |  ES   | 向量数据库（Vector DB）  |
 </span></span><span class="line"><span class="cl">+-------------+--------+--------+--------+--------+--------+--------+
 </span></span><span class="line"><span class="cl">| 短期记忆     |  ★★★  |  ★★   |   ★    |    ★     |       |        |
 </span></span><span class="line"><span class="cl">| 工作记忆     |  ★★★  |  ★★★  |   ★★   |    ★★    |       |        |
@@ -1049,7 +1049,7 @@
           <td>~10ms</td>
           <td>持久化 + 集群</td>
           <td>PB 级</td>
-          <td>全文检索 + BM25</td>
+          <td>全文检索 + BM25（Best Matching 25，经典文本相关性排序算法）</td>
           <td>情景记忆、日志型记忆检索</td>
       </tr>
       <tr>
@@ -1896,7 +1896,7 @@
 </span></span><span class="line"><span class="cl">  完成
 </span></span></code></pre></td></tr></table>
 </div>
-</div><h3 id="ttltime-to-live-过期淘汰机制">TTL（Time To Live 过期淘汰）机制
+</div><h3 id="ttltime-to-live存活时间过期淘汰机制">TTL（Time To Live，存活时间）过期淘汰机制
 </h3><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1

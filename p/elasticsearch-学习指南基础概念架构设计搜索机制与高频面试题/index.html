@@ -276,8 +276,9 @@
       <ol>
         <li><a href="#41-倒排索引">4.1 倒排索引</a></li>
         <li><a href="#42-倒排索引结构">4.2 倒排索引结构</a></li>
-        <li><a href="#43-文档-crud-操作">4.3 文档 CRUD 操作</a></li>
-        <li><a href="#44-mapping映射">4.4 Mapping（映射）</a></li>
+        <li><a href="#43-倒排索引何时建立">4.3 倒排索引何时建立</a></li>
+        <li><a href="#44-文档-crud-操作">4.4 文档 CRUD 操作</a></li>
+        <li><a href="#45-mapping映射">4.5 Mapping（映射）</a></li>
       </ol>
     </li>
     <li><a href="#5-elasticsearch-搜索机制">5. Elasticsearch 搜索机制</a>
@@ -2691,7 +2692,362 @@
 </span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────────────┘
 </span></span></code></pre></td></tr></table>
 </div>
-</div><h3 id="43-文档-crud-操作">4.3 文档 CRUD 操作
+</div><h3 id="43-倒排索引何时建立">4.3 倒排索引何时建立
+</h3><p>倒排索引并不是在文档&quot;写入&quot;时就立刻可搜索，而是经过 <strong>写入 Buffer → Refresh → Flush → Merge</strong> 四个阶段，倒排索引真正&quot;生成&quot;发生在 <strong>Refresh</strong> 这一步。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│              倒排索引建立时间线（核心结论）                    │
+</span></span><span class="line"><span class="cl">├─────────────────────────────────────────────────────────────┤
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  写入 doc                                                    │
+</span></span><span class="line"><span class="cl">│     │ (立即)                                                │
+</span></span><span class="line"><span class="cl">│     ▼                                                       │
+</span></span><span class="line"><span class="cl">│  Index Buffer + Translog        ◀── 不可搜索，无倒排索引    │
+</span></span><span class="line"><span class="cl">│     │ (默认 1s, refresh)                                    │
+</span></span><span class="line"><span class="cl">│     ▼                                                       │
+</span></span><span class="line"><span class="cl">│  In-Memory Segment              ◀── ⭐ 倒排索引建立，可搜索  │
+</span></span><span class="line"><span class="cl">│     │ (默认 30min, flush)                                   │
+</span></span><span class="line"><span class="cl">│     ▼                                                       │
+</span></span><span class="line"><span class="cl">│  磁盘 Segment                    ◀── 倒排索引持久化           │
+</span></span><span class="line"><span class="cl">│     │ (后台异步)                                            │
+</span></span><span class="line"><span class="cl">│     ▼                                                       │
+</span></span><span class="line"><span class="cl">│  Merge 后的大 Segment            ◀── 倒排索引重组优化         │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>阶段一：写入 Index Buffer（立即，无倒排索引）</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│              阶段一：写入 Index Buffer                        │
+</span></span><span class="line"><span class="cl">├─────────────────────────────────────────────────────────────┤
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  发生时机：客户端写入请求到达主分片                          │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  动作：                                                     │
+</span></span><span class="line"><span class="cl">│    • 文档写入 Index Buffer（JVM 堆内存）                    │
+</span></span><span class="line"><span class="cl">│    • 同时追加 Translog（WAL，保证可靠性）                   │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  此时状态：                                                 │
+</span></span><span class="line"><span class="cl">│    • 倒排索引尚未建立                                       │
+</span></span><span class="line"><span class="cl">│    • 文档不可被搜索                                         │
+</span></span><span class="line"><span class="cl">│    • 即使 Translog 已落盘也搜不到                           │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  原因：                                                     │
+</span></span><span class="line"><span class="cl">│    Lucene 段（Segment）一旦生成就不可变，                   │
+</span></span><span class="line"><span class="cl">│    在 Buffer 阶段还没有&#34;凑够&#34;生成 Segment 的时机             │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>阶段二：Refresh（倒排索引真正建立 ⭐）</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│           阶段二：Refresh —— 倒排索引在这里诞生                │
+</span></span><span class="line"><span class="cl">├─────────────────────────────────────────────────────────────┤
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  触发时机：                                                 │
+</span></span><span class="line"><span class="cl">│    • 默认每 1 秒（index.refresh_interval = 1s）             │
+</span></span><span class="line"><span class="cl">│    • 手动调用 POST /index/_refresh                          │
+</span></span><span class="line"><span class="cl">│    • 写入时带 ?refresh=true（代价大，慎用）                 │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  动作：                                                     │
+</span></span><span class="line"><span class="cl">│    Index Buffer 中的文档 → 生成 In-Memory Segment            │
+</span></span><span class="line"><span class="cl">│    （位于 OS Cache，未落盘）                                │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  这一步具体做了什么：                                       │
+</span></span><span class="line"><span class="cl">│    1. 对字段执行 Analyzer（分词、归一化、小写化等）          │
+</span></span><span class="line"><span class="cl">│    2. 构建 Term Dictionary（有序词典）                       │
+</span></span><span class="line"><span class="cl">│    3. 构建 Term Index（FST 前缀索引）                        │
+</span></span><span class="line"><span class="cl">│    4. 构建 Posting List（文档 ID 列表 + 词频 + 位置）        │
+</span></span><span class="line"><span class="cl">│    5. 构建 Doc Values（列式存储，用于排序/聚合）             │
+</span></span><span class="line"><span class="cl">│    6. 构建 Norms、StoredFields 等辅助结构                    │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  此时状态：                                                 │
+</span></span><span class="line"><span class="cl">│    • 倒排索引已建立 ✅                                      │
+</span></span><span class="line"><span class="cl">│    • 文档可被搜索 ✅（这就是 ES 的&#34;近实时 NRT&#34;）             │
+</span></span><span class="line"><span class="cl">│    • 但 Segment 还在 OS Cache，未 fsync 到磁盘              │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>阶段三：Flush（倒排索引持久化）</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│              阶段三：Flush —— 持久化到磁盘                    │
+</span></span><span class="line"><span class="cl">├─────────────────────────────────────────────────────────────┤
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  触发时机：                                                 │
+</span></span><span class="line"><span class="cl">│    • 默认 30 分钟                                           │
+</span></span><span class="line"><span class="cl">│    • Translog 达到 512MB（flush_threshold_size）            │
+</span></span><span class="line"><span class="cl">│    • 手动调用 POST /index/_flush                            │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  动作：                                                     │
+</span></span><span class="line"><span class="cl">│    • OS Cache 中的 Segment fsync 到磁盘                     │
+</span></span><span class="line"><span class="cl">│    • 清空 Translog，开启新的 Translog 文件                  │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  关键点：                                                   │
+</span></span><span class="line"><span class="cl">│    Flush 不会&#34;重新建立&#34;倒排索引                              │
+</span></span><span class="line"><span class="cl">│    倒排索引在 Refresh 阶段就已经建好了                       │
+</span></span><span class="line"><span class="cl">│    Flush 只是把它从 OS Cache 落到磁盘                        │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>阶段四：Merge（倒排索引重组优化）</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│              阶段四：Merge —— 倒排索引重组                    │
+</span></span><span class="line"><span class="cl">├─────────────────────────────────────────────────────────────┤
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  触发时机：后台异步执行（基于段数量、大小的策略）            │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  动作：                                                     │
+</span></span><span class="line"><span class="cl">│    多个小 Segment → 合并为一个大 Segment                    │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  这一步会&#34;重写&#34;倒排索引：                                   │
+</span></span><span class="line"><span class="cl">│    • 合并多个 Segment 的 Term Dictionary                    │
+</span></span><span class="line"><span class="cl">│    • 合并多个 Posting List（有序归并 + 重新压缩）            │
+</span></span><span class="line"><span class="cl">│    • 真正物理删除被标记删除的文档                           │
+</span></span><span class="line"><span class="cl">│    • 重建 FST、Doc Values 等                                │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  为什么 Merge 必须重写倒排索引：                             │
+</span></span><span class="line"><span class="cl">│    Lucene Segment 不可变 —— 删除/更新只是&#34;标记删除&#34;          │
+</span></span><span class="line"><span class="cl">│    要真正清理这些文档，必须在 Merge 时整体重写一份新 Segment │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>关键问答：</strong></p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span><span class="lnt">28
+</span><span class="lnt">29
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│                    常见疑问澄清                              │
+</span></span><span class="line"><span class="cl">├─────────────────────────────────────────────────────────────┤
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  Q1：写入立即返回 200，倒排索引是不是已经建好了？           │
+</span></span><span class="line"><span class="cl">│    A：没有。返回 200 只代表写入了 Buffer + Translog，         │
+</span></span><span class="line"><span class="cl">│       倒排索引在 1 秒后的 Refresh 才生成，                    │
+</span></span><span class="line"><span class="cl">│       这就是为什么 ES 是&#34;近实时(NRT)&#34;而非实时。              │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  Q2：更新一个文档，倒排索引是修改还是新建？                 │
+</span></span><span class="line"><span class="cl">│    A：新建。Lucene Segment 不可变，                          │
+</span></span><span class="line"><span class="cl">│       update = 旧文档标记删除 + 写入新文档，                  │
+</span></span><span class="line"><span class="cl">│       Merge 时才真正物理清理旧文档。                         │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  Q3：想让写入立刻可搜怎么办？                                │
+</span></span><span class="line"><span class="cl">│    A：三种方式（按代价从小到大）：                           │
+</span></span><span class="line"><span class="cl">│       1. 等 1 秒（默认 refresh_interval）                    │
+</span></span><span class="line"><span class="cl">│       2. 调用 POST /index/_refresh（强制刷新整个索引）       │
+</span></span><span class="line"><span class="cl">│       3. 写入时带 ?refresh=true（代价最大，会立即创建段）    │
+</span></span><span class="line"><span class="cl">│       生产环境批量导入应反过来：调大 refresh_interval         │
+</span></span><span class="line"><span class="cl">│       甚至设为 -1，导入完再恢复，可大幅减少小 Segment。       │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">│  Q4：倒排索引建立的成本主要在哪？                            │
+</span></span><span class="line"><span class="cl">│    A：Refresh 时的 Segment 构建：分词、排序、FST 构建、       │
+</span></span><span class="line"><span class="cl">│       Posting List 压缩、Doc Values 列式写入。               │
+</span></span><span class="line"><span class="cl">│       refresh 频率越高，小 Segment 越多，                    │
+</span></span><span class="line"><span class="cl">│       后续 Merge 压力越大，整体写入吞吐越低。                 │
+</span></span><span class="line"><span class="cl">│                                                             │
+</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><strong>与写入流程的对应关系：</strong></p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>阶段</th>
+          <th>触发</th>
+          <th>数据位置</th>
+          <th>倒排索引状态</th>
+          <th>可搜索</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>写入 Buffer</td>
+          <td>立即</td>
+          <td>JVM 堆 + Translog</td>
+          <td>未建立</td>
+          <td>否</td>
+      </tr>
+      <tr>
+          <td>Refresh</td>
+          <td>默认 1s</td>
+          <td>OS Cache（Segment）</td>
+          <td><strong>建立 ⭐</strong></td>
+          <td><strong>是</strong></td>
+      </tr>
+      <tr>
+          <td>Flush</td>
+          <td>默认 30min</td>
+          <td>磁盘 Segment</td>
+          <td>持久化</td>
+          <td>是</td>
+      </tr>
+      <tr>
+          <td>Merge</td>
+          <td>后台异步</td>
+          <td>磁盘大 Segment</td>
+          <td>重组优化</td>
+          <td>是</td>
+      </tr>
+  </tbody>
+</table></div>
+<blockquote>
+<p>详细的写入流程、Refresh/Flush/Merge 对比，参见 <a class="link" href="#306-%e6%95%b0%e6%8d%ae%e5%8f%af%e9%9d%a0%e6%80%a7%e5%92%8c%e4%b8%80%e8%87%b4%e6%80%a7" >3.0.6 数据可靠性和一致性</a> 和 <a class="link" href="#34-%e5%86%99%e5%85%a5%e6%b5%81%e7%a8%8b" >3.4 写入流程</a>。</p></blockquote>
+<h3 id="44-文档-crud-操作">4.4 文档 CRUD 操作
 </h3><p><strong>创建文档：</strong></p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
@@ -2860,7 +3216,7 @@
 </span></span><span class="line"><span class="cl"><span class="p">})</span>
 </span></span></code></pre></td></tr></table>
 </div>
-</div><h3 id="44-mapping映射">4.4 Mapping（映射）
+</div><h3 id="45-mapping映射">4.5 Mapping（映射）
 </h3><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1

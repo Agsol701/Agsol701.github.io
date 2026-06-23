@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 当任务变复杂时，Agent 不能只靠&quot;下一步做什么&quot;的局部判断——它需要先把目标拆成可执行步骤，再根据工具结果动态调整计划。这就是 Planning（规划） 能力。\n本文将从底层原理到工程实现，结合 LangChain 1.3+ / LangGraph 1.2+ 源码，深入剖析 Agent Planning 的核心机制。\n一、Planning 解决什么问题 1.1 复杂任务需要拆解 1 帮我分析这份需求，查公司已有接口规范，设计 API，并给出测试用例。 这个任务至少包含：理解需求 → 检索规范 → 设计接口 → 生成测试用例 → 检查风险。每个步骤之间存在依赖关系和上下文传递。\n1.2 没有 Planning 的 Agent 会怎样 问题 表现 漏步骤 跳过&quot;检索规范&quot;直接设计接口 顺序错误 先写测试用例再设计接口 工具调用混乱 反复调用同一工具 无法解释进度 用户不知道当前在做什么 失败不可恢复 一步出错整个任务崩溃 1.3 Planning 的本质定义 Planning 是 Agent 在执行前/执行中对&quot;做什么、按什么顺序做、如何应对变化&quot;进行结构化决策的过程。\n从控制论角度看，Planning 是一个 前馈控制(Feedforward Control) + 反馈控制(Feedback Control) 的混合系统：\n1 2 3 4 5 6 7 8 9 10 11 ┌─────────────────────────────────────────────────────────┐ │ Planning System │ │ │ │ ┌──────────┐ ┌──────────┐ ┌──────────┐ │ │ │ 目标分解 │───▶│ 步骤排序 │───▶│ 资源分配 │ 前馈控制 │ │ └──────────┘ └──────────┘ └──────────┘ │ │ ▲ │ │ │ │ ┌──────────┐ ▼ │ │ └──────────│ 计划修正 │◀────── 执行反馈 反馈控制 │ │ └──────────┘ │ └─────────────────────────────────────────────────────────┘ 二、Planning 的学术基础与范式演进 2.1 从 CoT 到 Planning 的演进路径 1 2 3 4 5 6 7 8 9 10 11 12 13 14 Chain-of-Thought (CoT) │ 线性推理，不可回溯 ▼ ReAct (Reasoning + Acting) │ 推理与行动交替，有外部反馈 ▼ Plan-and-Solve (PS/PS+) │ 先规划后执行，两阶段分离 ▼ Tree of Thoughts (ToT) │ 多路径搜索，可回溯 ▼ LATS (Language Agent Tree Search) 结合 MCTS，规划+行动+推理统一 2.2 Chain-of-Thought (CoT)：线性推理的起点 核心思想：通过在 Prompt 中加入 &ldquo;Let&rsquo;s think step by step&rdquo;，引导 LLM 生成中间推理步骤，而非直接输出最终答案。\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 当任务变复杂时，Agent 不能只靠&quot;下一步做什么&quot;的局部判断——它需要先把目标拆成可执行步骤，再根据工具结果动态调整计划。这就是 Planning（规划） 能力。\n本文将从底层原理到工程实现，结合 LangChain 1.3+ / LangGraph 1.2+ 源码，深入剖析 Agent Planning 的核心机制。\n一、Planning 解决什么问题 1.1 复杂任务需要拆解 1 帮我分析这份需求，查公司已有接口规范，设计 API（Application Programming Interface，应用程序编程接口），并给出测试用例。 这个任务至少包含：理解需求 → 检索规范 → 设计接口 → 生成测试用例 → 检查风险。每个步骤之间存在依赖关系和上下文传递。\n1.2 没有 Planning 的 Agent 会怎样 问题 表现 漏步骤 跳过&quot;检索规范&quot;直接设计接口 顺序错误 先写测试用例再设计接口 工具调用混乱 反复调用同一工具 无法解释进度 用户不知道当前在做什么 失败不可恢复 一步出错整个任务崩溃 1.3 Planning 的本质定义 Planning 是 Agent 在执行前/执行中对&quot;做什么、按什么顺序做、如何应对变化&quot;进行结构化决策的过程。\n从控制论角度看，Planning 是一个 前馈控制(Feedforward Control) + 反馈控制(Feedback Control) 的混合系统：\n1 2 3 4 5 6 7 8 9 10 11 ┌─────────────────────────────────────────────────────────┐ │ Planning System │ │ │ │ ┌──────────┐ ┌──────────┐ ┌──────────┐ │ │ │ 目标分解 │───▶│ 步骤排序 │───▶│ 资源分配 │ 前馈控制 │ │ └──────────┘ └──────────┘ └──────────┘ │ │ ▲ │ │ │ │ ┌──────────┐ ▼ │ │ └──────────│ 计划修正 │◀────── 执行反馈 反馈控制 │ │ └──────────┘ │ └─────────────────────────────────────────────────────────┘ 二、Planning 的学术基础与范式演进 2.1 从 CoT 到 Planning 的演进路径 1 2 3 4 5 6 7 8 9 10 11 12 13 14 CoT（Chain-of-Thought，链式思维） │ 线性推理，不可回溯 ▼ ReAct（Reasoning + Acting） │ 推理与行动交替，有外部反馈 ▼ PS/PS+（Plan-and-Solve / Plan-and-Solve Plus） │ 先规划后执行，两阶段分离 ▼ ToT（Tree of Thoughts） │ 多路径搜索，可回溯 ▼ LATS（Language Agent Tree Search） 结合 MCTS，规划+行动+推理统一 2.2 CoT（Chain-of-Thought，链式思维）：线性推理的起点 核心思想：通过在 Prompt 中加入 &ldquo;Let&rsquo;s think step by step&rdquo;，引导 LLM 生成中间推理步骤，而非直接输出最终答案。\n">
 <title>AI Agent Planning 深度解析：原理、实现机制、工程实践与高频面试题</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/ai-agent-planning-%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="AI Agent Planning 深度解析：原理、实现机制、工程实践与高频面试题">
-<meta property='og:description' content="写在前面 当任务变复杂时，Agent 不能只靠&quot;下一步做什么&quot;的局部判断——它需要先把目标拆成可执行步骤，再根据工具结果动态调整计划。这就是 Planning（规划） 能力。\n本文将从底层原理到工程实现，结合 LangChain 1.3+ / LangGraph 1.2+ 源码，深入剖析 Agent Planning 的核心机制。\n一、Planning 解决什么问题 1.1 复杂任务需要拆解 1 帮我分析这份需求，查公司已有接口规范，设计 API，并给出测试用例。 这个任务至少包含：理解需求 → 检索规范 → 设计接口 → 生成测试用例 → 检查风险。每个步骤之间存在依赖关系和上下文传递。\n1.2 没有 Planning 的 Agent 会怎样 问题 表现 漏步骤 跳过&quot;检索规范&quot;直接设计接口 顺序错误 先写测试用例再设计接口 工具调用混乱 反复调用同一工具 无法解释进度 用户不知道当前在做什么 失败不可恢复 一步出错整个任务崩溃 1.3 Planning 的本质定义 Planning 是 Agent 在执行前/执行中对&quot;做什么、按什么顺序做、如何应对变化&quot;进行结构化决策的过程。\n从控制论角度看，Planning 是一个 前馈控制(Feedforward Control) + 反馈控制(Feedback Control) 的混合系统：\n1 2 3 4 5 6 7 8 9 10 11 ┌─────────────────────────────────────────────────────────┐ │ Planning System │ │ │ │ ┌──────────┐ ┌──────────┐ ┌──────────┐ │ │ │ 目标分解 │───▶│ 步骤排序 │───▶│ 资源分配 │ 前馈控制 │ │ └──────────┘ └──────────┘ └──────────┘ │ │ ▲ │ │ │ │ ┌──────────┐ ▼ │ │ └──────────│ 计划修正 │◀────── 执行反馈 反馈控制 │ │ └──────────┘ │ └─────────────────────────────────────────────────────────┘ 二、Planning 的学术基础与范式演进 2.1 从 CoT 到 Planning 的演进路径 1 2 3 4 5 6 7 8 9 10 11 12 13 14 Chain-of-Thought (CoT) │ 线性推理，不可回溯 ▼ ReAct (Reasoning + Acting) │ 推理与行动交替，有外部反馈 ▼ Plan-and-Solve (PS/PS+) │ 先规划后执行，两阶段分离 ▼ Tree of Thoughts (ToT) │ 多路径搜索，可回溯 ▼ LATS (Language Agent Tree Search) 结合 MCTS，规划+行动+推理统一 2.2 Chain-of-Thought (CoT)：线性推理的起点 核心思想：通过在 Prompt 中加入 &ldquo;Let&rsquo;s think step by step&rdquo;，引导 LLM 生成中间推理步骤，而非直接输出最终答案。\n">
+<meta property='og:description' content="写在前面 当任务变复杂时，Agent 不能只靠&quot;下一步做什么&quot;的局部判断——它需要先把目标拆成可执行步骤，再根据工具结果动态调整计划。这就是 Planning（规划） 能力。\n本文将从底层原理到工程实现，结合 LangChain 1.3+ / LangGraph 1.2+ 源码，深入剖析 Agent Planning 的核心机制。\n一、Planning 解决什么问题 1.1 复杂任务需要拆解 1 帮我分析这份需求，查公司已有接口规范，设计 API（Application Programming Interface，应用程序编程接口），并给出测试用例。 这个任务至少包含：理解需求 → 检索规范 → 设计接口 → 生成测试用例 → 检查风险。每个步骤之间存在依赖关系和上下文传递。\n1.2 没有 Planning 的 Agent 会怎样 问题 表现 漏步骤 跳过&quot;检索规范&quot;直接设计接口 顺序错误 先写测试用例再设计接口 工具调用混乱 反复调用同一工具 无法解释进度 用户不知道当前在做什么 失败不可恢复 一步出错整个任务崩溃 1.3 Planning 的本质定义 Planning 是 Agent 在执行前/执行中对&quot;做什么、按什么顺序做、如何应对变化&quot;进行结构化决策的过程。\n从控制论角度看，Planning 是一个 前馈控制(Feedforward Control) + 反馈控制(Feedback Control) 的混合系统：\n1 2 3 4 5 6 7 8 9 10 11 ┌─────────────────────────────────────────────────────────┐ │ Planning System │ │ │ │ ┌──────────┐ ┌──────────┐ ┌──────────┐ │ │ │ 目标分解 │───▶│ 步骤排序 │───▶│ 资源分配 │ 前馈控制 │ │ └──────────┘ └──────────┘ └──────────┘ │ │ ▲ │ │ │ │ ┌──────────┐ ▼ │ │ └──────────│ 计划修正 │◀────── 执行反馈 反馈控制 │ │ └──────────┘ │ └─────────────────────────────────────────────────────────┘ 二、Planning 的学术基础与范式演进 2.1 从 CoT 到 Planning 的演进路径 1 2 3 4 5 6 7 8 9 10 11 12 13 14 CoT（Chain-of-Thought，链式思维） │ 线性推理，不可回溯 ▼ ReAct（Reasoning + Acting） │ 推理与行动交替，有外部反馈 ▼ PS/PS+（Plan-and-Solve / Plan-and-Solve Plus） │ 先规划后执行，两阶段分离 ▼ ToT（Tree of Thoughts） │ 多路径搜索，可回溯 ▼ LATS（Language Agent Tree Search） 结合 MCTS，规划+行动+推理统一 2.2 CoT（Chain-of-Thought，链式思维）：线性推理的起点 核心思想：通过在 Prompt 中加入 &ldquo;Let&rsquo;s think step by step&rdquo;，引导 LLM 生成中间推理步骤，而非直接输出最终答案。\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/ai-agent-planning-%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='planning' /><meta property='article:tag' content='langchain' /><meta property='article:tag' content='langgraph' /><meta property='article:published_time' content='2026-05-18T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-18T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="AI Agent Planning 深度解析：原理、实现机制、工程实践与高频面试题">
-<meta name="twitter:description" content="写在前面 当任务变复杂时，Agent 不能只靠&quot;下一步做什么&quot;的局部判断——它需要先把目标拆成可执行步骤，再根据工具结果动态调整计划。这就是 Planning（规划） 能力。\n本文将从底层原理到工程实现，结合 LangChain 1.3+ / LangGraph 1.2+ 源码，深入剖析 Agent Planning 的核心机制。\n一、Planning 解决什么问题 1.1 复杂任务需要拆解 1 帮我分析这份需求，查公司已有接口规范，设计 API，并给出测试用例。 这个任务至少包含：理解需求 → 检索规范 → 设计接口 → 生成测试用例 → 检查风险。每个步骤之间存在依赖关系和上下文传递。\n1.2 没有 Planning 的 Agent 会怎样 问题 表现 漏步骤 跳过&quot;检索规范&quot;直接设计接口 顺序错误 先写测试用例再设计接口 工具调用混乱 反复调用同一工具 无法解释进度 用户不知道当前在做什么 失败不可恢复 一步出错整个任务崩溃 1.3 Planning 的本质定义 Planning 是 Agent 在执行前/执行中对&quot;做什么、按什么顺序做、如何应对变化&quot;进行结构化决策的过程。\n从控制论角度看，Planning 是一个 前馈控制(Feedforward Control) + 反馈控制(Feedback Control) 的混合系统：\n1 2 3 4 5 6 7 8 9 10 11 ┌─────────────────────────────────────────────────────────┐ │ Planning System │ │ │ │ ┌──────────┐ ┌──────────┐ ┌──────────┐ │ │ │ 目标分解 │───▶│ 步骤排序 │───▶│ 资源分配 │ 前馈控制 │ │ └──────────┘ └──────────┘ └──────────┘ │ │ ▲ │ │ │ │ ┌──────────┐ ▼ │ │ └──────────│ 计划修正 │◀────── 执行反馈 反馈控制 │ │ └──────────┘ │ └─────────────────────────────────────────────────────────┘ 二、Planning 的学术基础与范式演进 2.1 从 CoT 到 Planning 的演进路径 1 2 3 4 5 6 7 8 9 10 11 12 13 14 Chain-of-Thought (CoT) │ 线性推理，不可回溯 ▼ ReAct (Reasoning + Acting) │ 推理与行动交替，有外部反馈 ▼ Plan-and-Solve (PS/PS+) │ 先规划后执行，两阶段分离 ▼ Tree of Thoughts (ToT) │ 多路径搜索，可回溯 ▼ LATS (Language Agent Tree Search) 结合 MCTS，规划+行动+推理统一 2.2 Chain-of-Thought (CoT)：线性推理的起点 核心思想：通过在 Prompt 中加入 &ldquo;Let&rsquo;s think step by step&rdquo;，引导 LLM 生成中间推理步骤，而非直接输出最终答案。\n">
+<meta name="twitter:description" content="写在前面 当任务变复杂时，Agent 不能只靠&quot;下一步做什么&quot;的局部判断——它需要先把目标拆成可执行步骤，再根据工具结果动态调整计划。这就是 Planning（规划） 能力。\n本文将从底层原理到工程实现，结合 LangChain 1.3+ / LangGraph 1.2+ 源码，深入剖析 Agent Planning 的核心机制。\n一、Planning 解决什么问题 1.1 复杂任务需要拆解 1 帮我分析这份需求，查公司已有接口规范，设计 API（Application Programming Interface，应用程序编程接口），并给出测试用例。 这个任务至少包含：理解需求 → 检索规范 → 设计接口 → 生成测试用例 → 检查风险。每个步骤之间存在依赖关系和上下文传递。\n1.2 没有 Planning 的 Agent 会怎样 问题 表现 漏步骤 跳过&quot;检索规范&quot;直接设计接口 顺序错误 先写测试用例再设计接口 工具调用混乱 反复调用同一工具 无法解释进度 用户不知道当前在做什么 失败不可恢复 一步出错整个任务崩溃 1.3 Planning 的本质定义 Planning 是 Agent 在执行前/执行中对&quot;做什么、按什么顺序做、如何应对变化&quot;进行结构化决策的过程。\n从控制论角度看，Planning 是一个 前馈控制(Feedforward Control) + 反馈控制(Feedback Control) 的混合系统：\n1 2 3 4 5 6 7 8 9 10 11 ┌─────────────────────────────────────────────────────────┐ │ Planning System │ │ │ │ ┌──────────┐ ┌──────────┐ ┌──────────┐ │ │ │ 目标分解 │───▶│ 步骤排序 │───▶│ 资源分配 │ 前馈控制 │ │ └──────────┘ └──────────┘ └──────────┘ │ │ ▲ │ │ │ │ ┌──────────┐ ▼ │ │ └──────────│ 计划修正 │◀────── 执行反馈 反馈控制 │ │ └──────────┘ │ └─────────────────────────────────────────────────────────┘ 二、Planning 的学术基础与范式演进 2.1 从 CoT 到 Planning 的演进路径 1 2 3 4 5 6 7 8 9 10 11 12 13 14 CoT（Chain-of-Thought，链式思维） │ 线性推理，不可回溯 ▼ ReAct（Reasoning + Acting） │ 推理与行动交替，有外部反馈 ▼ PS/PS+（Plan-and-Solve / Plan-and-Solve Plus） │ 先规划后执行，两阶段分离 ▼ ToT（Tree of Thoughts） │ 多路径搜索，可回溯 ▼ LATS（Language Agent Tree Search） 结合 MCTS，规划+行动+推理统一 2.2 CoT（Chain-of-Thought，链式思维）：线性推理的起点 核心思想：通过在 Prompt 中加入 &ldquo;Let&rsquo;s think step by step&rdquo;，引导 LLM 生成中间推理步骤，而非直接输出最终答案。\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -234,7 +234,7 @@
 
   <ol>
     <li><a href="#21-从-cot-到-planning-的演进路径">2.1 从 CoT 到 Planning 的演进路径</a></li>
-    <li><a href="#22-chain-of-thought-cot线性推理的起点">2.2 Chain-of-Thought (CoT)：线性推理的起点</a>
+    <li><a href="#22-cotchain-of-thought链式思维线性推理的起点">2.2 CoT（Chain-of-Thought，链式思维）：线性推理的起点</a>
       <ol>
         <li><a href="#few-shot-cotwei-et-al-2022">Few-shot CoT（Wei et al. 2022）</a></li>
         <li><a href="#zero-shot-cotkojima-et-al-2022">Zero-shot CoT（Kojima et al. 2022）</a></li>
@@ -424,7 +424,7 @@
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">帮我分析这份需求，查公司已有接口规范，设计 API，并给出测试用例。
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">帮我分析这份需求，查公司已有接口规范，设计 API（Application Programming Interface，应用程序编程接口），并给出测试用例。
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>这个任务至少包含：理解需求 → 检索规范 → 设计接口 → 生成测试用例 → 检查风险。每个步骤之间存在依赖关系和上下文传递。</p>
@@ -511,23 +511,23 @@
 </span><span class="lnt">14
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">Chain-of-Thought (CoT)
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">CoT（Chain-of-Thought，链式思维）
 </span></span><span class="line"><span class="cl">   │  线性推理，不可回溯
 </span></span><span class="line"><span class="cl">   ▼
-</span></span><span class="line"><span class="cl">ReAct (Reasoning + Acting)
+</span></span><span class="line"><span class="cl">ReAct（Reasoning + Acting）
 </span></span><span class="line"><span class="cl">   │  推理与行动交替，有外部反馈
 </span></span><span class="line"><span class="cl">   ▼
-</span></span><span class="line"><span class="cl">Plan-and-Solve (PS/PS+)
+</span></span><span class="line"><span class="cl">PS/PS+（Plan-and-Solve / Plan-and-Solve Plus）
 </span></span><span class="line"><span class="cl">   │  先规划后执行，两阶段分离
 </span></span><span class="line"><span class="cl">   ▼
-</span></span><span class="line"><span class="cl">Tree of Thoughts (ToT)
+</span></span><span class="line"><span class="cl">ToT（Tree of Thoughts）
 </span></span><span class="line"><span class="cl">   │  多路径搜索，可回溯
 </span></span><span class="line"><span class="cl">   ▼
-</span></span><span class="line"><span class="cl">LATS (Language Agent Tree Search)
+</span></span><span class="line"><span class="cl">LATS（Language Agent Tree Search）
 </span></span><span class="line"><span class="cl">      结合 MCTS，规划+行动+推理统一
 </span></span></code></pre></td></tr></table>
 </div>
-</div><h2 id="22-chain-of-thought-cot线性推理的起点">2.2 Chain-of-Thought (CoT)：线性推理的起点
+</div><h2 id="22-cotchain-of-thought链式思维线性推理的起点">2.2 CoT（Chain-of-Thought，链式思维）：线性推理的起点
 </h2><p><strong>核心思想</strong>：通过在 Prompt 中加入 &ldquo;Let&rsquo;s think step by step&rdquo;，引导 LLM 生成中间推理步骤，而非直接输出最终答案。</p>
 <p><strong>示例对比</strong>：</p>
 <div class="highlight"><div class="chroma">
@@ -921,7 +921,7 @@
 </div><p><strong>实验结果</strong>：GPT-4 + CoT 成功率仅 4%，GPT-4 + ToT 成功率达到 74%——提升 <strong>18.5 倍</strong>。这证明了在需要搜索和回溯的任务中，多路径探索远胜于线性推理。</p>
 <h2 id="26-lats统一规划-行动-推理">2.6 LATS：统一规划-行动-推理
 </h2><h3 id="什么是蒙特卡洛树搜索mcts">什么是蒙特卡洛树搜索（MCTS）
-</h3><p>MCTS （Monte Carlo Tree Search） 是一种用于决策问题的搜索算法，最著名的应用是 AlphaGo。它的核心思想是：<strong>不穷举所有可能，而是通过随机模拟来估计每条路径的价值，优先探索最有前途的方向。</strong></p>
+</h3><p>MCTS（Monte Carlo Tree Search，蒙特卡洛树搜索） 是一种用于决策问题的搜索算法，最著名的应用是 AlphaGo。它的核心思想是：<strong>不穷举所有可能，而是通过随机模拟来估计每条路径的价值，优先探索最有前途的方向。</strong></p>
 <p><strong>现实类比</strong>：</p>
 <p>假设你要在一座陌生城市找最好的餐厅：</p>
 <ul>
@@ -982,7 +982,7 @@
 </span></span><span class="line"><span class="cl">              └─────────────────────────────────────────────────┘
 </span></span></code></pre></td></tr></table>
 </div>
-</div><p><strong>UCB 公式</strong>（Selection 阶段用于选节点）：</p>
+</div><p><strong>UCB（Upper Confidence Bound，置信上界）公式</strong>（Selection 阶段用于选节点）：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
@@ -1089,7 +1089,7 @@
       </tr>
       <tr>
           <td>节点选择策略</td>
-          <td>简单 BFS/DFS</td>
+          <td>简单 BFS（Breadth-First Search，广度优先搜索）/DFS（Depth-First Search，深度优先搜索）</td>
           <td>UCB 公式（有数学保证）</td>
       </tr>
       <tr>
@@ -1461,7 +1461,7 @@
 </span></span><span class="line"><span class="cl">│       ▼                                                          │
 </span></span><span class="line"><span class="cl">│   ┌────────────┐                                                 │
 </span></span><span class="line"><span class="cl">│   │  Planner   │   生成初始计划（仅 1 次）                          │
-</span></span><span class="line"><span class="cl">│   │  (LLM-1)   │                                                 │
+</span></span><span class="line"><span class="cl">│   │  (LLM（Large Language Model，大语言模型）-1)   │                                                 │
 </span></span><span class="line"><span class="cl">│   └─────┬──────┘                                                 │
 </span></span><span class="line"><span class="cl">│         │ 计划 [s1, s2, s3, ...]                                  │
 </span></span><span class="line"><span class="cl">│         ▼                                                        │
