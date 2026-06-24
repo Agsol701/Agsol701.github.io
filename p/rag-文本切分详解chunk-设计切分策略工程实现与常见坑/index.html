@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 在 RAG 系统里，很多人会把注意力放在：\nembedding 模型 向量数据库 BM25 rerank prompt 大模型生成 但如果把一条失败样本拆开看，经常会发现问题更早就发生了：\n文档在切分阶段就已经被切坏了。\n例如：\n标题和正文被拆开 表格表头和数据行分离 一个完整规则被切成两半 多个无关主题被塞进同一个 chunk 代码函数被截断 FAQ 的问题和答案不在同一个片段里 条款的例外条件被切到下一个 chunk 这类问题后面很难补救。\n因为 RAG 的核心链路通常是：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 原始文档 ↓ 文档解析 ↓ 文本切分 ↓ embedding 与索引 ↓ 召回 ↓ 重排 ↓ 上下文组装 ↓ 大模型生成 切分决定的是：\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把注意力放在：\nembedding 模型 向量数据库 BM25（Best Matching 25） 重排（rerank） prompt 大模型生成 但如果把一条失败样本拆开看，经常会发现问题更早就发生了：\n文档在切分阶段就已经被切坏了。\n例如：\n标题和正文被拆开 表格表头和数据行分离 一个完整规则被切成两半 多个无关主题被塞进同一个 chunk 代码函数被截断 FAQ（Frequently Asked Questions，常见问题）的问题和答案不在同一个片段里 条款的例外条件被切到下一个 chunk 这类问题后面很难补救。\n因为 RAG 的核心链路通常是：\n1 2 3 4 5 6 7 8 flowchart TD A[&#34;原始文档&#34;] --&gt; B[&#34;文档解析&#34;] B --&gt; C[&#34;文本切分&#34;] C --&gt; D[&#34;embedding 与索引&#34;] D --&gt; E[&#34;召回&#34;] E --&gt; F[&#34;重排&#34;] F --&gt; G[&#34;上下文组装&#34;] G --&gt; H[&#34;大模型生成&#34;] 切分决定的是：\n">
 <title>RAG 文本切分详解：Chunk 设计、切分策略、工程实现与常见坑</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/rag-%E6%96%87%E6%9C%AC%E5%88%87%E5%88%86%E8%AF%A6%E8%A7%A3chunk-%E8%AE%BE%E8%AE%A1%E5%88%87%E5%88%86%E7%AD%96%E7%95%A5%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E5%B8%B8%E8%A7%81%E5%9D%91/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="RAG 文本切分详解：Chunk 设计、切分策略、工程实现与常见坑">
-<meta property='og:description' content="写在前面 在 RAG 系统里，很多人会把注意力放在：\nembedding 模型 向量数据库 BM25 rerank prompt 大模型生成 但如果把一条失败样本拆开看，经常会发现问题更早就发生了：\n文档在切分阶段就已经被切坏了。\n例如：\n标题和正文被拆开 表格表头和数据行分离 一个完整规则被切成两半 多个无关主题被塞进同一个 chunk 代码函数被截断 FAQ 的问题和答案不在同一个片段里 条款的例外条件被切到下一个 chunk 这类问题后面很难补救。\n因为 RAG 的核心链路通常是：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 原始文档 ↓ 文档解析 ↓ 文本切分 ↓ embedding 与索引 ↓ 召回 ↓ 重排 ↓ 上下文组装 ↓ 大模型生成 切分决定的是：\n">
+<meta property='og:description' content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把注意力放在：\nembedding 模型 向量数据库 BM25（Best Matching 25） 重排（rerank） prompt 大模型生成 但如果把一条失败样本拆开看，经常会发现问题更早就发生了：\n文档在切分阶段就已经被切坏了。\n例如：\n标题和正文被拆开 表格表头和数据行分离 一个完整规则被切成两半 多个无关主题被塞进同一个 chunk 代码函数被截断 FAQ（Frequently Asked Questions，常见问题）的问题和答案不在同一个片段里 条款的例外条件被切到下一个 chunk 这类问题后面很难补救。\n因为 RAG 的核心链路通常是：\n1 2 3 4 5 6 7 8 flowchart TD A[&#34;原始文档&#34;] --&gt; B[&#34;文档解析&#34;] B --&gt; C[&#34;文本切分&#34;] C --&gt; D[&#34;embedding 与索引&#34;] D --&gt; E[&#34;召回&#34;] E --&gt; F[&#34;重排&#34;] F --&gt; G[&#34;上下文组装&#34;] G --&gt; H[&#34;大模型生成&#34;] 切分决定的是：\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/rag-%E6%96%87%E6%9C%AC%E5%88%87%E5%88%86%E8%AF%A6%E8%A7%A3chunk-%E8%AE%BE%E8%AE%A1%E5%88%87%E5%88%86%E7%AD%96%E7%95%A5%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E5%B8%B8%E8%A7%81%E5%9D%91/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='rag' /><meta property='article:published_time' content='2026-05-08T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-08T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="RAG 文本切分详解：Chunk 设计、切分策略、工程实现与常见坑">
-<meta name="twitter:description" content="写在前面 在 RAG 系统里，很多人会把注意力放在：\nembedding 模型 向量数据库 BM25 rerank prompt 大模型生成 但如果把一条失败样本拆开看，经常会发现问题更早就发生了：\n文档在切分阶段就已经被切坏了。\n例如：\n标题和正文被拆开 表格表头和数据行分离 一个完整规则被切成两半 多个无关主题被塞进同一个 chunk 代码函数被截断 FAQ 的问题和答案不在同一个片段里 条款的例外条件被切到下一个 chunk 这类问题后面很难补救。\n因为 RAG 的核心链路通常是：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 原始文档 ↓ 文档解析 ↓ 文本切分 ↓ embedding 与索引 ↓ 召回 ↓ 重排 ↓ 上下文组装 ↓ 大模型生成 切分决定的是：\n">
+<meta name="twitter:description" content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把注意力放在：\nembedding 模型 向量数据库 BM25（Best Matching 25） 重排（rerank） prompt 大模型生成 但如果把一条失败样本拆开看，经常会发现问题更早就发生了：\n文档在切分阶段就已经被切坏了。\n例如：\n标题和正文被拆开 表格表头和数据行分离 一个完整规则被切成两半 多个无关主题被塞进同一个 chunk 代码函数被截断 FAQ（Frequently Asked Questions，常见问题）的问题和答案不在同一个片段里 条款的例外条件被切到下一个 chunk 这类问题后面很难补救。\n因为 RAG 的核心链路通常是：\n1 2 3 4 5 6 7 8 flowchart TD A[&#34;原始文档&#34;] --&gt; B[&#34;文档解析&#34;] B --&gt; C[&#34;文本切分&#34;] C --&gt; D[&#34;embedding 与索引&#34;] D --&gt; E[&#34;召回&#34;] E --&gt; F[&#34;重排&#34;] F --&gt; G[&#34;上下文组装&#34;] G --&gt; H[&#34;大模型生成&#34;] 切分决定的是：\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -400,12 +400,12 @@
     
     
     <h1 id="写在前面">写在前面
-</h1><p>在 RAG 系统里，很多人会把注意力放在：</p>
+</h1><p>在 <code>RAG</code>（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把注意力放在：</p>
 <ul>
 <li>embedding 模型</li>
 <li>向量数据库</li>
-<li>BM25</li>
-<li>rerank</li>
+<li><code>BM25</code>（Best Matching 25）</li>
+<li>重排（rerank）</li>
 <li>prompt</li>
 <li>大模型生成</li>
 </ul>
@@ -419,45 +419,31 @@
 <li>一个完整规则被切成两半</li>
 <li>多个无关主题被塞进同一个 chunk</li>
 <li>代码函数被截断</li>
-<li>FAQ 的问题和答案不在同一个片段里</li>
+<li><code>FAQ</code>（Frequently Asked Questions，常见问题）的问题和答案不在同一个片段里</li>
 <li>条款的例外条件被切到下一个 chunk</li>
 </ul>
 <p>这类问题后面很难补救。</p>
 <p>因为 RAG 的核心链路通常是：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">原始文档
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">文档解析
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">文本切分
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">embedding 与索引
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">召回
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">重排
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">上下文组装
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">大模型生成
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;原始文档&#34;] --&gt; B[&#34;文档解析&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;文本切分&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;embedding 与索引&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;召回&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;重排&#34;]
+</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;上下文组装&#34;]
+</span></span><span class="line"><span class="cl">  G --&gt; H[&#34;大模型生成&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>切分决定的是：</p>
@@ -501,7 +487,7 @@
 <p>如果只按长度切，很容易满足了模型输入限制，却破坏了语义结构。</p>
 <h2 id="12-chunk-是-rag-的最小检索单元">1.2 chunk 是 RAG 的最小检索单元
 </h2><p>在大多数 RAG 系统里，检索不是直接发生在整篇文档上，而是发生在一个个 chunk 上。</p>
-<p>例如一篇产品文档可能被切成：</p>
+<p>例如一篇产品文档可能被切成下面几段。这里的 <code>API</code>（Application Programming Interface，应用程序编程接口）指系统对外提供的接口能力。</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
@@ -542,38 +528,24 @@
 <p>更完整的入库链路可以写成：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">原始知识源
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">采集与同步
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">文档解析
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">清洗与结构恢复
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">文本切分
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">chunk 生成
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">embedding
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">向量索引 / 倒排索引 / 混合索引
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;原始知识源&#34;] --&gt; B[&#34;采集与同步&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;文档解析&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;清洗与结构恢复&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;文本切分&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;chunk 生成&#34;]
+</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;embedding&#34;]
+</span></span><span class="line"><span class="cl">  G --&gt; H[&#34;向量索引 / 倒排索引 / 混合索引&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>这里有一个很关键的前提：</p>
@@ -1199,7 +1171,7 @@
 <p>常见实现方式包括：</p>
 <ul>
 <li>使用 embedding 计算相邻句子的语义相似度</li>
-<li>使用 LLM 判断段落边界</li>
+<li>使用 <code>LLM</code>（Large Language Model，大语言模型）判断段落边界</li>
 <li>使用主题模型或聚类</li>
 <li>基于标题、关键词、话题转折词做规则判断</li>
 </ul>
@@ -1473,38 +1445,24 @@
 <p>推荐流程是：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">表格
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">按整表、行组或行切分
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">生成 content_for_embedding
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">在 embedding 之前检查每个行 chunk 的 token 长度
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">如果某一行超过 max_size
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">按字段、单元格、段落或句子二次切分
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">每个子 chunk 都保留表级和行级上下文
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">只对二次切分后的合规子 chunk 做 embedding
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;表格&#34;] --&gt; B[&#34;按整表、行组或行切分&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;生成 content_for_embedding&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;在 embedding 之前检查每个行 chunk 的 token 长度&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;如果某一行超过 max_size&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;按字段、单元格、段落或句子二次切分&#34;]
+</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;每个子 chunk 都保留表级和行级上下文&#34;]
+</span></span><span class="line"><span class="cl">  G --&gt; H[&#34;只对二次切分后的合规子 chunk 做 embedding&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>关键点是：</p>
@@ -1683,15 +1641,11 @@
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
 </span><span class="lnt">2
 </span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">table_id
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">row_id
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">chunk_id
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;table_id&#34;] --&gt; B[&#34;row_id&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;chunk_id&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>其中：</p>
@@ -1839,21 +1793,13 @@
 </span><span class="lnt">3
 </span><span class="lnt">4
 </span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span><span class="lnt">9
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回某个 table_row_field_chunk
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">读取它的 row_id 和 parent_chunk_id
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">查找同 row_id 的其他字段子 chunk
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">读取 parent row chunk 的 row_summary
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">按 token 预算决定是否补充整行摘要或相邻字段
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;召回某个 table_row_field_chunk&#34;] --&gt; B[&#34;读取它的 row_id 和 parent_chunk_id&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;查找同 row_id 的其他字段子 chunk&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;读取 parent row chunk 的 row_summary&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;按 token 预算决定是否补充整行摘要或相邻字段&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>入库时，不建议对超长的原始行 chunk 直接做 embedding。</p>
@@ -1882,30 +1828,24 @@
 <p>在线查询流程可以是：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户 query
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">召回 table_row_field_chunk
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">根据 parent_chunk_id 找到 table_row_chunk
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">上下文组装时按 token 预算选择：
-</span></span><span class="line"><span class="cl">    只放字段子 chunk
-</span></span><span class="line"><span class="cl">    字段子 chunk + row_key
-</span></span><span class="line"><span class="cl">    字段子 chunk + row_summary
-</span></span><span class="line"><span class="cl">    字段子 chunk + 相邻字段
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;用户 query&#34;] --&gt; B[&#34;召回 table_row_field_chunk&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;根据 parent_chunk_id 找到 table_row_chunk&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;上下文组装时按 token 预算选择&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;只放字段子 chunk&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; F[&#34;字段子 chunk + row_key&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; G[&#34;字段子 chunk + row_summary&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; H[&#34;字段子 chunk + 相邻字段&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>这样既能避免 embedding 入库阶段因为单条表格 chunk 过长而 OOM，也能降低 rerank 和 LLM 上下文阶段的压力，同时保留表格语义。</p>
@@ -2098,21 +2038,13 @@
 </span><span class="lnt">3
 </span><span class="lnt">4
 </span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span><span class="lnt">9
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户 query
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">检索 child chunk
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">命中 child chunk
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">找到所属 parent chunk
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">把 parent 或 parent 的相关片段放进上下文
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;用户 query&#34;] --&gt; B[&#34;检索 child chunk&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;命中 child chunk&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;找到所属 parent chunk&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;把 parent 或 parent 的相关片段放进上下文&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>例如：</p>
@@ -2355,39 +2287,19 @@
 </span><span class="lnt"> 9
 </span><span class="lnt">10
 </span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">解析后的 blocks
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">清洗噪声
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">恢复标题层级和 section_path
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">按文档类型选择切分策略
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">按结构生成初始 chunk
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">过长 chunk 二次切分
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">过短 chunk 合并
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">生成 content_for_embedding
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">补充 metadata
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">质量检查
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">写入索引
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;解析后的 blocks&#34;] --&gt; B[&#34;清洗噪声&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;恢复标题层级和 section_path&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;按文档类型选择切分策略&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;按结构生成初始 chunk&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;过长 chunk 二次切分&#34;]
+</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;过短 chunk 合并&#34;]
+</span></span><span class="line"><span class="cl">  G --&gt; H[&#34;生成 content_for_embedding&#34;]
+</span></span><span class="line"><span class="cl">  H --&gt; I[&#34;补充 metadata&#34;]
+</span></span><span class="line"><span class="cl">  I --&gt; J[&#34;质量检查&#34;]
+</span></span><span class="line"><span class="cl">  J --&gt; K[&#34;写入索引&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>这里最重要的是：</p>
@@ -2645,10 +2557,10 @@
 </h2><p>切分本身可以配合召回指标一起看。</p>
 <p>常见指标统一看这四个：</p>
 <ul>
-<li><code>Recall@k</code>：正确 chunk 是否出现在 top-k 召回结果中</li>
-<li><code>Precision@k</code>：top-k 结果里有多少是真正相关的 chunk</li>
-<li><code>MRR</code>：第一个正确 chunk 的排名是否靠前</li>
-<li><code>NDCG</code>：高相关 chunk 是否排在更靠前的位置</li>
+<li><code>Recall@k</code>（前 k 个结果的召回率）：正确 chunk 是否出现在 top-k 召回结果中</li>
+<li><code>Precision@k</code>（前 k 个结果的精确率）：top-k 结果里有多少是真正相关的 chunk</li>
+<li><code>MRR</code>（Mean Reciprocal Rank，平均倒数排名）：第一个正确 chunk 的排名是否靠前</li>
+<li><code>NDCG</code>（Normalized Discounted Cumulative Gain，归一化折损累计增益）：高相关 chunk 是否排在更靠前的位置</li>
 </ul>
 <p>其中最重要的是：</p>
 <blockquote>
@@ -2753,7 +2665,7 @@
 <ul>
 <li>产品配置说明</li>
 <li>权限规则说明</li>
-<li>JSON 示例</li>
+<li><code>JSON</code>（JavaScript Object Notation，JavaScript 对象表示法）示例</li>
 <li>日志样例</li>
 <li>长备注</li>
 <li>多段处理流程</li>
@@ -2784,7 +2696,7 @@
 <p>原始行 chunk 可以作为 parent 结构保存，用于追溯和上下文补全；如果要参与向量检索，也应该只对它的 <code>row_summary</code> 做 embedding，而不是对整行长文本做 embedding。</p>
 <p>否则要么 embedding 阶段就可能 OOM，要么命中子 chunk 后，系统只知道一段局部文本，却不知道它来自哪张表、哪一行、哪个字段。</p>
 <h2 id="116-chunk-里混入页眉页脚">11.6 chunk 里混入页眉页脚
-</h2><p>PDF 解析后经常混入：</p>
+</h2><p><code>PDF</code>（Portable Document Format，便携式文档格式）解析后经常混入：</p>
 <ul>
 <li>公司名称</li>
 <li>页码</li>
@@ -3135,21 +3047,13 @@
 </span><span class="lnt">3
 </span><span class="lnt">4
 </span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span><span class="lnt">9
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">表格按行切分
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">生成 content_for_embedding
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">检查 token 长度
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">超长行按字段、单元格、段落或句子二次切分
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">只对合规子 chunk 做 embedding
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;表格按行切分&#34;] --&gt; B[&#34;生成 content_for_embedding&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;检查 token 长度&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;超长行按字段、单元格、段落或句子二次切分&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;只对合规子 chunk 做 embedding&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>原始超长行可以作为 parent row chunk 保存结构和摘要，不建议直接对整行长文本做 embedding。</p>
@@ -3161,15 +3065,11 @@
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
 </span><span class="lnt">2
 </span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">table_id
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">row_id
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">chunk_id
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;table_id&#34;] --&gt; B[&#34;row_id&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;chunk_id&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>同一行拆出来的所有子 chunk 应该共享：</p>
@@ -3319,30 +3219,20 @@
 <p>排查失败样本时，可以按下面顺序看：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">原始文档是否有答案
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">解析后答案是否还在
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">切分后答案是否形成完整 chunk
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">正确 chunk 是否被召回
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">正确 chunk 是否进入最终上下文
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">模型是否基于它回答
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;原始文档是否有答案&#34;] --&gt; B[&#34;解析后答案是否还在&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;切分后答案是否形成完整 chunk&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;正确 chunk 是否被召回&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;正确 chunk 是否进入最终上下文&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;模型是否基于它回答&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>如果切分后答案已经不完整，后面的 prompt 和模型很难补救。</p>

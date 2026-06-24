@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 在 RAG 系统里，很多人会把链路简化成：\n1 2 3 4 5 检索 top-k ↓ 把结果拼进 prompt ↓ 让大模型回答 这个流程可以跑通 demo，但到了真实业务里，很快会遇到一类问题：\n正确证据已经被召回，也排在前面了，但最终答案仍然不稳定。\n原因往往出在“上下文组装”。\n在完整 RAG 链路里，上下文组装位于重排之后、生成之前：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 原始文档 ↓ 文档解析 ↓ 文本切分 ↓ embedding 与索引 ↓ 查询理解 ↓ 召回 ↓ 重排 ↓ 上下文组装 ↓ 大模型生成 召回解决的是：\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把链路简化成：\n1 2 3 flowchart TD A[&#34;检索 top-k&#34;] --&gt; B[&#34;把结果拼进 prompt&#34;] B --&gt; C[&#34;让大模型回答&#34;] 这个流程可以跑通 demo，但到了真实业务里，很快会遇到一类问题：\n正确证据已经被召回，也排在前面了，但最终答案仍然不稳定。\n原因往往出在“上下文组装”。\n在完整 RAG 链路里，上下文组装位于重排之后、生成之前：\n1 2 3 4 5 6 7 8 9 flowchart TD A[&#34;原始文档&#34;] --&gt; B[&#34;文档解析&#34;] B --&gt; C[&#34;文本切分&#34;] C --&gt; D[&#34;embedding 与索引&#34;] D --&gt; E[&#34;查询理解&#34;] E --&gt; F[&#34;召回&#34;] F --&gt; G[&#34;重排&#34;] G --&gt; H[&#34;上下文组装&#34;] H --&gt; I[&#34;大模型生成&#34;] 召回解决的是：\n">
 <title>RAG 上下文组装详解：证据选择、Token 预算、Prompt 构造与工程调优</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/rag-%E4%B8%8A%E4%B8%8B%E6%96%87%E7%BB%84%E8%A3%85%E8%AF%A6%E8%A7%A3%E8%AF%81%E6%8D%AE%E9%80%89%E6%8B%A9token-%E9%A2%84%E7%AE%97prompt-%E6%9E%84%E9%80%A0%E4%B8%8E%E5%B7%A5%E7%A8%8B%E8%B0%83%E4%BC%98/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="RAG 上下文组装详解：证据选择、Token 预算、Prompt 构造与工程调优">
-<meta property='og:description' content="写在前面 在 RAG 系统里，很多人会把链路简化成：\n1 2 3 4 5 检索 top-k ↓ 把结果拼进 prompt ↓ 让大模型回答 这个流程可以跑通 demo，但到了真实业务里，很快会遇到一类问题：\n正确证据已经被召回，也排在前面了，但最终答案仍然不稳定。\n原因往往出在“上下文组装”。\n在完整 RAG 链路里，上下文组装位于重排之后、生成之前：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 原始文档 ↓ 文档解析 ↓ 文本切分 ↓ embedding 与索引 ↓ 查询理解 ↓ 召回 ↓ 重排 ↓ 上下文组装 ↓ 大模型生成 召回解决的是：\n">
+<meta property='og:description' content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把链路简化成：\n1 2 3 flowchart TD A[&#34;检索 top-k&#34;] --&gt; B[&#34;把结果拼进 prompt&#34;] B --&gt; C[&#34;让大模型回答&#34;] 这个流程可以跑通 demo，但到了真实业务里，很快会遇到一类问题：\n正确证据已经被召回，也排在前面了，但最终答案仍然不稳定。\n原因往往出在“上下文组装”。\n在完整 RAG 链路里，上下文组装位于重排之后、生成之前：\n1 2 3 4 5 6 7 8 9 flowchart TD A[&#34;原始文档&#34;] --&gt; B[&#34;文档解析&#34;] B --&gt; C[&#34;文本切分&#34;] C --&gt; D[&#34;embedding 与索引&#34;] D --&gt; E[&#34;查询理解&#34;] E --&gt; F[&#34;召回&#34;] F --&gt; G[&#34;重排&#34;] G --&gt; H[&#34;上下文组装&#34;] H --&gt; I[&#34;大模型生成&#34;] 召回解决的是：\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/rag-%E4%B8%8A%E4%B8%8B%E6%96%87%E7%BB%84%E8%A3%85%E8%AF%A6%E8%A7%A3%E8%AF%81%E6%8D%AE%E9%80%89%E6%8B%A9token-%E9%A2%84%E7%AE%97prompt-%E6%9E%84%E9%80%A0%E4%B8%8E%E5%B7%A5%E7%A8%8B%E8%B0%83%E4%BC%98/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='rag' /><meta property='article:published_time' content='2026-05-16T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-16T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="RAG 上下文组装详解：证据选择、Token 预算、Prompt 构造与工程调优">
-<meta name="twitter:description" content="写在前面 在 RAG 系统里，很多人会把链路简化成：\n1 2 3 4 5 检索 top-k ↓ 把结果拼进 prompt ↓ 让大模型回答 这个流程可以跑通 demo，但到了真实业务里，很快会遇到一类问题：\n正确证据已经被召回，也排在前面了，但最终答案仍然不稳定。\n原因往往出在“上下文组装”。\n在完整 RAG 链路里，上下文组装位于重排之后、生成之前：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 原始文档 ↓ 文档解析 ↓ 文本切分 ↓ embedding 与索引 ↓ 查询理解 ↓ 召回 ↓ 重排 ↓ 上下文组装 ↓ 大模型生成 召回解决的是：\n">
+<meta name="twitter:description" content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把链路简化成：\n1 2 3 flowchart TD A[&#34;检索 top-k&#34;] --&gt; B[&#34;把结果拼进 prompt&#34;] B --&gt; C[&#34;让大模型回答&#34;] 这个流程可以跑通 demo，但到了真实业务里，很快会遇到一类问题：\n正确证据已经被召回，也排在前面了，但最终答案仍然不稳定。\n原因往往出在“上下文组装”。\n在完整 RAG 链路里，上下文组装位于重排之后、生成之前：\n1 2 3 4 5 6 7 8 9 flowchart TD A[&#34;原始文档&#34;] --&gt; B[&#34;文档解析&#34;] B --&gt; C[&#34;文本切分&#34;] C --&gt; D[&#34;embedding 与索引&#34;] D --&gt; E[&#34;查询理解&#34;] E --&gt; F[&#34;召回&#34;] F --&gt; G[&#34;重排&#34;] G --&gt; H[&#34;上下文组装&#34;] H --&gt; I[&#34;大模型生成&#34;] 召回解决的是：\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -354,9 +354,9 @@
   <ol>
     <li><a href="#141-为什么要单独评估上下文">14.1 为什么要单独评估上下文</a></li>
     <li><a href="#142-先解释几个评估名词">14.2 先解释几个评估名词</a></li>
-    <li><a href="#143-context-recall">14.3 Context Recall</a></li>
+    <li><a href="#143-context-recall上下文召回率">14.3 <code>Context Recall</code>（上下文召回率）</a></li>
     <li><a href="#144-context-precision">14.4 Context Precision</a></li>
-    <li><a href="#145-faithfulness">14.5 Faithfulness</a></li>
+    <li><a href="#145-faithfulness忠实度">14.5 <code>Faithfulness</code>（忠实度）</a></li>
     <li><a href="#146-引用准确率">14.6 引用准确率</a></li>
     <li><a href="#147-上下文长度和成本指标">14.7 上下文长度和成本指标</a></li>
     <li><a href="#148-一个排查用日志">14.8 一个排查用日志</a></li>
@@ -471,21 +471,17 @@
     
     
     <h1 id="写在前面">写在前面
-</h1><p>在 RAG 系统里，很多人会把链路简化成：</p>
+</h1><p>在 <code>RAG</code>（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把链路简化成：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
 </span><span class="lnt">2
 </span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">检索 top-k
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">把结果拼进 prompt
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">让大模型回答
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;检索 top-k&#34;] --&gt; B[&#34;把结果拼进 prompt&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;让大模型回答&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>这个流程可以跑通 demo，但到了真实业务里，很快会遇到一类问题：</p>
@@ -495,42 +491,26 @@
 <p>在完整 RAG 链路里，上下文组装位于重排之后、生成之前：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">原始文档
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">文档解析
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">文本切分
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">embedding 与索引
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">查询理解
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">召回
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">重排
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">上下文组装
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">大模型生成
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;原始文档&#34;] --&gt; B[&#34;文档解析&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;文本切分&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;embedding 与索引&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;查询理解&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;召回&#34;]
+</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;重排&#34;]
+</span></span><span class="line"><span class="cl">  G --&gt; H[&#34;上下文组装&#34;]
+</span></span><span class="line"><span class="cl">  H --&gt; I[&#34;大模型生成&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>召回解决的是：</p>
@@ -545,7 +525,7 @@
 <p>这一步看起来像“拼字符串”，但实际是 RAG 工程里非常关键的决策层。</p>
 <p>如果组装不好，常见问题包括：</p>
 <ul>
-<li>token 被无关内容占满</li>
+<li><code>token</code>（文本令牌）被无关内容占满</li>
 <li>同一来源重复片段太多</li>
 <li>正确证据被截断</li>
 <li>表格、标题、条件、例外说明丢失</li>
@@ -561,7 +541,7 @@
 <li>输入输出应该怎么设计</li>
 <li>token 预算怎么分配</li>
 <li>最终证据怎么选择</li>
-<li>chunk 去重、合并、补全怎么做</li>
+<li><code>chunk</code>（文本切片）去重、合并、补全怎么做</li>
 <li>证据顺序应该按相关性还是按文档顺序</li>
 <li>上下文压缩和摘要怎么用</li>
 <li>引用、来源、权限和时效性怎么处理</li>
@@ -749,36 +729,18 @@
 </span><span class="lnt"> 8
 </span><span class="lnt"> 9
 </span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户问题
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">查询理解
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">metadata filter
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">多路召回
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">候选去重
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">rerank
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">上下文组装
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">prompt 构造
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">LLM 生成
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">答案后处理
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;用户问题&#34;] --&gt; B[&#34;查询理解&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;metadata filter&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;多路召回&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;候选去重&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;rerank&#34;]
+</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;上下文组装&#34;]
+</span></span><span class="line"><span class="cl">  G --&gt; H[&#34;prompt 构造&#34;]
+</span></span><span class="line"><span class="cl">  H --&gt; I[&#34;LLM 生成&#34;]
+</span></span><span class="line"><span class="cl">  I --&gt; J[&#34;答案后处理&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>上下文组装拿到的通常不是全量候选，而是经过 rerank 后的一批候选。</p>
@@ -790,21 +752,13 @@
 </span><span class="lnt">3
 </span><span class="lnt">4
 </span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span><span class="lnt">9
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回 top-80
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">去重后 62 个候选
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">rerank top-20
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">上下文组装选择 6 到 10 个证据片段
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">进入 prompt
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;召回 top-80&#34;] --&gt; B[&#34;去重后 62 个候选&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;rerank top-20&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;上下文组装选择 6 到 10 个证据片段&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;进入 prompt&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>这里要注意：</p>
@@ -1053,30 +1007,20 @@
 </h2><p>一个常见 prompt 可以分成几层：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">系统角色与边界
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">任务说明
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">回答规则
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">用户问题
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">检索资料
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">输出格式
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;系统角色与边界&#34;] --&gt; B[&#34;任务说明&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;回答规则&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;用户问题&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;检索资料&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;输出格式&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>例如：</p>
@@ -1240,30 +1184,20 @@
 <p>也就是说：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">候选证据
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">估算每段 token
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">按策略选择
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">必要时压缩或摘要
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">渲染 prompt
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">最终校验长度
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;候选证据&#34;] --&gt; B[&#34;估算每段 token&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;按策略选择&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;必要时压缩或摘要&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;渲染 prompt&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;最终校验长度&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>如果最终仍然超长，也应该按证据块整体移除，而不是按字符截断。</p>
@@ -1795,18 +1729,12 @@
 </span><span class="lnt">2
 </span><span class="lnt">3
 </span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">chunk text
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">embedding model
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">chunk embedding
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">向量索引
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;chunk text&#34;] --&gt; B[&#34;embedding model&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;chunk embedding&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;向量索引&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>所以在上下文组装阶段做相似度去重时，优先复用已有的 <code>chunk embedding</code> 就可以：</p>
@@ -1816,16 +1744,12 @@
 </span><span class="lnt">2
 </span><span class="lnt">3
 </span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">candidate_a.embedding
-</span></span><span class="line"><span class="cl">candidate_b.embedding
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">cosine similarity
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">判断是否重复
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;candidate_a.embedding&#34;] --&gt; C[&#34;cosine similarity&#34;]
+</span></span><span class="line"><span class="cl">  B[&#34;candidate_b.embedding&#34;] --&gt; C
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;判断是否重复&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>也就是说，不要默认这样做：</p>
@@ -2495,21 +2419,13 @@
 </span><span class="lnt">3
 </span><span class="lnt">4
 </span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span><span class="lnt">9
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">查询理解
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">权限条件生成
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">召回时 metadata filter
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">rerank
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">组装前再次校验
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;查询理解&#34;] --&gt; B[&#34;权限条件生成&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;召回时 metadata filter&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;rerank&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;组装前再次校验&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>组装阶段仍然需要做兜底校验。</p>
@@ -3218,7 +3134,7 @@
 <p><code>Token</code>：模型处理文本的基本计量单位。</p>
 <p>它不完全等于字数。中文、英文、数字、代码、标点都会按 tokenizer 切成 token。</p>
 <p>RAG 里说的上下文长度、输入成本、输出预算，通常都是按 token 计算。</p>
-<h2 id="143-context-recall">14.3 Context Recall
+<h2 id="143-context-recall上下文召回率">14.3 <code>Context Recall</code>（上下文召回率）
 </h2><p><code>Context Recall</code> 可以翻译成“上下文召回率”。</p>
 <p><code>Context Recall</code> 关注：</p>
 <blockquote>
@@ -3286,7 +3202,7 @@
 <li>引用错误</li>
 <li>答案跑偏</li>
 </ul>
-<h2 id="145-faithfulness">14.5 Faithfulness
+<h2 id="145-faithfulness忠实度">14.5 <code>Faithfulness</code>（忠实度）
 </h2><p><code>Faithfulness</code> 可以翻译成“忠实度”。</p>
 <p><code>Faithfulness</code> 关注：</p>
 <blockquote>

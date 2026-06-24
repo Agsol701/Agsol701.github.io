@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 在 RAG 系统里，很多人会把问题简化成：\n1 2 3 向量库召回 top-k 把结果塞进 prompt 让大模型回答 这个流程能跑通 demo，但到了真实业务里，经常会遇到一个很典型的问题：\n正确资料其实被召回了，但排得太靠后，最后没有进入上下文。\n这时问题不一定出在召回。\n召回阶段的目标是把“可能相关”的候选找出来。\n但召回结果不一定已经是最适合放进 prompt 的顺序。\n所以 RAG 里通常还需要一个环节：\n1 2 3 4 5 6 7 召回 ↓ 重排 rerank ↓ 上下文组装 ↓ 生成答案 重排的作用是：\n在候选集合里，把真正最相关、最有用、最适合作为证据的内容排到前面。\n这篇文章专门讲 RAG 里的重排：\nrerank 在 RAG 链路里的位置 召回、排序、重排、上下文组装的区别 为什么召回结果需要再排一次 Cross-Encoder Rerank 的原理 Bi-Encoder 和 Cross-Encoder 的区别 LLM Rerank 怎么做 规则重排和业务特征重排 多路召回结果怎么进入 rerank rerank 的输入输出怎么设计 rerank top-k、阈值、截断怎么调 如何评估 rerank 效果 常见工程坑和高频面试题 一、先理解重排的目标 1.1 rerank 不是召回 很多人会把召回和重排混在一起。\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把问题简化成：\n1 2 3 向量库召回 top-k 把结果塞进 prompt 让大模型回答 这个流程能跑通 demo，但到了真实业务里，经常会遇到一个很典型的问题：\n正确资料其实被召回了，但排得太靠后，最后没有进入上下文。\n这时问题不一定出在召回。\n召回阶段的目标是把“可能相关”的候选找出来。\n但召回结果不一定已经是最适合放进 prompt 的顺序。\n所以 RAG 里通常还需要一个环节：\n1 2 3 4 flowchart TD A[&#34;召回&#34;] --&gt; B[&#34;重排 rerank&#34;] B --&gt; C[&#34;上下文组装&#34;] C --&gt; D[&#34;生成答案&#34;] 重排的作用是：\n在候选集合里，把真正最相关、最有用、最适合作为证据的内容排到前面。\n这篇文章专门讲 RAG 里的重排：\nrerank 在 RAG 链路里的位置 召回、排序、重排、上下文组装的区别 为什么召回结果需要再排一次 Cross-Encoder Rerank（交叉编码器重排）的原理 Bi-Encoder（双编码器）和 Cross-Encoder 的区别 LLM Rerank（大语言模型重排）怎么做 规则重排和业务特征重排 多路召回结果怎么进入 rerank rerank 的输入输出怎么设计 rerank top-k、阈值、截断怎么调 如何评估 rerank 效果 常见工程坑和高频面试题 一、先理解重排的目标 1.1 rerank 不是召回 很多人会把召回和重排混在一起。\n">
 <title>RAG 重排详解：Rerank 原理、模型选择、工程实现与调优方法</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/rag-%E9%87%8D%E6%8E%92%E8%AF%A6%E8%A7%A3rerank-%E5%8E%9F%E7%90%86%E6%A8%A1%E5%9E%8B%E9%80%89%E6%8B%A9%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E8%B0%83%E4%BC%98%E6%96%B9%E6%B3%95/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="RAG 重排详解：Rerank 原理、模型选择、工程实现与调优方法">
-<meta property='og:description' content="写在前面 在 RAG 系统里，很多人会把问题简化成：\n1 2 3 向量库召回 top-k 把结果塞进 prompt 让大模型回答 这个流程能跑通 demo，但到了真实业务里，经常会遇到一个很典型的问题：\n正确资料其实被召回了，但排得太靠后，最后没有进入上下文。\n这时问题不一定出在召回。\n召回阶段的目标是把“可能相关”的候选找出来。\n但召回结果不一定已经是最适合放进 prompt 的顺序。\n所以 RAG 里通常还需要一个环节：\n1 2 3 4 5 6 7 召回 ↓ 重排 rerank ↓ 上下文组装 ↓ 生成答案 重排的作用是：\n在候选集合里，把真正最相关、最有用、最适合作为证据的内容排到前面。\n这篇文章专门讲 RAG 里的重排：\nrerank 在 RAG 链路里的位置 召回、排序、重排、上下文组装的区别 为什么召回结果需要再排一次 Cross-Encoder Rerank 的原理 Bi-Encoder 和 Cross-Encoder 的区别 LLM Rerank 怎么做 规则重排和业务特征重排 多路召回结果怎么进入 rerank rerank 的输入输出怎么设计 rerank top-k、阈值、截断怎么调 如何评估 rerank 效果 常见工程坑和高频面试题 一、先理解重排的目标 1.1 rerank 不是召回 很多人会把召回和重排混在一起。\n">
+<meta property='og:description' content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把问题简化成：\n1 2 3 向量库召回 top-k 把结果塞进 prompt 让大模型回答 这个流程能跑通 demo，但到了真实业务里，经常会遇到一个很典型的问题：\n正确资料其实被召回了，但排得太靠后，最后没有进入上下文。\n这时问题不一定出在召回。\n召回阶段的目标是把“可能相关”的候选找出来。\n但召回结果不一定已经是最适合放进 prompt 的顺序。\n所以 RAG 里通常还需要一个环节：\n1 2 3 4 flowchart TD A[&#34;召回&#34;] --&gt; B[&#34;重排 rerank&#34;] B --&gt; C[&#34;上下文组装&#34;] C --&gt; D[&#34;生成答案&#34;] 重排的作用是：\n在候选集合里，把真正最相关、最有用、最适合作为证据的内容排到前面。\n这篇文章专门讲 RAG 里的重排：\nrerank 在 RAG 链路里的位置 召回、排序、重排、上下文组装的区别 为什么召回结果需要再排一次 Cross-Encoder Rerank（交叉编码器重排）的原理 Bi-Encoder（双编码器）和 Cross-Encoder 的区别 LLM Rerank（大语言模型重排）怎么做 规则重排和业务特征重排 多路召回结果怎么进入 rerank rerank 的输入输出怎么设计 rerank top-k、阈值、截断怎么调 如何评估 rerank 效果 常见工程坑和高频面试题 一、先理解重排的目标 1.1 rerank 不是召回 很多人会把召回和重排混在一起。\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/rag-%E9%87%8D%E6%8E%92%E8%AF%A6%E8%A7%A3rerank-%E5%8E%9F%E7%90%86%E6%A8%A1%E5%9E%8B%E9%80%89%E6%8B%A9%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E8%B0%83%E4%BC%98%E6%96%B9%E6%B3%95/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='rag' /><meta property='article:published_time' content='2026-05-10T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-10T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="RAG 重排详解：Rerank 原理、模型选择、工程实现与调优方法">
-<meta name="twitter:description" content="写在前面 在 RAG 系统里，很多人会把问题简化成：\n1 2 3 向量库召回 top-k 把结果塞进 prompt 让大模型回答 这个流程能跑通 demo，但到了真实业务里，经常会遇到一个很典型的问题：\n正确资料其实被召回了，但排得太靠后，最后没有进入上下文。\n这时问题不一定出在召回。\n召回阶段的目标是把“可能相关”的候选找出来。\n但召回结果不一定已经是最适合放进 prompt 的顺序。\n所以 RAG 里通常还需要一个环节：\n1 2 3 4 5 6 7 召回 ↓ 重排 rerank ↓ 上下文组装 ↓ 生成答案 重排的作用是：\n在候选集合里，把真正最相关、最有用、最适合作为证据的内容排到前面。\n这篇文章专门讲 RAG 里的重排：\nrerank 在 RAG 链路里的位置 召回、排序、重排、上下文组装的区别 为什么召回结果需要再排一次 Cross-Encoder Rerank 的原理 Bi-Encoder 和 Cross-Encoder 的区别 LLM Rerank 怎么做 规则重排和业务特征重排 多路召回结果怎么进入 rerank rerank 的输入输出怎么设计 rerank top-k、阈值、截断怎么调 如何评估 rerank 效果 常见工程坑和高频面试题 一、先理解重排的目标 1.1 rerank 不是召回 很多人会把召回和重排混在一起。\n">
+<meta name="twitter:description" content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把问题简化成：\n1 2 3 向量库召回 top-k 把结果塞进 prompt 让大模型回答 这个流程能跑通 demo，但到了真实业务里，经常会遇到一个很典型的问题：\n正确资料其实被召回了，但排得太靠后，最后没有进入上下文。\n这时问题不一定出在召回。\n召回阶段的目标是把“可能相关”的候选找出来。\n但召回结果不一定已经是最适合放进 prompt 的顺序。\n所以 RAG 里通常还需要一个环节：\n1 2 3 4 flowchart TD A[&#34;召回&#34;] --&gt; B[&#34;重排 rerank&#34;] B --&gt; C[&#34;上下文组装&#34;] C --&gt; D[&#34;生成答案&#34;] 重排的作用是：\n在候选集合里，把真正最相关、最有用、最适合作为证据的内容排到前面。\n这篇文章专门讲 RAG 里的重排：\nrerank 在 RAG 链路里的位置 召回、排序、重排、上下文组装的区别 为什么召回结果需要再排一次 Cross-Encoder Rerank（交叉编码器重排）的原理 Bi-Encoder（双编码器）和 Cross-Encoder 的区别 LLM Rerank（大语言模型重排）怎么做 规则重排和业务特征重排 多路召回结果怎么进入 rerank rerank 的输入输出怎么设计 rerank top-k、阈值、截断怎么调 如何评估 rerank 效果 常见工程坑和高频面试题 一、先理解重排的目标 1.1 rerank 不是召回 很多人会把召回和重排混在一起。\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -319,10 +319,10 @@
     <li><a href="#121-rerank-评估看什么">12.1 rerank 评估看什么</a></li>
     <li><a href="#122-评估前先准备什么">12.2 评估前先准备什么</a></li>
     <li><a href="#123-什么是-k">12.3 什么是 @k</a></li>
-    <li><a href="#124-mrr">12.4 MRR</a></li>
-    <li><a href="#125-ndcg">12.5 NDCG</a></li>
-    <li><a href="#126-precisionk">12.6 Precision@k</a></li>
-    <li><a href="#127-recallk-和-rerank-的关系">12.7 Recall@k 和 rerank 的关系</a></li>
+    <li><a href="#124-mrrmean-reciprocal-rank平均倒数排名">12.4 <code>MRR</code>（Mean Reciprocal Rank，平均倒数排名）</a></li>
+    <li><a href="#125-ndcgnormalized-discounted-cumulative-gain归一化折损累计增益">12.5 <code>NDCG</code>（Normalized Discounted Cumulative Gain，归一化折损累计增益）</a></li>
+    <li><a href="#126-precisionk前-k-个结果的精确率">12.6 <code>Precision@k</code>（前 k 个结果的精确率）</a></li>
+    <li><a href="#127-recallk前-k-个结果的召回率和-rerank-的关系">12.7 <code>Recall@k</code>（前 k 个结果的召回率）和 rerank 的关系</a></li>
     <li><a href="#128-和无-rerank-baseline-对比">12.8 和无 rerank baseline 对比</a></li>
     <li><a href="#129-分-query-类型评估">12.9 分 query 类型评估</a></li>
     <li><a href="#1210-一个实用评估顺序">12.10 一个实用评估顺序</a></li>
@@ -424,7 +424,7 @@
     
     
     <h1 id="写在前面">写在前面
-</h1><p>在 RAG 系统里，很多人会把问题简化成：</p>
+</h1><p>在 <code>RAG</code>（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把问题简化成：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
@@ -450,18 +450,12 @@
 </span><span class="lnt">2
 </span><span class="lnt">3
 </span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">重排 rerank
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">上下文组装
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">生成答案
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;召回&#34;] --&gt; B[&#34;重排 rerank&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;上下文组装&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;生成答案&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>重排的作用是：</p>
@@ -472,9 +466,9 @@
 <li>rerank 在 RAG 链路里的位置</li>
 <li>召回、排序、重排、上下文组装的区别</li>
 <li>为什么召回结果需要再排一次</li>
-<li>Cross-Encoder Rerank 的原理</li>
-<li>Bi-Encoder 和 Cross-Encoder 的区别</li>
-<li>LLM Rerank 怎么做</li>
+<li><code>Cross-Encoder Rerank</code>（交叉编码器重排）的原理</li>
+<li><code>Bi-Encoder</code>（双编码器）和 Cross-Encoder 的区别</li>
+<li><code>LLM Rerank</code>（大语言模型重排）怎么做</li>
 <li>规则重排和业务特征重排</li>
 <li>多路召回结果怎么进入 rerank</li>
 <li>rerank 的输入输出怎么设计</li>
@@ -521,7 +515,7 @@
 <li>正确 chunk 进了上下文，但模型没有用好</li>
 </ol>
 <p>rerank 主要解决第二类问题。</p>
-<p>例如召回结果是：</p>
+<p>例如召回结果如下。这里的 <code>API</code>（Application Programming Interface，应用程序编程接口）指系统对外提供的接口能力。</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
@@ -595,34 +589,22 @@
 </h2><p>一个常见 RAG 流程是：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户问题
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">查询理解
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">多路召回
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">候选去重
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">rerank
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">上下文组装
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">LLM 生成答案
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;用户问题&#34;] --&gt; B[&#34;查询理解&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;多路召回&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;候选去重&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;rerank&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;上下文组装&#34;]
+</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;LLM 生成答案&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>这里 rerank 位于召回之后、上下文组装之前。</p>
@@ -650,21 +632,13 @@
 </span><span class="lnt">3
 </span><span class="lnt">4
 </span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span><span class="lnt">9
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">召回 top-50
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">rerank 重新排序
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">选 top-8
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">去重、合并相邻 chunk、按文档顺序排列
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">放进 prompt
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;召回 top-50&#34;] --&gt; B[&#34;rerank 重新排序&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;选 top-8&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;去重、合并相邻 chunk、按文档顺序排列&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;放进 prompt&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>rerank 不一定直接决定最终上下文。</p>
@@ -1747,21 +1721,13 @@
 </span><span class="lnt">3
 </span><span class="lnt">4
 </span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span><span class="lnt">9
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">多路召回
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">去重
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">初步融合
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">截断到 N 个候选
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">rerank
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;多路召回&#34;] --&gt; B[&#34;去重&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;初步融合&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;截断到 N 个候选&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;rerank&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>为什么要先截断？</p>
@@ -1897,18 +1863,12 @@
 </span><span class="lnt">2
 </span><span class="lnt">3
 </span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">多路召回
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">RRF 融合排序
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">取前 N 个候选
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">Cross-Encoder / LLM rerank
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;多路召回&#34;] --&gt; B[&#34;RRF 融合排序&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;取前 N 个候选&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;Cross-Encoder / LLM rerank&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h2 id="84-去重很重要">8.4 去重很重要
@@ -1995,18 +1955,12 @@
 </span><span class="lnt">2
 </span><span class="lnt">3
 </span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">child chunk 召回
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">child chunk rerank
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">取对应 parent chunk
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">上下文组装
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;child chunk 召回&#34;] --&gt; B[&#34;child chunk rerank&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;取对应 parent chunk&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;上下文组装&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>这样既能保持检索精度，又能给 LLM 更完整的上下文。</p>
@@ -2032,42 +1986,26 @@
 </h2><p>工程上可以这样做：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">query
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">多路召回 top-k
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">候选去重
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">构造 rerank 输入文本
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">批量调用 rerank 模型
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">得到 rerank_score
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">结合规则和 metadata
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">排序
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">交给 context packing
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;query&#34;] --&gt; B[&#34;多路召回 top-k&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;候选去重&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;构造 rerank 输入文本&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;批量调用 rerank 模型&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;得到 rerank_score&#34;]
+</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;结合规则和 metadata&#34;]
+</span></span><span class="line"><span class="cl">  G --&gt; H[&#34;排序&#34;]
+</span></span><span class="line"><span class="cl">  H --&gt; I[&#34;交给 context packing&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h2 id="102-rerank-输入文本模板">10.2 rerank 输入文本模板
@@ -2257,8 +2195,8 @@
 </div>
 </div><p>比较：</p>
 <ul>
-<li>NDCG@5</li>
-<li>MRR</li>
+<li><code>NDCG@5</code>（前 5 个结果的归一化折损累计增益）</li>
+<li><code>MRR</code>（Mean Reciprocal Rank，平均倒数排名）</li>
 <li>answer accuracy</li>
 <li>latency</li>
 <li>cost</li>
@@ -2336,9 +2274,11 @@
 <p>第一层是检索排序指标。</p>
 <p>也就是只看候选排序本身：</p>
 <ul>
-<li>MRR</li>
-<li>NDCG</li>
-<li>Precision@k</li>
+<li><code>MRR</code>（Mean Reciprocal Rank，平均倒数排名）：看第一个正确证据是否提前</li>
+<li><code>NDCG</code>（Normalized Discounted Cumulative Gain，归一化折损累计增益）：看多级相关证据的整体顺序是否更好</li>
+<li><code>Precision@k</code>（前 k 个结果的精确率）：看前 k 个候选是否更干净</li>
+<li><code>Recall@k</code>（前 k 个结果的召回率）：确认进入 rerank 候选的正确证据是否仍保留在前 k 内</li>
+<li><code>Top-1 Accuracy</code>（首位准确率）：看第 1 条是不是正确证据</li>
 </ul>
 <p>第二层是端到端指标。</p>
 <p>也就是看最终问答效果：</p>
@@ -2448,7 +2388,7 @@
 </span></span><span class="line"><span class="cl">Precision@5
 </span></span></code></pre></td></tr></table>
 </div>
-</div><h2 id="124-mrr">12.4 MRR
+</div><h2 id="124-mrrmean-reciprocal-rank平均倒数排名">12.4 <code>MRR</code>（Mean Reciprocal Rank，平均倒数排名）
 </h2><p>MRR 是 <code>Mean Reciprocal Rank</code>，中文可以叫“平均倒数排名”。</p>
 <p>它看的是：</p>
 <blockquote>
@@ -2515,7 +2455,7 @@
 <p>但它也有局限。</p>
 <p>如果一个问题需要多个证据，MRR 只看第一个正确结果，不关心后面其他重要证据排得好不好。</p>
 <p>这时就更适合看 NDCG。</p>
-<h2 id="125-ndcg">12.5 NDCG
+<h2 id="125-ndcgnormalized-discounted-cumulative-gain归一化折损累计增益">12.5 <code>NDCG</code>（Normalized Discounted Cumulative Gain，归一化折损累计增益）
 </h2><p>NDCG 是 <code>Normalized Discounted Cumulative Gain</code>。</p>
 <p>中文通常叫“归一化折损累计增益”。</p>
 <p>这个名字很长，可以拆开理解。</p>
@@ -2673,7 +2613,7 @@
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 套餐有哪些计费限制？
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pro 套餐每月 API 调用额度是多少？
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>候选相关性可以标成：</p>
@@ -2733,9 +2673,8 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>意思是只评估前 5 或前 10 个结果的排序质量。</p>
-<h2 id="126-precisionk">12.6 Precision@k
-</h2><p>Precision 是“精确率”。</p>
-<p><code>Precision@k</code> 看的是：</p>
+<h2 id="126-precisionk前-k-个结果的精确率">12.6 <code>Precision@k</code>（前 k 个结果的精确率）
+</h2><p><code>Precision@k</code> 看的是：</p>
 <blockquote>
 <p>前 k 个结果里，有多少是真的相关。</p></blockquote>
 <p>公式可以简化为：</p>
@@ -2766,7 +2705,7 @@
 <p>它不太区分“直接答案”和“弱相关背景”。</p></blockquote>
 <p>只要都被标成相关，它们对 Precision 的贡献可能一样。</p>
 <p>所以如果你关心相关程度高低，NDCG 更合适。</p>
-<h2 id="127-recallk-和-rerank-的关系">12.7 Recall@k 和 rerank 的关系
+<h2 id="127-recallk前-k-个结果的召回率和-rerank-的关系">12.7 <code>Recall@k</code>（前 k 个结果的召回率）和 rerank 的关系
 </h2><p>Recall 是“召回率”。</p>
 <p>它看的是：</p>
 <blockquote>
@@ -3301,34 +3240,22 @@
 <p>一个实用的生产级链路通常是：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">多路召回
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">候选去重
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">初步融合
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">Cross-Encoder 或 LLM rerank
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">规则和 metadata 加权
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">上下文组装
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">LLM 生成
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;多路召回&#34;] --&gt; B[&#34;候选去重&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;初步融合&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;Cross-Encoder 或 LLM rerank&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;规则和 metadata 加权&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;上下文组装&#34;]
+</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;LLM 生成&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>重排能显著提升 top 几条证据的质量，但它不是万能的。</p>

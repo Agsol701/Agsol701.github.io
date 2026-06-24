@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 真实业务里的 Agent 不能只靠模型自由发挥。\n更可靠的做法是把 Agent 放进工作流（Workflow）或状态机（State Machine）中，让模型在受控边界内做判断。本文将从底层原理出发，结合 LangGraph 1.2+ 源码（LangChain 1.0+ 生态的核心编排框架），深入剖析 Agent Workflow 的设计哲学、执行机制、工程实现与常见坑点。\n一、为什么 Agent 需要 Workflow 1.1 自由 Agent 的问题 完全自由的 Agent（纯 ReAct Loop）容易出现：\n步骤不可控：模型可能跳过关键步骤，或执行无关操作 审批缺失：高危操作无确认直接执行 重复执行：无幂等保证，同一操作被重复调用 错误难恢复：中间失败后只能从头重来 日志难追踪：状态散落在对话历史中，无法回溯 权限边界模糊：Agent 可以随意调用任何工具 1.2 Workflow 的核心价值 Workflow 提供了一套确定性的执行骨架，Agent 在骨架内做局部判断：\n维度 自由Agent Workflow Agent 执行路径 模型自由决定 图结构预定义 状态管理 隐式（对话上下文） 显式（TypedDict/State） 错误处理 靠提示词 节点级重试+错误处理器 可观测性 黑盒 每步状态可追踪 人工介入 难以插入 interrupt 原生支持 长任务 超时即失败 断点恢复 1.3 什么是状态机 状态机（Finite State Machine, FSM） 是一个系统在有限个状态之间，根据条件跳转的模型。\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 真实业务里的 Agent 不能只靠模型自由发挥。\n更可靠的做法是把 Agent 放进工作流（Workflow）或状态机（State Machine）中，让模型在受控边界内做判断。本文将从底层原理出发，结合 LangGraph 1.2+ 源码（LangChain 1.0+ 生态的核心编排框架），深入剖析 Agent Workflow 的设计哲学、执行机制、工程实现与常见坑点。\n一、为什么 Agent 需要 Workflow 1.1 自由 Agent 的问题 完全自由的 Agent（纯 ReAct Loop）容易出现：\n步骤不可控：模型可能跳过关键步骤，或执行无关操作 审批缺失：高危操作无确认直接执行 重复执行：无幂等保证，同一操作被重复调用 错误难恢复：中间失败后只能从头重来 日志难追踪：状态散落在对话历史中，无法回溯 权限边界模糊：Agent 可以随意调用任何工具 1.2 Workflow 的核心价值 Workflow 提供了一套确定性的执行骨架，Agent 在骨架内做局部判断：\n维度 自由Agent Workflow Agent 执行路径 模型自由决定 图结构预定义 状态管理 隐式（对话上下文） 显式（TypedDict/State） 错误处理 靠提示词 节点级重试+错误处理器 可观测性 黑盒 每步状态可追踪 人工介入 难以插入 interrupt 原生支持 长任务 超时即失败 断点恢复 1.3 什么是状态机 Finite State Machine（FSM，有限状态机） 是一个系统在有限个状态之间，根据条件跳转的模型。\n">
 <title>AI Agent Workflow 与状态机：深入实现原理、工程实践与源码解析</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/ai-agent-workflow-%E4%B8%8E%E7%8A%B6%E6%80%81%E6%9C%BA%E6%B7%B1%E5%85%A5%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5%E4%B8%8E%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="AI Agent Workflow 与状态机：深入实现原理、工程实践与源码解析">
-<meta property='og:description' content="写在前面 真实业务里的 Agent 不能只靠模型自由发挥。\n更可靠的做法是把 Agent 放进工作流（Workflow）或状态机（State Machine）中，让模型在受控边界内做判断。本文将从底层原理出发，结合 LangGraph 1.2+ 源码（LangChain 1.0+ 生态的核心编排框架），深入剖析 Agent Workflow 的设计哲学、执行机制、工程实现与常见坑点。\n一、为什么 Agent 需要 Workflow 1.1 自由 Agent 的问题 完全自由的 Agent（纯 ReAct Loop）容易出现：\n步骤不可控：模型可能跳过关键步骤，或执行无关操作 审批缺失：高危操作无确认直接执行 重复执行：无幂等保证，同一操作被重复调用 错误难恢复：中间失败后只能从头重来 日志难追踪：状态散落在对话历史中，无法回溯 权限边界模糊：Agent 可以随意调用任何工具 1.2 Workflow 的核心价值 Workflow 提供了一套确定性的执行骨架，Agent 在骨架内做局部判断：\n维度 自由Agent Workflow Agent 执行路径 模型自由决定 图结构预定义 状态管理 隐式（对话上下文） 显式（TypedDict/State） 错误处理 靠提示词 节点级重试+错误处理器 可观测性 黑盒 每步状态可追踪 人工介入 难以插入 interrupt 原生支持 长任务 超时即失败 断点恢复 1.3 什么是状态机 状态机（Finite State Machine, FSM） 是一个系统在有限个状态之间，根据条件跳转的模型。\n">
+<meta property='og:description' content="写在前面 真实业务里的 Agent 不能只靠模型自由发挥。\n更可靠的做法是把 Agent 放进工作流（Workflow）或状态机（State Machine）中，让模型在受控边界内做判断。本文将从底层原理出发，结合 LangGraph 1.2+ 源码（LangChain 1.0+ 生态的核心编排框架），深入剖析 Agent Workflow 的设计哲学、执行机制、工程实现与常见坑点。\n一、为什么 Agent 需要 Workflow 1.1 自由 Agent 的问题 完全自由的 Agent（纯 ReAct Loop）容易出现：\n步骤不可控：模型可能跳过关键步骤，或执行无关操作 审批缺失：高危操作无确认直接执行 重复执行：无幂等保证，同一操作被重复调用 错误难恢复：中间失败后只能从头重来 日志难追踪：状态散落在对话历史中，无法回溯 权限边界模糊：Agent 可以随意调用任何工具 1.2 Workflow 的核心价值 Workflow 提供了一套确定性的执行骨架，Agent 在骨架内做局部判断：\n维度 自由Agent Workflow Agent 执行路径 模型自由决定 图结构预定义 状态管理 隐式（对话上下文） 显式（TypedDict/State） 错误处理 靠提示词 节点级重试+错误处理器 可观测性 黑盒 每步状态可追踪 人工介入 难以插入 interrupt 原生支持 长任务 超时即失败 断点恢复 1.3 什么是状态机 Finite State Machine（FSM，有限状态机） 是一个系统在有限个状态之间，根据条件跳转的模型。\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/ai-agent-workflow-%E4%B8%8E%E7%8A%B6%E6%80%81%E6%9C%BA%E6%B7%B1%E5%85%A5%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5%E4%B8%8E%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='workflow' /><meta property='article:tag' content='langgraph' /><meta property='article:tag' content='state-machine' /><meta property='article:published_time' content='2026-05-18T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-18T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="AI Agent Workflow 与状态机：深入实现原理、工程实践与源码解析">
-<meta name="twitter:description" content="写在前面 真实业务里的 Agent 不能只靠模型自由发挥。\n更可靠的做法是把 Agent 放进工作流（Workflow）或状态机（State Machine）中，让模型在受控边界内做判断。本文将从底层原理出发，结合 LangGraph 1.2+ 源码（LangChain 1.0+ 生态的核心编排框架），深入剖析 Agent Workflow 的设计哲学、执行机制、工程实现与常见坑点。\n一、为什么 Agent 需要 Workflow 1.1 自由 Agent 的问题 完全自由的 Agent（纯 ReAct Loop）容易出现：\n步骤不可控：模型可能跳过关键步骤，或执行无关操作 审批缺失：高危操作无确认直接执行 重复执行：无幂等保证，同一操作被重复调用 错误难恢复：中间失败后只能从头重来 日志难追踪：状态散落在对话历史中，无法回溯 权限边界模糊：Agent 可以随意调用任何工具 1.2 Workflow 的核心价值 Workflow 提供了一套确定性的执行骨架，Agent 在骨架内做局部判断：\n维度 自由Agent Workflow Agent 执行路径 模型自由决定 图结构预定义 状态管理 隐式（对话上下文） 显式（TypedDict/State） 错误处理 靠提示词 节点级重试+错误处理器 可观测性 黑盒 每步状态可追踪 人工介入 难以插入 interrupt 原生支持 长任务 超时即失败 断点恢复 1.3 什么是状态机 状态机（Finite State Machine, FSM） 是一个系统在有限个状态之间，根据条件跳转的模型。\n">
+<meta name="twitter:description" content="写在前面 真实业务里的 Agent 不能只靠模型自由发挥。\n更可靠的做法是把 Agent 放进工作流（Workflow）或状态机（State Machine）中，让模型在受控边界内做判断。本文将从底层原理出发，结合 LangGraph 1.2+ 源码（LangChain 1.0+ 生态的核心编排框架），深入剖析 Agent Workflow 的设计哲学、执行机制、工程实现与常见坑点。\n一、为什么 Agent 需要 Workflow 1.1 自由 Agent 的问题 完全自由的 Agent（纯 ReAct Loop）容易出现：\n步骤不可控：模型可能跳过关键步骤，或执行无关操作 审批缺失：高危操作无确认直接执行 重复执行：无幂等保证，同一操作被重复调用 错误难恢复：中间失败后只能从头重来 日志难追踪：状态散落在对话历史中，无法回溯 权限边界模糊：Agent 可以随意调用任何工具 1.2 Workflow 的核心价值 Workflow 提供了一套确定性的执行骨架，Agent 在骨架内做局部判断：\n维度 自由Agent Workflow Agent 执行路径 模型自由决定 图结构预定义 状态管理 隐式（对话上下文） 显式（TypedDict/State） 错误处理 靠提示词 节点级重试+错误处理器 可观测性 黑盒 每步状态可追踪 人工介入 难以插入 interrupt 原生支持 长任务 超时即失败 断点恢复 1.3 什么是状态机 Finite State Machine（FSM，有限状态机） 是一个系统在有限个状态之间，根据条件跳转的模型。\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -470,7 +470,7 @@
   </tbody>
 </table></div>
 <h2 id="13-什么是状态机">1.3 什么是状态机
-</h2><p><strong>状态机（Finite State Machine, FSM）</strong> 是一个系统在有限个状态之间，根据条件跳转的模型。</p>
+</h2><p><strong>Finite State Machine（FSM，有限状态机）</strong> 是一个系统在有限个状态之间，根据条件跳转的模型。</p>
 <p>最直觉的例子——地铁闸机：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
@@ -481,11 +481,11 @@
 </span><span class="lnt">5
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">         刷卡            通过
-</span></span><span class="line"><span class="cl">[锁定] ────────&gt; [解锁] ────────&gt; [锁定]
-</span></span><span class="line"><span class="cl">  ▲                                 │
-</span></span><span class="line"><span class="cl">  │              推闸（无效）         │
-</span></span><span class="line"><span class="cl">  └─────────────────────────────────┘
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">stateDiagram-v2
+</span></span><span class="line"><span class="cl">    [*] --&gt; 锁定
+</span></span><span class="line"><span class="cl">    锁定 --&gt; 解锁: 刷卡
+</span></span><span class="line"><span class="cl">    解锁 --&gt; 锁定: 通过
+</span></span><span class="line"><span class="cl">    锁定 --&gt; 锁定: 推闸（无效）
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>只有 2 个状态、2 个事件，但完整描述了闸机的全部行为。</p>
@@ -524,27 +524,39 @@
 <p><strong>为什么 Agent Workflow 本质是状态机？</strong></p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">纯 Agent Loop:      think → act → observe → think → act → ...（无限自由）
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">状态机 Workflow:    classify → collect → approve → execute → END
-</span></span><span class="line"><span class="cl">                       │                    │
-</span></span><span class="line"><span class="cl">                       │  只允许这些跳转     │ 只允许这些跳转
-</span></span><span class="line"><span class="cl">                       ▼                    ▼
-</span></span><span class="line"><span class="cl">                   collect(循环)       execute / reject
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    subgraph A[纯 Agent Loop: 无限自由]
+</span></span><span class="line"><span class="cl">        A1[think] --&gt; A2[act] --&gt; A3[observe] --&gt; A1
+</span></span><span class="line"><span class="cl">    end
+</span></span><span class="line"><span class="cl">    subgraph W[状态机 Workflow: 只允许预定义跳转]
+</span></span><span class="line"><span class="cl">        W1[classify] --&gt; W2[collect]
+</span></span><span class="line"><span class="cl">        W2 --&gt; W3[approve]
+</span></span><span class="line"><span class="cl">        W2 --&gt; W2
+</span></span><span class="line"><span class="cl">        W3 --&gt; W4[execute]
+</span></span><span class="line"><span class="cl">        W3 --&gt; W5[reject]
+</span></span><span class="line"><span class="cl">        W4 --&gt; W6[END]
+</span></span><span class="line"><span class="cl">        W5 --&gt; W6
+</span></span><span class="line"><span class="cl">    end
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>把 Agent 放进状态机，就是<strong>用有限的合法转移路径，约束 Agent 不能乱跳</strong>。模型只能在允许的范围内选择下一步，不能发明新路径。</p>
 <h2 id="14-workflow-的本质状态机--数据流">1.4 Workflow 的本质：状态机 + 数据流
-</h2><p>Workflow 在传统状态机基础上做了扩展，本质是一个<strong>DAG（Directed Acyclic Graph，有向无环图）或含环有向图</strong>，节点执行业务逻辑，边决定转移条件。与传统状态机的区别在于：</p>
+</h2><p>Workflow 在传统状态机基础上做了扩展，本质是一个<strong>Directed Acyclic Graph（DAG，有向无环图）或含环有向图</strong>，节点执行业务逻辑，边决定转移条件。与传统状态机的区别在于：</p>
 <div class="table-wrapper"><table>
   <thead>
       <tr>
@@ -616,30 +628,20 @@
 </span><span class="lnt">10
 </span><span class="lnt">11
 </span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│                  Workflow 控制层                      │
-</span></span><span class="line"><span class="cl">│  ┌───────┐    ┌───────┐    ┌───────┐    ┌───────┐  │
-</span></span><span class="line"><span class="cl">│  │ Node A│───&gt;│ Node B│───&gt;│ Node C│───&gt;│ Node D│  │
-</span></span><span class="line"><span class="cl">│  └───┬───┘    └───┬───┘    └───┬───┘    └───────┘  │
-</span></span><span class="line"><span class="cl">│      │            │            │                     │
-</span></span><span class="line"><span class="cl">│      ▼            ▼            ▼                     │
-</span></span><span class="line"><span class="cl">│  ┌───────┐    ┌───────┐    ┌───────┐               │
-</span></span><span class="line"><span class="cl">│  │ Agent │    │ Agent │    │ Human │               │
-</span></span><span class="line"><span class="cl">│  │ 判断  │    │ 执行  │    │ 审批  │               │
-</span></span><span class="line"><span class="cl">│  └───────┘    └───────┘    └───────┘               │
-</span></span><span class="line"><span class="cl">│      │            │            │                     │
-</span></span><span class="line"><span class="cl">│      ▼            ▼            ▼                     │
-</span></span><span class="line"><span class="cl">│  ┌─────────────────────────────────────────────┐    │
-</span></span><span class="line"><span class="cl">│  │          共享 State（TypedDict）              │    │
-</span></span><span class="line"><span class="cl">│  └─────────────────────────────────────────────┘    │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────┘
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    subgraph W[Workflow 控制层]
+</span></span><span class="line"><span class="cl">        A[Node A] --&gt; B[Node B]
+</span></span><span class="line"><span class="cl">        B --&gt; C[Node C]
+</span></span><span class="line"><span class="cl">        C --&gt; D[Node D]
+</span></span><span class="line"><span class="cl">        A --&gt; E[Agent 判断]
+</span></span><span class="line"><span class="cl">        B --&gt; F[Agent 执行]
+</span></span><span class="line"><span class="cl">        C --&gt; G[Human 审批]
+</span></span><span class="line"><span class="cl">        E --&gt; S[共享 State: TypedDict]
+</span></span><span class="line"><span class="cl">        F --&gt; S
+</span></span><span class="line"><span class="cl">        G --&gt; S
+</span></span><span class="line"><span class="cl">    end
 </span></span></code></pre></td></tr></table>
 </div>
 </div><hr>
@@ -648,44 +650,18 @@
 <h2 id="31-核心概念总览">3.1 核心概念总览
 </h2><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌──────────────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│                     LangGraph 架构分层                         │
-</span></span><span class="line"><span class="cl">├──────────────────────────────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│  用户API（Application Programming Interface，应用程序编程接口）层:  StateGraph / MessageGraph                        │
-</span></span><span class="line"><span class="cl">│             .add_node() / .add_edge() / .compile()           │
-</span></span><span class="line"><span class="cl">├──────────────────────────────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│  编译层:    CompiledStateGraph                                │
-</span></span><span class="line"><span class="cl">│             attach_node / attach_edge / attach_branch         │
-</span></span><span class="line"><span class="cl">├──────────────────────────────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│  执行引擎:  Pregel (继承自 Runnable)                          │
-</span></span><span class="line"><span class="cl">│             PregelLoop.tick() -&gt; 调度任务 -&gt; apply_writes     │
-</span></span><span class="line"><span class="cl">├──────────────────────────────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│  状态层:    Channels (LastValue / BinaryOperatorAggregate)    │
-</span></span><span class="line"><span class="cl">│             Managed Values / DeltaChannel                     │
-</span></span><span class="line"><span class="cl">├──────────────────────────────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│  持久化层:  BaseCheckpointSaver                               │
-</span></span><span class="line"><span class="cl">│             InMemorySaver / PostgresSaver                     │
-</span></span><span class="line"><span class="cl">└──────────────────────────────────────────────────────────────┘
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[用户 API 层&lt;br/&gt;StateGraph / MessageGraph&lt;br/&gt;add_node / add_edge / compile] --&gt; B[编译层&lt;br/&gt;CompiledStateGraph&lt;br/&gt;attach_node / attach_edge / attach_branch]
+</span></span><span class="line"><span class="cl">    B --&gt; C[执行引擎&lt;br/&gt;Pregel&lt;br/&gt;PregelLoop.tick -&gt; 调度任务 -&gt; apply_writes]
+</span></span><span class="line"><span class="cl">    C --&gt; D[状态层&lt;br/&gt;Channels&lt;br/&gt;LastValue / BinaryOperatorAggregate / Managed Values / DeltaChannel]
+</span></span><span class="line"><span class="cl">    D --&gt; E[持久化层&lt;br/&gt;BaseCheckpointSaver&lt;br/&gt;InMemorySaver / PostgresSaver]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h2 id="32-stategraph图的构建器">3.2 StateGraph：图的构建器
@@ -943,63 +919,39 @@
 </div><h3 id="channel-选择逻辑">Channel 选择逻辑
 </h3><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">State 字段声明
-</span></span><span class="line"><span class="cl">     │
-</span></span><span class="line"><span class="cl">     ├─ 无 Annotated ──────────&gt; LastValue（最后写入覆盖）
-</span></span><span class="line"><span class="cl">     │
-</span></span><span class="line"><span class="cl">     └─ Annotated[type, reducer]
-</span></span><span class="line"><span class="cl">            │
-</span></span><span class="line"><span class="cl">            ├─ reducer 是函数 ──&gt; BinaryOperatorAggregate
-</span></span><span class="line"><span class="cl">            │     例: Annotated[list, operator.add]
-</span></span><span class="line"><span class="cl">            │
-</span></span><span class="line"><span class="cl">            └─ reducer 是特殊标记 -&gt; 对应特殊 Channel
-</span></span><span class="line"><span class="cl">                  例: DeltaChannel（增量同步）
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[State 字段声明] --&gt; B{是否使用 Annotated?}
+</span></span><span class="line"><span class="cl">    B -- 否 --&gt; C[LastValue&lt;br/&gt;最后写入覆盖]
+</span></span><span class="line"><span class="cl">    B -- 是 --&gt; D[Annotated type, reducer]
+</span></span><span class="line"><span class="cl">    D --&gt; E{reducer 类型}
+</span></span><span class="line"><span class="cl">    E -- 函数 --&gt; F[BinaryOperatorAggregate&lt;br/&gt;例: Annotated list, operator.add]
+</span></span><span class="line"><span class="cl">    E -- 特殊标记 --&gt; G[特殊 Channel&lt;br/&gt;例: DeltaChannel 增量同步]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h3 id="底层工作流程">底层工作流程
 </h3><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">  Node A 返回 {&#34;messages&#34;: [&#34;hello&#34;]}
-</span></span><span class="line"><span class="cl">       │
-</span></span><span class="line"><span class="cl">       ▼
-</span></span><span class="line"><span class="cl">  ChannelWrite 写入 messages channel
-</span></span><span class="line"><span class="cl">       │
-</span></span><span class="line"><span class="cl">       ▼
-</span></span><span class="line"><span class="cl">  BinaryOperatorAggregate.update([&#34;hello&#34;])
-</span></span><span class="line"><span class="cl">       │
-</span></span><span class="line"><span class="cl">       ▼
-</span></span><span class="line"><span class="cl">  self.value = operator.add([&#34;hi&#34;], [&#34;hello&#34;]) = [&#34;hi&#34;, &#34;hello&#34;]
-</span></span><span class="line"><span class="cl">       │
-</span></span><span class="line"><span class="cl">       ▼
-</span></span><span class="line"><span class="cl">  下一个 Node 读取时得到 [&#34;hi&#34;, &#34;hello&#34;]
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[Node A 返回 messages = hello] --&gt; B[ChannelWrite 写入 messages channel]
+</span></span><span class="line"><span class="cl">    B --&gt; C[BinaryOperatorAggregate.update hello]
+</span></span><span class="line"><span class="cl">    C --&gt; D[self.value = operator.add hi + hello]
+</span></span><span class="line"><span class="cl">    D --&gt; E[下一个 Node 读取到 hi + hello]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h2 id="34-图的编译从-builder-到可执行引擎">3.4 图的编译：从 Builder 到可执行引擎
@@ -1090,35 +1042,19 @@
 </span><span class="lnt"> 9
 </span><span class="lnt">10
 </span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">  StateGraph (Builder)
-</span></span><span class="line"><span class="cl">       │
-</span></span><span class="line"><span class="cl">       │ .compile()
-</span></span><span class="line"><span class="cl">       ▼
-</span></span><span class="line"><span class="cl">  ┌─────────────────────────┐
-</span></span><span class="line"><span class="cl">  │  1. 验证图结构合法性     │
-</span></span><span class="line"><span class="cl">  │  2. 解析 Channel 映射    │
-</span></span><span class="line"><span class="cl">  │  3. 创建 Pregel 实例     │
-</span></span><span class="line"><span class="cl">  │  4. 包装节点为 PregelNode │
-</span></span><span class="line"><span class="cl">  │  5. 注册边和分支         │
-</span></span><span class="line"><span class="cl">  │  6. 构建 trigger_to_nodes│
-</span></span><span class="line"><span class="cl">  └─────────────────────────┘
-</span></span><span class="line"><span class="cl">       │
-</span></span><span class="line"><span class="cl">       ▼
-</span></span><span class="line"><span class="cl">  CompiledStateGraph (可执行)
-</span></span><span class="line"><span class="cl">       │
-</span></span><span class="line"><span class="cl">       │ .invoke() / .stream()
-</span></span><span class="line"><span class="cl">       ▼
-</span></span><span class="line"><span class="cl">  PregelLoop 执行引擎
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[StateGraph Builder] --&gt; B[compile]
+</span></span><span class="line"><span class="cl">    B --&gt; C[验证图结构合法性]
+</span></span><span class="line"><span class="cl">    C --&gt; D[解析 Channel 映射]
+</span></span><span class="line"><span class="cl">    D --&gt; E[创建 Pregel 实例]
+</span></span><span class="line"><span class="cl">    E --&gt; F[包装节点为 PregelNode]
+</span></span><span class="line"><span class="cl">    F --&gt; G[注册边和分支]
+</span></span><span class="line"><span class="cl">    G --&gt; H[构建 trigger_to_nodes]
+</span></span><span class="line"><span class="cl">    H --&gt; I[CompiledStateGraph 可执行]
+</span></span><span class="line"><span class="cl">    I --&gt; J[invoke / stream]
+</span></span><span class="line"><span class="cl">    J --&gt; K[PregelLoop 执行引擎]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h2 id="35-pregel-执行引擎superstep-模型">3.5 Pregel 执行引擎：Superstep 模型
@@ -1154,38 +1090,22 @@
 </span><span class="lnt">12
 </span><span class="lnt">13
 </span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">Superstep 0:
-</span></span><span class="line"><span class="cl">  ┌─────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">  │  被触发的节点并行执行                      │
-</span></span><span class="line"><span class="cl">  │  Node A: 写入 {&#34;status&#34;: &#34;ok&#34;}           │
-</span></span><span class="line"><span class="cl">  │  Node B: 写入 {&#34;messages&#34;: [&#34;hi&#34;]}       │
-</span></span><span class="line"><span class="cl">  │                                          │
-</span></span><span class="line"><span class="cl">  │  关键：A 看不到 B 的写入，B 也看不到 A 的  │
-</span></span><span class="line"><span class="cl">  └──────────────────┬──────────────────────┘
-</span></span><span class="line"><span class="cl">                     │
-</span></span><span class="line"><span class="cl">                     ▼ after_tick(): apply_writes()
-</span></span><span class="line"><span class="cl">  ┌─────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">  │  统一合并所有写入到 State                  │
-</span></span><span class="line"><span class="cl">  │  保存 checkpoint                          │
-</span></span><span class="line"><span class="cl">  │  step += 1                               │
-</span></span><span class="line"><span class="cl">  └──────────────────┬──────────────────────┘
-</span></span><span class="line"><span class="cl">                     │
-</span></span><span class="line"><span class="cl">                     ▼
-</span></span><span class="line"><span class="cl">Superstep 1:
-</span></span><span class="line"><span class="cl">  ┌─────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">  │  根据 channel 版本变化，决定谁被触发       │
-</span></span><span class="line"><span class="cl">  │  Node C: 能看到 A 和 B 在上一步的写入了    │
-</span></span><span class="line"><span class="cl">  └─────────────────────────────────────────┘
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    subgraph S0[Superstep 0]
+</span></span><span class="line"><span class="cl">        A[Node A 写入 status=ok]
+</span></span><span class="line"><span class="cl">        B[Node B 写入 messages=hi]
+</span></span><span class="line"><span class="cl">        C[同一步内 A 和 B 互相不可见]
+</span></span><span class="line"><span class="cl">    end
+</span></span><span class="line"><span class="cl">    A --&gt; D[after_tick: apply_writes]
+</span></span><span class="line"><span class="cl">    B --&gt; D
+</span></span><span class="line"><span class="cl">    C --&gt; D
+</span></span><span class="line"><span class="cl">    D --&gt; E[统一合并所有写入到 State]
+</span></span><span class="line"><span class="cl">    E --&gt; F[保存 checkpoint]
+</span></span><span class="line"><span class="cl">    F --&gt; G[step += 1]
+</span></span><span class="line"><span class="cl">    G --&gt; H[Superstep 1: 根据 channel 版本变化决定触发节点]
+</span></span><span class="line"><span class="cl">    H --&gt; I[Node C 能看到上一步 A 和 B 的写入]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p><strong>Superstep 三条核心规则</strong>：</p>
@@ -1366,77 +1286,21 @@
 </span><span class="lnt">11
 </span><span class="lnt">12
 </span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span><span class="lnt">26
-</span><span class="lnt">27
-</span><span class="lnt">28
-</span><span class="lnt">29
-</span><span class="lnt">30
-</span><span class="lnt">31
-</span><span class="lnt">32
-</span><span class="lnt">33
-</span><span class="lnt">34
-</span><span class="lnt">35
-</span><span class="lnt">36
-</span><span class="lnt">37
-</span><span class="lnt">38
-</span><span class="lnt">39
-</span><span class="lnt">40
-</span><span class="lnt">41
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">                    ┌──────────────┐
-</span></span><span class="line"><span class="cl">                    │  初始化输入   │
-</span></span><span class="line"><span class="cl">                    │ step = 0     │
-</span></span><span class="line"><span class="cl">                    └──────┬───────┘
-</span></span><span class="line"><span class="cl">                           │
-</span></span><span class="line"><span class="cl">                           ▼
-</span></span><span class="line"><span class="cl">              ┌────────────────────────┐
-</span></span><span class="line"><span class="cl">              │   tick(): 准备任务      │&lt;─────────────────┐
-</span></span><span class="line"><span class="cl">              │   根据 channel 变化     │                   │
-</span></span><span class="line"><span class="cl">              │   确定哪些节点被触发    │                   │
-</span></span><span class="line"><span class="cl">              └────────────┬───────────┘                   │
-</span></span><span class="line"><span class="cl">                           │                               │
-</span></span><span class="line"><span class="cl">                    ┌──────┴──────┐                        │
-</span></span><span class="line"><span class="cl">                    │ 有任务？     │                        │
-</span></span><span class="line"><span class="cl">                    └──────┬──────┘                        │
-</span></span><span class="line"><span class="cl">                     Yes   │    No                         │
-</span></span><span class="line"><span class="cl">                           │    └──&gt; status=&#34;done&#34; 结束    │
-</span></span><span class="line"><span class="cl">                           ▼                               │
-</span></span><span class="line"><span class="cl">              ┌────────────────────────┐                   │
-</span></span><span class="line"><span class="cl">              │  interrupt_before 检查  │                   │
-</span></span><span class="line"><span class="cl">              │  需要中断？ ──Yes──&gt; 暂停│                   │
-</span></span><span class="line"><span class="cl">              └────────────┬───────────┘                   │
-</span></span><span class="line"><span class="cl">                           │ No                            │
-</span></span><span class="line"><span class="cl">                           ▼                               │
-</span></span><span class="line"><span class="cl">              ┌────────────────────────┐                   │
-</span></span><span class="line"><span class="cl">              │  并发执行所有 tasks     │                   │
-</span></span><span class="line"><span class="cl">              │  每个 task 是一个 node  │                   │
-</span></span><span class="line"><span class="cl">              │  执行结果写入 writes    │                   │
-</span></span><span class="line"><span class="cl">              └────────────┬───────────┘                   │
-</span></span><span class="line"><span class="cl">                           │                               │
-</span></span><span class="line"><span class="cl">                           ▼                               │
-</span></span><span class="line"><span class="cl">              ┌────────────────────────┐                   │
-</span></span><span class="line"><span class="cl">              │  after_tick():          │                   │
-</span></span><span class="line"><span class="cl">              │  1. apply_writes        │                   │
-</span></span><span class="line"><span class="cl">              │     (更新 channels)     │                   │
-</span></span><span class="line"><span class="cl">              │  2. 保存 checkpoint     │                   │
-</span></span><span class="line"><span class="cl">              │  3. interrupt_after检查 │                   │
-</span></span><span class="line"><span class="cl">              │  4. step += 1           │                   │
-</span></span><span class="line"><span class="cl">              └────────────┬───────────┘                   │
-</span></span><span class="line"><span class="cl">                           │                               │
-</span></span><span class="line"><span class="cl">                           └───────────────────────────────┘
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[初始化输入&lt;br/&gt;step = 0] --&gt; B[tick: 准备任务&lt;br/&gt;根据 channel 变化确定触发节点]
+</span></span><span class="line"><span class="cl">    B --&gt; C{有任务?}
+</span></span><span class="line"><span class="cl">    C -- No --&gt; D[status = done&lt;br/&gt;结束]
+</span></span><span class="line"><span class="cl">    C -- Yes --&gt; E{interrupt_before 检查&lt;br/&gt;需要中断?}
+</span></span><span class="line"><span class="cl">    E -- Yes --&gt; F[暂停]
+</span></span><span class="line"><span class="cl">    E -- No --&gt; G[并发执行所有 tasks&lt;br/&gt;执行结果写入 writes]
+</span></span><span class="line"><span class="cl">    G --&gt; H[after_tick]
+</span></span><span class="line"><span class="cl">    H --&gt; H1[apply_writes 更新 channels]
+</span></span><span class="line"><span class="cl">    H1 --&gt; H2[保存 checkpoint]
+</span></span><span class="line"><span class="cl">    H2 --&gt; H3[interrupt_after 检查]
+</span></span><span class="line"><span class="cl">    H3 --&gt; H4[step += 1]
+</span></span><span class="line"><span class="cl">    H4 --&gt; B
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h3 id="任务准备谁来决定下一步执行哪些节点">任务准备：谁来决定下一步执行哪些节点？
@@ -1890,7 +1754,7 @@
 </div>
 </div><p><strong>底层保障</strong>：LangGraph 在编译时会验证条件边的目标节点必须存在于图中，运行时如果路由函数返回了未注册的节点名，会抛出异常。</p>
 <hr>
-<h1 id="五人工确认human-in-the-loop">五、人工确认（Human-in-the-Loop）
+<h1 id="五human-in-the-loophitl人工确认">五、Human-in-the-Loop（HITL，人工确认）
 </h1><h2 id="51-interrupt-机制的源码实现">5.1 interrupt 机制的源码实现
 </h2><p><code>interrupt()</code> 是 LangGraph 实现人工介入的核心原语，定义在 <code>langgraph/types.py</code>：</p>
 <div class="highlight"><div class="chroma">

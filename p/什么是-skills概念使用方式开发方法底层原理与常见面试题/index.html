@@ -308,7 +308,17 @@
     <li><a href="#6-skills-的底层原理">6. Skills 的底层原理</a>
       <ol>
         <li><a href="#61-渐进式披露progressive-disclosure">6.1 渐进式披露（Progressive Disclosure）</a></li>
-        <li><a href="#62-skills-与-system-prompt-的关系">6.2 Skills 与 system prompt 的关系</a></li>
+        <li><a href="#62-常见误解全量写入-vs-渐进式披露">6.2 常见误解：全量写入 vs 渐进式披露</a>
+          <ol>
+            <li><a href="#621-现状claude-code-确实是全量写入">6.2.1 现状：Claude Code 确实是全量写入</a></li>
+            <li><a href="#622-lost-in-the-middle-问题被夸大了">6.2.2 &ldquo;Lost-in-the-Middle&rdquo; 问题被夸大了</a></li>
+            <li><a href="#623-每轮-embedding-检索--动态注入不是银弹">6.2.3 &ldquo;每轮 embedding 检索 + 动态注入&quot;不是银弹</a></li>
+            <li><a href="#624-实际的工程权衡">6.2.4 实际的工程权衡</a></li>
+            <li><a href="#625-一个关键澄清多轮循环中挑选的表述">6.2.5 一个关键澄清：&ldquo;多轮循环中挑选&quot;的表述</a></li>
+            <li><a href="#626-一句话记住">6.2.6 一句话记住</a></li>
+          </ol>
+        </li>
+        <li><a href="#63-skills-与-system-prompt-的关系">6.3 Skills 与 system prompt 的关系</a></li>
         <li><a href="#63-skills-与-tools-的关系">6.3 Skills 与 Tools 的关系</a></li>
       </ol>
     </li>
@@ -2393,7 +2403,88 @@ Claude Code 支持在 frontmatter 里加 <code>disable-model-invocation: true</c
 </ul>
 <blockquote>
 <p>注意：Skills 在 Claude Code 里跑在一个<strong>有 bash 和文件系统访问的 VM/code execution 环境</strong>里 —— &ldquo;模型用 bash 读 SKILL.md&rdquo; 不是隐喻，而是真实发生的事情。</p></blockquote>
-<h3 id="62-skills-与-system-prompt-的关系">6.2 Skills 与 system prompt 的关系
+<h3 id="62-常见误解全量写入-vs-渐进式披露">6.2 常见误解：全量写入 vs 渐进式披露
+</h3><p>在讨论 Skills 底层原理时，网上有一种流传较广的说法：</p>
+<blockquote>
+<p>&ldquo;把所有 Skill 的 name + description 一次性写入 System Prompt 是初级做法，生产级系统应该用 embedding 检索 + 动态注入。&rdquo;</p></blockquote>
+<p>这种说法<strong>有一定道理但过于绝对</strong>，需要厘清。</p>
+<h4 id="621-现状claude-code-确实是全量写入">6.2.1 现状：Claude Code 确实是全量写入
+</h4><p>Claude Code（以及 OpenAI Function Calling、ChatGPT Plugins）<strong>确实</strong>把所有已安装 Skill 的 <code>name + description</code> 一次性写入 system prompt。模型在每一轮对话中，基于注意力机制从这份列表里&quot;挑选&quot;要使用的 Skill。</p>
+<p>这不是 demo 做法，而是<strong>生产系统的实际实现</strong>。</p>
+<h4 id="622-lost-in-the-middle-问题被夸大了">6.2.2 &ldquo;Lost-in-the-Middle&rdquo; 问题被夸大了
+</h4><p>常被引用的&quot;Lost-in-the-Middle&quot;论文针对的是<strong>大量同质化文档的检索任务</strong>，不是结构化的 tool/skill 列表。现代模型（Claude、GPT-4o）经过专门的 tool-use fine-tuning，对结构化列表的注意力远好于自由文本段落。</p>
+<p>实测数据：</p>
+<ul>
+<li>OpenAI 单次调用支持 128 个 functions</li>
+<li>Claude Code 生产环境常驻 10-15 个 Skills 毫无问题</li>
+<li>30-50 个 well-described tools 在主流模型上表现良好</li>
+</ul>
+<p>&ldquo;超过 15 个就必须换方案&quot;这种说法过于武断。</p>
+<h4 id="623-每轮-embedding-检索--动态注入不是银弹">6.2.3 &ldquo;每轮 embedding 检索 + 动态注入&quot;不是银弹
+</h4><p>网上推崇的&quot;两阶段动态注入&quot;方案（先用 embedding 检索 Top-3 Skill，再动态插入本轮请求）有其适用场景，但也引入了自身的代价：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>代价</th>
+          <th>说明</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Router 误召回</td>
+          <td>如果前置分类器漏掉了正确的 Skill，模型<strong>根本看不到它</strong>，比&quot;看到但没选&quot;更严重</td>
+      </tr>
+      <tr>
+          <td>额外延迟</td>
+          <td>每轮多一次 embedding 计算 + 向量检索</td>
+      </tr>
+      <tr>
+          <td>系统复杂度</td>
+          <td>多了一个需要维护、调参、监控的组件</td>
+      </tr>
+      <tr>
+          <td>级联失败</td>
+          <td>Router 挂了 = 所有 Skill 都不可用</td>
+      </tr>
+  </tbody>
+</table></div>
+<h4 id="624-实际的工程权衡">6.2.4 实际的工程权衡
+</h4><p>这不是&quot;初级 vs 生产级&quot;的二元对立，而是根据规模选择合适策略：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>场景</th>
+          <th>合理方案</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Skills &lt; 30，description 清晰</td>
+          <td>全量写入即可（Claude Code、ChatGPT Plugins 的做法）</td>
+      </tr>
+      <tr>
+          <td>Skills 30-100</td>
+          <td>分类分组 + 按类别动态挂载</td>
+      </tr>
+      <tr>
+          <td>Skills 100+</td>
+          <td>前置 embedding 检索 + 动态注入</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>Claude Code 的 <code>skillListingBudgetFraction</code>（默认 1% context window）+ 对低频 Skill 的 trim 机制，本质上就是在全量写入的基础上做了<strong>轻量级优先级排序</strong>，不需要引入外部 Router。</p>
+<h4 id="625-一个关键澄清多轮循环中挑选的表述">6.2.5 一个关键澄清：&ldquo;多轮循环中挑选&quot;的表述
+</h4><p>严格来说，Skill 的选择发生在<strong>每一轮独立决策</strong>，而非&quot;跨多轮演进&rdquo;：</p>
+<ul>
+<li>第 1 轮用户说&quot;查天气&rdquo; → 模型扫描列表，选 <code>get_weather</code></li>
+<li>第 2 轮用户说&quot;翻译文章&rdquo; → 模型<strong>重新</strong>扫描列表，选 <code>translate</code>，不受上一轮影响</li>
+</ul>
+<p>所以它是&quot;每轮静态全量扫描&quot;，不是&quot;多轮动态演进&quot;。这个表述是准确的。</p>
+<h4 id="626-一句话记住">6.2.6 一句话记住
+</h4><blockquote>
+<p><strong>全量写入不是反模式，它是在工具数量合理（&lt; 50）时成本最低、可靠性最高的方案。只有当工具规模真正爆炸（100+）时，才值得引入前置 Router 的额外复杂度。</strong></p></blockquote>
+<hr>
+<h3 id="63-skills-与-system-prompt-的关系">6.3 Skills 与 system prompt 的关系
 </h3><p>可以把 Skills 看作是&quot;延迟加载的 system prompt 片段&quot;。</p>
 <ul>
 <li>system prompt 是<strong>永远在线</strong>的指令</li>

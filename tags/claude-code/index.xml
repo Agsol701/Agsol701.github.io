@@ -1982,7 +1982,88 @@ Claude Code 支持在 frontmatter 里加 &lt;code&gt;disable-model-invocation: t
 &lt;/ul&gt;
 &lt;blockquote&gt;
 &lt;p&gt;注意：Skills 在 Claude Code 里跑在一个&lt;strong&gt;有 bash 和文件系统访问的 VM/code execution 环境&lt;/strong&gt;里 —— &amp;ldquo;模型用 bash 读 SKILL.md&amp;rdquo; 不是隐喻，而是真实发生的事情。&lt;/p&gt;&lt;/blockquote&gt;
-&lt;h3 id=&#34;62-skills-与-system-prompt-的关系&#34;&gt;6.2 Skills 与 system prompt 的关系
+&lt;h3 id=&#34;62-常见误解全量写入-vs-渐进式披露&#34;&gt;6.2 常见误解：全量写入 vs 渐进式披露
+&lt;/h3&gt;&lt;p&gt;在讨论 Skills 底层原理时，网上有一种流传较广的说法：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&amp;ldquo;把所有 Skill 的 name + description 一次性写入 System Prompt 是初级做法，生产级系统应该用 embedding 检索 + 动态注入。&amp;rdquo;&lt;/p&gt;&lt;/blockquote&gt;
+&lt;p&gt;这种说法&lt;strong&gt;有一定道理但过于绝对&lt;/strong&gt;，需要厘清。&lt;/p&gt;
+&lt;h4 id=&#34;621-现状claude-code-确实是全量写入&#34;&gt;6.2.1 现状：Claude Code 确实是全量写入
+&lt;/h4&gt;&lt;p&gt;Claude Code（以及 OpenAI Function Calling、ChatGPT Plugins）&lt;strong&gt;确实&lt;/strong&gt;把所有已安装 Skill 的 &lt;code&gt;name + description&lt;/code&gt; 一次性写入 system prompt。模型在每一轮对话中，基于注意力机制从这份列表里&amp;quot;挑选&amp;quot;要使用的 Skill。&lt;/p&gt;
+&lt;p&gt;这不是 demo 做法，而是&lt;strong&gt;生产系统的实际实现&lt;/strong&gt;。&lt;/p&gt;
+&lt;h4 id=&#34;622-lost-in-the-middle-问题被夸大了&#34;&gt;6.2.2 &amp;ldquo;Lost-in-the-Middle&amp;rdquo; 问题被夸大了
+&lt;/h4&gt;&lt;p&gt;常被引用的&amp;quot;Lost-in-the-Middle&amp;quot;论文针对的是&lt;strong&gt;大量同质化文档的检索任务&lt;/strong&gt;，不是结构化的 tool/skill 列表。现代模型（Claude、GPT-4o）经过专门的 tool-use fine-tuning，对结构化列表的注意力远好于自由文本段落。&lt;/p&gt;
+&lt;p&gt;实测数据：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;OpenAI 单次调用支持 128 个 functions&lt;/li&gt;
+&lt;li&gt;Claude Code 生产环境常驻 10-15 个 Skills 毫无问题&lt;/li&gt;
+&lt;li&gt;30-50 个 well-described tools 在主流模型上表现良好&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&amp;ldquo;超过 15 个就必须换方案&amp;quot;这种说法过于武断。&lt;/p&gt;
+&lt;h4 id=&#34;623-每轮-embedding-检索--动态注入不是银弹&#34;&gt;6.2.3 &amp;ldquo;每轮 embedding 检索 + 动态注入&amp;quot;不是银弹
+&lt;/h4&gt;&lt;p&gt;网上推崇的&amp;quot;两阶段动态注入&amp;quot;方案（先用 embedding 检索 Top-3 Skill，再动态插入本轮请求）有其适用场景，但也引入了自身的代价：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;代价&lt;/th&gt;
+          &lt;th&gt;说明&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Router 误召回&lt;/td&gt;
+          &lt;td&gt;如果前置分类器漏掉了正确的 Skill，模型&lt;strong&gt;根本看不到它&lt;/strong&gt;，比&amp;quot;看到但没选&amp;quot;更严重&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;额外延迟&lt;/td&gt;
+          &lt;td&gt;每轮多一次 embedding 计算 + 向量检索&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;系统复杂度&lt;/td&gt;
+          &lt;td&gt;多了一个需要维护、调参、监控的组件&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;级联失败&lt;/td&gt;
+          &lt;td&gt;Router 挂了 = 所有 Skill 都不可用&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h4 id=&#34;624-实际的工程权衡&#34;&gt;6.2.4 实际的工程权衡
+&lt;/h4&gt;&lt;p&gt;这不是&amp;quot;初级 vs 生产级&amp;quot;的二元对立，而是根据规模选择合适策略：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;场景&lt;/th&gt;
+          &lt;th&gt;合理方案&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Skills &amp;lt; 30，description 清晰&lt;/td&gt;
+          &lt;td&gt;全量写入即可（Claude Code、ChatGPT Plugins 的做法）&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Skills 30-100&lt;/td&gt;
+          &lt;td&gt;分类分组 + 按类别动态挂载&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Skills 100+&lt;/td&gt;
+          &lt;td&gt;前置 embedding 检索 + 动态注入&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;Claude Code 的 &lt;code&gt;skillListingBudgetFraction&lt;/code&gt;（默认 1% context window）+ 对低频 Skill 的 trim 机制，本质上就是在全量写入的基础上做了&lt;strong&gt;轻量级优先级排序&lt;/strong&gt;，不需要引入外部 Router。&lt;/p&gt;
+&lt;h4 id=&#34;625-一个关键澄清多轮循环中挑选的表述&#34;&gt;6.2.5 一个关键澄清：&amp;ldquo;多轮循环中挑选&amp;quot;的表述
+&lt;/h4&gt;&lt;p&gt;严格来说，Skill 的选择发生在&lt;strong&gt;每一轮独立决策&lt;/strong&gt;，而非&amp;quot;跨多轮演进&amp;rdquo;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;第 1 轮用户说&amp;quot;查天气&amp;rdquo; → 模型扫描列表，选 &lt;code&gt;get_weather&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;第 2 轮用户说&amp;quot;翻译文章&amp;rdquo; → 模型&lt;strong&gt;重新&lt;/strong&gt;扫描列表，选 &lt;code&gt;translate&lt;/code&gt;，不受上一轮影响&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以它是&amp;quot;每轮静态全量扫描&amp;quot;，不是&amp;quot;多轮动态演进&amp;quot;。这个表述是准确的。&lt;/p&gt;
+&lt;h4 id=&#34;626-一句话记住&#34;&gt;6.2.6 一句话记住
+&lt;/h4&gt;&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;全量写入不是反模式，它是在工具数量合理（&amp;lt; 50）时成本最低、可靠性最高的方案。只有当工具规模真正爆炸（100+）时，才值得引入前置 Router 的额外复杂度。&lt;/strong&gt;&lt;/p&gt;&lt;/blockquote&gt;
+&lt;hr&gt;
+&lt;h3 id=&#34;63-skills-与-system-prompt-的关系&#34;&gt;6.3 Skills 与 system prompt 的关系
 &lt;/h3&gt;&lt;p&gt;可以把 Skills 看作是&amp;quot;延迟加载的 system prompt 片段&amp;quot;。&lt;/p&gt;
 &lt;ul&gt;
 &lt;li&gt;system prompt 是&lt;strong&gt;永远在线&lt;/strong&gt;的指令&lt;/li&gt;

@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 很多 RAG 系统在 demo 阶段看起来效果不错，但一上线就会遇到一类更难的问题：\n用户说答案不准，但你不知道到底是哪一步出了问题。\n可能是文档没解析好。\n可能是 chunk 切坏了。\n可能是 embedding 没更新。\n可能是召回没找对。\n可能是 rerank 排错了。\n也可能是证据都在上下文里，但模型生成时没有正确使用。\n如果没有完整的日志、监控和评估体系，排查 RAG 问题很容易变成“凭感觉调 prompt”。\n在完整 RAG 链路里，监控、日志和评估不是附属功能，而是系统能不能长期稳定运行的基础设施：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 原始文档 ↓ 文档解析 ↓ 文本切分 ↓ embedding 与索引 ↓ 查询理解 ↓ 召回 ↓ 重排 ↓ 上下文组装 ↓ 大模型生成 ↓ 答案后处理 ↓ 用户反馈与评估 这篇文章专门讲 RAG 的可观测性和评估体系：\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 很多 RAG（Retrieval-Augmented Generation，检索增强生成）系统在 demo 阶段看起来效果不错，但一上线就会遇到一类更难的问题：\n用户说答案不准，但你不知道到底是哪一步出了问题。\n可能是文档没解析好。\n可能是 chunk 切坏了。\n可能是 embedding 没更新。\n可能是召回没找对。\n可能是 rerank 排错了。\n也可能是证据都在上下文里，但模型生成时没有正确使用。\n如果没有完整的日志、监控和评估体系，排查 RAG 问题很容易变成“凭感觉调 prompt”。\n在完整 RAG 链路里，监控、日志和评估不是附属功能，而是系统能不能长期稳定运行的基础设施：\n1 2 3 4 5 6 7 8 9 10 11 flowchart TD A[&#34;原始文档&#34;] --&gt; B[&#34;文档解析&#34;] B --&gt; C[&#34;文本切分&#34;] C --&gt; D[&#34;embedding 与索引&#34;] D --&gt; E[&#34;查询理解&#34;] E --&gt; F[&#34;召回&#34;] F --&gt; G[&#34;重排&#34;] G --&gt; H[&#34;上下文组装&#34;] H --&gt; I[&#34;大模型生成&#34;] I --&gt; J[&#34;答案后处理&#34;] J --&gt; K[&#34;用户反馈与评估&#34;] 这篇文章专门讲 RAG 的可观测性和评估体系：\n">
 <title>RAG 监控、日志与评估体系详解：链路追踪、指标设计、效果评测与持续优化</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/rag-%E7%9B%91%E6%8E%A7%E6%97%A5%E5%BF%97%E4%B8%8E%E8%AF%84%E4%BC%B0%E4%BD%93%E7%B3%BB%E8%AF%A6%E8%A7%A3%E9%93%BE%E8%B7%AF%E8%BF%BD%E8%B8%AA%E6%8C%87%E6%A0%87%E8%AE%BE%E8%AE%A1%E6%95%88%E6%9E%9C%E8%AF%84%E6%B5%8B%E4%B8%8E%E6%8C%81%E7%BB%AD%E4%BC%98%E5%8C%96/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="RAG 监控、日志与评估体系详解：链路追踪、指标设计、效果评测与持续优化">
-<meta property='og:description' content="写在前面 很多 RAG 系统在 demo 阶段看起来效果不错，但一上线就会遇到一类更难的问题：\n用户说答案不准，但你不知道到底是哪一步出了问题。\n可能是文档没解析好。\n可能是 chunk 切坏了。\n可能是 embedding 没更新。\n可能是召回没找对。\n可能是 rerank 排错了。\n也可能是证据都在上下文里，但模型生成时没有正确使用。\n如果没有完整的日志、监控和评估体系，排查 RAG 问题很容易变成“凭感觉调 prompt”。\n在完整 RAG 链路里，监控、日志和评估不是附属功能，而是系统能不能长期稳定运行的基础设施：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 原始文档 ↓ 文档解析 ↓ 文本切分 ↓ embedding 与索引 ↓ 查询理解 ↓ 召回 ↓ 重排 ↓ 上下文组装 ↓ 大模型生成 ↓ 答案后处理 ↓ 用户反馈与评估 这篇文章专门讲 RAG 的可观测性和评估体系：\n">
+<meta property='og:description' content="写在前面 很多 RAG（Retrieval-Augmented Generation，检索增强生成）系统在 demo 阶段看起来效果不错，但一上线就会遇到一类更难的问题：\n用户说答案不准，但你不知道到底是哪一步出了问题。\n可能是文档没解析好。\n可能是 chunk 切坏了。\n可能是 embedding 没更新。\n可能是召回没找对。\n可能是 rerank 排错了。\n也可能是证据都在上下文里，但模型生成时没有正确使用。\n如果没有完整的日志、监控和评估体系，排查 RAG 问题很容易变成“凭感觉调 prompt”。\n在完整 RAG 链路里，监控、日志和评估不是附属功能，而是系统能不能长期稳定运行的基础设施：\n1 2 3 4 5 6 7 8 9 10 11 flowchart TD A[&#34;原始文档&#34;] --&gt; B[&#34;文档解析&#34;] B --&gt; C[&#34;文本切分&#34;] C --&gt; D[&#34;embedding 与索引&#34;] D --&gt; E[&#34;查询理解&#34;] E --&gt; F[&#34;召回&#34;] F --&gt; G[&#34;重排&#34;] G --&gt; H[&#34;上下文组装&#34;] H --&gt; I[&#34;大模型生成&#34;] I --&gt; J[&#34;答案后处理&#34;] J --&gt; K[&#34;用户反馈与评估&#34;] 这篇文章专门讲 RAG 的可观测性和评估体系：\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/rag-%E7%9B%91%E6%8E%A7%E6%97%A5%E5%BF%97%E4%B8%8E%E8%AF%84%E4%BC%B0%E4%BD%93%E7%B3%BB%E8%AF%A6%E8%A7%A3%E9%93%BE%E8%B7%AF%E8%BF%BD%E8%B8%AA%E6%8C%87%E6%A0%87%E8%AE%BE%E8%AE%A1%E6%95%88%E6%9E%9C%E8%AF%84%E6%B5%8B%E4%B8%8E%E6%8C%81%E7%BB%AD%E4%BC%98%E5%8C%96/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='rag' /><meta property='article:published_time' content='2026-05-16T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-16T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="RAG 监控、日志与评估体系详解：链路追踪、指标设计、效果评测与持续优化">
-<meta name="twitter:description" content="写在前面 很多 RAG 系统在 demo 阶段看起来效果不错，但一上线就会遇到一类更难的问题：\n用户说答案不准，但你不知道到底是哪一步出了问题。\n可能是文档没解析好。\n可能是 chunk 切坏了。\n可能是 embedding 没更新。\n可能是召回没找对。\n可能是 rerank 排错了。\n也可能是证据都在上下文里，但模型生成时没有正确使用。\n如果没有完整的日志、监控和评估体系，排查 RAG 问题很容易变成“凭感觉调 prompt”。\n在完整 RAG 链路里，监控、日志和评估不是附属功能，而是系统能不能长期稳定运行的基础设施：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 原始文档 ↓ 文档解析 ↓ 文本切分 ↓ embedding 与索引 ↓ 查询理解 ↓ 召回 ↓ 重排 ↓ 上下文组装 ↓ 大模型生成 ↓ 答案后处理 ↓ 用户反馈与评估 这篇文章专门讲 RAG 的可观测性和评估体系：\n">
+<meta name="twitter:description" content="写在前面 很多 RAG（Retrieval-Augmented Generation，检索增强生成）系统在 demo 阶段看起来效果不错，但一上线就会遇到一类更难的问题：\n用户说答案不准，但你不知道到底是哪一步出了问题。\n可能是文档没解析好。\n可能是 chunk 切坏了。\n可能是 embedding 没更新。\n可能是召回没找对。\n可能是 rerank 排错了。\n也可能是证据都在上下文里，但模型生成时没有正确使用。\n如果没有完整的日志、监控和评估体系，排查 RAG 问题很容易变成“凭感觉调 prompt”。\n在完整 RAG 链路里，监控、日志和评估不是附属功能，而是系统能不能长期稳定运行的基础设施：\n1 2 3 4 5 6 7 8 9 10 11 flowchart TD A[&#34;原始文档&#34;] --&gt; B[&#34;文档解析&#34;] B --&gt; C[&#34;文本切分&#34;] C --&gt; D[&#34;embedding 与索引&#34;] D --&gt; E[&#34;查询理解&#34;] E --&gt; F[&#34;召回&#34;] F --&gt; G[&#34;重排&#34;] G --&gt; H[&#34;上下文组装&#34;] H --&gt; I[&#34;大模型生成&#34;] I --&gt; J[&#34;答案后处理&#34;] J --&gt; K[&#34;用户反馈与评估&#34;] 这篇文章专门讲 RAG 的可观测性和评估体系：\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -411,7 +411,7 @@
     
     
     <h1 id="写在前面">写在前面
-</h1><p>很多 RAG 系统在 demo 阶段看起来效果不错，但一上线就会遇到一类更难的问题：</p>
+</h1><p>很多 <code>RAG</code>（Retrieval-Augmented Generation，检索增强生成）系统在 demo 阶段看起来效果不错，但一上线就会遇到一类更难的问题：</p>
 <blockquote>
 <p>用户说答案不准，但你不知道到底是哪一步出了问题。</p></blockquote>
 <p>可能是文档没解析好。</p>
@@ -435,39 +435,19 @@
 </span><span class="lnt"> 9
 </span><span class="lnt">10
 </span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">原始文档
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">文档解析
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">文本切分
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">embedding 与索引
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">查询理解
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">召回
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">重排
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">上下文组装
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">大模型生成
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">答案后处理
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">用户反馈与评估
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;原始文档&#34;] --&gt; B[&#34;文档解析&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;文本切分&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;embedding 与索引&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;查询理解&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;召回&#34;]
+</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;重排&#34;]
+</span></span><span class="line"><span class="cl">  G --&gt; H[&#34;上下文组装&#34;]
+</span></span><span class="line"><span class="cl">  H --&gt; I[&#34;大模型生成&#34;]
+</span></span><span class="line"><span class="cl">  I --&gt; J[&#34;答案后处理&#34;]
+</span></span><span class="line"><span class="cl">  J --&gt; K[&#34;用户反馈与评估&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>这篇文章专门讲 RAG 的可观测性和评估体系：</p>
@@ -547,7 +527,7 @@
 <p>例如：</p>
 <ul>
 <li>请求量是否突增</li>
-<li>P95 延迟是否升高</li>
+<li><code>P95</code>（95th Percentile，第 95 百分位）延迟是否升高</li>
 <li>召回为空比例是否异常</li>
 <li>embedding 调用失败率是否升高</li>
 <li>token 成本是否超过预算</li>
@@ -558,8 +538,8 @@
 <p>当前方案的效果到底好不好，改动以后是否变好了。</p></blockquote>
 <p>例如：</p>
 <ul>
-<li>召回 Recall@20 是否提升</li>
-<li>rerank NDCG@10 是否提升</li>
+<li>召回 <code>Recall@20</code>（前 20 个结果的召回率）是否提升</li>
+<li>rerank <code>NDCG@10</code>（前 10 个结果的归一化折损累计增益）是否提升</li>
 <li>上下文证据覆盖率是否提升</li>
 <li>答案忠实度是否提升</li>
 <li>幻觉率是否下降</li>
@@ -581,10 +561,10 @@
 </div><h2 id="13-rag-的可观测性必须按链路设计">1.3 RAG 的可观测性必须按链路设计
 </h2><p>普通后端服务通常关注：</p>
 <ul>
-<li>QPS</li>
+<li><code>QPS</code>（Queries Per Second，每秒查询数）</li>
 <li>延迟</li>
 <li>错误率</li>
-<li>CPU</li>
+<li><code>CPU</code>（Central Processing Unit，中央处理器）</li>
 <li>内存</li>
 <li>数据库连接数</li>
 </ul>
@@ -592,34 +572,22 @@
 <p>RAG 还需要关注效果链路：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">文档是否进入知识库
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">知识是否被正确解析和切分
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">正确 chunk 是否能被召回
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">正确 chunk 是否排在前面
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">正确证据是否进入上下文
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">模型是否基于证据回答
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">用户是否认可答案
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;文档是否进入知识库&#34;] --&gt; B[&#34;知识是否被正确解析和切分&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;正确 chunk 是否能被召回&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;正确 chunk 是否排在前面&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;正确证据是否进入上下文&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;模型是否基于证据回答&#34;]
+</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;用户是否认可答案&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>这条链路里任何一步断掉，最终用户看到的都是“不准”。</p>
@@ -1224,34 +1192,22 @@
 </h3><p>一个比较通用的架构是：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">RAG 应用服务
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">结构化日志 SDK / OpenTelemetry
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">日志采集 Agent
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">Kafka / Pulsar / 云消息队列
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">实时消费与清洗
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">日志检索系统 + OLAP 分析库 + 对象存储 + 指标监控系统
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">看板 / 告警 / 评估平台 / 标注平台
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;RAG 应用服务&#34;] --&gt; B[&#34;结构化日志 SDK / OpenTelemetry&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;日志采集 Agent&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;Kafka / Pulsar / 云消息队列&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;实时消费与清洗&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;日志检索系统 + OLAP 分析库 + 对象存储 + 指标监控系统&#34;]
+</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;看板 / 告警 / 评估平台 / 标注平台&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>可以展开成：</p>
@@ -1267,28 +1223,18 @@
 </span><span class="lnt"> 8
 </span><span class="lnt"> 9
 </span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">在线请求
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">应用内生成 structured event
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">OpenTelemetry Collector / Fluent Bit / Vector
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">Kafka
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">Flink / Kafka Streams / Logstash
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">Elasticsearch / OpenSearch：查 trace 和排障
-</span></span><span class="line"><span class="cl">ClickHouse / Doris / BigQuery：聚合分析和报表
-</span></span><span class="line"><span class="cl">S3 / MinIO / OSS：保存完整 prompt、context、answer
-</span></span><span class="line"><span class="cl">Prometheus / Grafana：服务指标和告警
-</span></span><span class="line"><span class="cl">评估平台：沉淀失败样本、回归集、LLM-as-Judge 结果
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;在线请求&#34;] --&gt; B[&#34;应用内生成 structured event&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;OpenTelemetry Collector / Fluent Bit / Vector&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;Kafka&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;Flink / Kafka Streams / Logstash&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;Elasticsearch / OpenSearch：查 trace 和排障&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; G[&#34;ClickHouse / Doris / BigQuery：聚合分析和报表&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; H[&#34;S3 / MinIO / OSS：保存完整 prompt、context、answer&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; I[&#34;Prometheus / Grafana：服务指标和告警&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; J[&#34;评估平台：沉淀失败样本、回归集、LLM-as-Judge 结果&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>其中每一层职责不同。</p>
@@ -1522,18 +1468,12 @@
 </span><span class="lnt">2
 </span><span class="lnt">3
 </span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">应用结构化 JSON 日志
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">云日志服务 / OpenSearch
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">对象存储保存完整 debug 快照
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">Prometheus + Grafana 做基础指标
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;应用结构化 JSON 日志&#34;] --&gt; B[&#34;云日志服务 / OpenSearch&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;对象存储保存完整 debug 快照&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;Prometheus + Grafana 做基础指标&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>这个阶段不要一开始就搭复杂数据平台。</p>
@@ -1547,30 +1487,24 @@
 <p>如果是中大型生产系统，可以采用更完整的架构：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">OpenTelemetry + Fluent Bit / Vector
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">Kafka
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">Flink 清洗、脱敏、分流
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">OpenSearch 查日志
-</span></span><span class="line"><span class="cl">ClickHouse 做分析
-</span></span><span class="line"><span class="cl">S3 / MinIO 存 debug 快照
-</span></span><span class="line"><span class="cl">Prometheus / Grafana 做监控
-</span></span><span class="line"><span class="cl">标注平台和评估平台消费失败样本
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;OpenTelemetry + Fluent Bit / Vector&#34;] --&gt; B[&#34;Kafka&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;Flink 清洗、脱敏、分流&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;OpenSearch 查日志&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; E[&#34;ClickHouse 做分析&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; F[&#34;S3 / MinIO 存 debug 快照&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; G[&#34;Prometheus / Grafana 做监控&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; H[&#34;标注平台和评估平台消费失败样本&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>如果已经在云上，也可以直接用云厂商组合：</p>
@@ -2877,38 +2811,24 @@
 <p>更合理的评估结构是：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">数据质量评估
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">解析质量评估
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">chunk 质量评估
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">召回评估
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">rerank 评估
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">上下文组装评估
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">生成答案评估
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">端到端用户体验评估
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;数据质量评估&#34;] --&gt; B[&#34;解析质量评估&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;chunk 质量评估&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;召回评估&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;rerank 评估&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;上下文组装评估&#34;]
+</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;生成答案评估&#34;]
+</span></span><span class="line"><span class="cl">  G --&gt; H[&#34;端到端用户体验评估&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>每一层都有自己的指标。</p>
@@ -3053,9 +2973,9 @@
 <p>常用指标包括：</p>
 <ul>
 <li><code>Recall@K</code></li>
-<li><code>Hit@K</code></li>
-<li><code>Precision@K</code></li>
-<li><code>MRR</code></li>
+<li><code>Hit@K</code>（前 K 个结果的命中率）</li>
+<li><code>Precision@K</code>（前 K 个结果的精确率）</li>
+<li><code>MRR</code>（Mean Reciprocal Rank，平均倒数排名）</li>
 </ul>
 <p>最重要的是 <code>Recall@K</code>。</p>
 <p>例如 <code>Recall@20</code> 的含义是：</p>
@@ -3128,11 +3048,11 @@
 <p>正确证据有没有被排到更靠前的位置。</p></blockquote>
 <p>常用指标包括：</p>
 <ul>
-<li><code>MRR</code></li>
-<li><code>NDCG@K</code></li>
-<li><code>Precision@K</code></li>
-<li><code>Recall@K</code></li>
-<li><code>Top-1 Accuracy</code></li>
+<li><code>MRR</code>（Mean Reciprocal Rank，平均倒数排名）</li>
+<li><code>NDCG@K</code>（前 K 个结果的归一化折损累计增益）</li>
+<li><code>Precision@K</code>（前 K 个结果的精确率）</li>
+<li><code>Recall@K</code>（前 K 个结果的召回率）</li>
+<li><code>Top-1 Accuracy</code>（首位准确率）</li>
 </ul>
 <p><code>MRR</code> 关注第一个正确结果的位置。</p>
 <p>例如：</p>
@@ -3247,8 +3167,8 @@
 <h2 id="82-常见生成评估指标">8.2 常见生成评估指标
 </h2><p>常见指标包括：</p>
 <ul>
-<li><code>Answer Correctness</code></li>
-<li><code>Faithfulness</code></li>
+<li><code>Answer Correctness</code>（答案正确性）</li>
+<li><code>Faithfulness</code>（忠实度）</li>
 <li><code>Groundedness</code></li>
 <li><code>Completeness</code></li>
 <li><code>Citation Accuracy</code></li>
@@ -3435,34 +3355,22 @@
 <p>建议建立流程：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户点踩
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">记录 trace_id
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">自动收集该次请求的全链路日志
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">人工标注失败原因
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">补充 gold answer 和 gold chunk
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">加入 regression 或 challenge set
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">后续版本必须回归
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;用户点踩&#34;] --&gt; B[&#34;记录 trace_id&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;自动收集该次请求的全链路日志&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;人工标注失败原因&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;补充 gold answer 和 gold chunk&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;加入 regression 或 challenge set&#34;]
+</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;后续版本必须回归&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>失败原因最好结构化。</p>
@@ -3976,38 +3884,24 @@
 <p>推荐闭环：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">线上请求
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">用户反馈 / 自动异常检测
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">采样进入标注队列
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">标注失败原因和 gold evidence
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">进入评估集
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">驱动下一轮优化
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">回归测试验证
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">灰度上线
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;线上请求&#34;] --&gt; B[&#34;用户反馈 / 自动异常检测&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;采样进入标注队列&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;标注失败原因和 gold evidence&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;进入评估集&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;驱动下一轮优化&#34;]
+</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;回归测试验证&#34;]
+</span></span><span class="line"><span class="cl">  G --&gt; H[&#34;灰度上线&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>这样 RAG 系统才会越用越稳，而不是每次靠人工临时修。</p>

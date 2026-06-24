@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 很多人做 RAG，会把重点放在：\nembedding 向量数据库 BM25 rerank prompt 大模型生成 但在真实项目里，很多效果问题其实发生得更早：\n文档还没有进入索引之前，就已经被解析坏了。\n例如：\nPDF 双栏顺序错乱 表格表头丢失 页眉页脚混进正文 图片里的文字没有 OCR Markdown 标题层级丢失 Word 文档里的批注、脚注、目录处理不当 代码块被当成普通段落切碎 元数据没有保留下来 后面再好的召回和生成，也很难弥补这些问题。\n所以这篇文章专门讲 RAG 里的文档解析：\n如何把 PDF、Word、HTML、Markdown、图片、表格、代码等原始资料，转换成结构清晰、可切分、可索引、可评估的知识表示。\n这篇会覆盖：\n文档解析在 RAG 中的位置 文档解析到底要产出什么 不同文件格式怎么处理 PDF 解析的常见难点 表格、图片、OCR、代码怎么解析 清洗、去噪和结构恢复 元数据怎么设计 解析结果怎么进入 chunk 和索引 解析质量怎么评估 生产级文档解析链路怎么设计 一、文档解析在 RAG 中的位置 1.1 RAG 不是从 embedding 开始的 一个完整的 RAG 知识入库链路大概是：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 原始知识源 ↓ 文档采集 ↓ 文档解析 ↓ 清洗与结构化 ↓ 文本切分 ↓ embedding ↓ 索引构建 ↓ 检索与生成 很多教程会从“切 chunk + embedding”开始讲，但这默认了一个前提：\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 很多人做 RAG（Retrieval-Augmented Generation，检索增强生成），会把重点放在：\nembedding 向量数据库 BM25（Best Matching 25） 重排（rerank） prompt 大模型生成 但在真实项目里，很多效果问题其实发生得更早：\n文档还没有进入索引之前，就已经被解析坏了。\n例如：\nPDF（Portable Document Format，便携式文档格式）双栏顺序错乱 表格表头丢失 页眉页脚混进正文 图片里的文字没有 OCR（Optical Character Recognition，光学字符识别） Markdown 标题层级丢失 Word 文档里的批注、脚注、目录处理不当 代码块被当成普通段落切碎 元数据没有保留下来 后面再好的召回和生成，也很难弥补这些问题。\n所以这篇文章专门讲 RAG 里的文档解析：\n如何把 PDF、Word、HTML（HyperText Markup Language，超文本标记语言）、Markdown、图片、表格、代码等原始资料，转换成结构清晰、可切分、可索引、可评估的知识表示。\n这篇会覆盖：\n文档解析在 RAG 中的位置 文档解析到底要产出什么 不同文件格式怎么处理 PDF 解析的常见难点 表格、图片、OCR、代码怎么解析 清洗、去噪和结构恢复 元数据怎么设计 解析结果怎么进入 chunk 和索引 解析质量怎么评估 生产级文档解析链路怎么设计 一、文档解析在 RAG 中的位置 1.1 RAG 不是从 embedding 开始的 一个完整的 RAG 知识入库链路大概是：\n1 2 3 4 5 6 7 8 flowchart TD A[&#34;原始知识源&#34;] --&gt; B[&#34;文档采集&#34;] B --&gt; C[&#34;文档解析&#34;] C --&gt; D[&#34;清洗与结构化&#34;] D --&gt; E[&#34;文本切分&#34;] E --&gt; F[&#34;embedding&#34;] F --&gt; G[&#34;索引构建&#34;] G --&gt; H[&#34;检索与生成&#34;] 很多教程会从“切 chunk + embedding”开始讲，但这默认了一个前提：\n">
 <title>RAG 文档解析详解：从原始文件到可检索知识的工程链路</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/rag-%E6%96%87%E6%A1%A3%E8%A7%A3%E6%9E%90%E8%AF%A6%E8%A7%A3%E4%BB%8E%E5%8E%9F%E5%A7%8B%E6%96%87%E4%BB%B6%E5%88%B0%E5%8F%AF%E6%A3%80%E7%B4%A2%E7%9F%A5%E8%AF%86%E7%9A%84%E5%B7%A5%E7%A8%8B%E9%93%BE%E8%B7%AF/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="RAG 文档解析详解：从原始文件到可检索知识的工程链路">
-<meta property='og:description' content="写在前面 很多人做 RAG，会把重点放在：\nembedding 向量数据库 BM25 rerank prompt 大模型生成 但在真实项目里，很多效果问题其实发生得更早：\n文档还没有进入索引之前，就已经被解析坏了。\n例如：\nPDF 双栏顺序错乱 表格表头丢失 页眉页脚混进正文 图片里的文字没有 OCR Markdown 标题层级丢失 Word 文档里的批注、脚注、目录处理不当 代码块被当成普通段落切碎 元数据没有保留下来 后面再好的召回和生成，也很难弥补这些问题。\n所以这篇文章专门讲 RAG 里的文档解析：\n如何把 PDF、Word、HTML、Markdown、图片、表格、代码等原始资料，转换成结构清晰、可切分、可索引、可评估的知识表示。\n这篇会覆盖：\n文档解析在 RAG 中的位置 文档解析到底要产出什么 不同文件格式怎么处理 PDF 解析的常见难点 表格、图片、OCR、代码怎么解析 清洗、去噪和结构恢复 元数据怎么设计 解析结果怎么进入 chunk 和索引 解析质量怎么评估 生产级文档解析链路怎么设计 一、文档解析在 RAG 中的位置 1.1 RAG 不是从 embedding 开始的 一个完整的 RAG 知识入库链路大概是：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 原始知识源 ↓ 文档采集 ↓ 文档解析 ↓ 清洗与结构化 ↓ 文本切分 ↓ embedding ↓ 索引构建 ↓ 检索与生成 很多教程会从“切 chunk + embedding”开始讲，但这默认了一个前提：\n">
+<meta property='og:description' content="写在前面 很多人做 RAG（Retrieval-Augmented Generation，检索增强生成），会把重点放在：\nembedding 向量数据库 BM25（Best Matching 25） 重排（rerank） prompt 大模型生成 但在真实项目里，很多效果问题其实发生得更早：\n文档还没有进入索引之前，就已经被解析坏了。\n例如：\nPDF（Portable Document Format，便携式文档格式）双栏顺序错乱 表格表头丢失 页眉页脚混进正文 图片里的文字没有 OCR（Optical Character Recognition，光学字符识别） Markdown 标题层级丢失 Word 文档里的批注、脚注、目录处理不当 代码块被当成普通段落切碎 元数据没有保留下来 后面再好的召回和生成，也很难弥补这些问题。\n所以这篇文章专门讲 RAG 里的文档解析：\n如何把 PDF、Word、HTML（HyperText Markup Language，超文本标记语言）、Markdown、图片、表格、代码等原始资料，转换成结构清晰、可切分、可索引、可评估的知识表示。\n这篇会覆盖：\n文档解析在 RAG 中的位置 文档解析到底要产出什么 不同文件格式怎么处理 PDF 解析的常见难点 表格、图片、OCR、代码怎么解析 清洗、去噪和结构恢复 元数据怎么设计 解析结果怎么进入 chunk 和索引 解析质量怎么评估 生产级文档解析链路怎么设计 一、文档解析在 RAG 中的位置 1.1 RAG 不是从 embedding 开始的 一个完整的 RAG 知识入库链路大概是：\n1 2 3 4 5 6 7 8 flowchart TD A[&#34;原始知识源&#34;] --&gt; B[&#34;文档采集&#34;] B --&gt; C[&#34;文档解析&#34;] C --&gt; D[&#34;清洗与结构化&#34;] D --&gt; E[&#34;文本切分&#34;] E --&gt; F[&#34;embedding&#34;] F --&gt; G[&#34;索引构建&#34;] G --&gt; H[&#34;检索与生成&#34;] 很多教程会从“切 chunk + embedding”开始讲，但这默认了一个前提：\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/rag-%E6%96%87%E6%A1%A3%E8%A7%A3%E6%9E%90%E8%AF%A6%E8%A7%A3%E4%BB%8E%E5%8E%9F%E5%A7%8B%E6%96%87%E4%BB%B6%E5%88%B0%E5%8F%AF%E6%A3%80%E7%B4%A2%E7%9F%A5%E8%AF%86%E7%9A%84%E5%B7%A5%E7%A8%8B%E9%93%BE%E8%B7%AF/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='rag' /><meta property='article:published_time' content='2026-05-07T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-07T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="RAG 文档解析详解：从原始文件到可检索知识的工程链路">
-<meta name="twitter:description" content="写在前面 很多人做 RAG，会把重点放在：\nembedding 向量数据库 BM25 rerank prompt 大模型生成 但在真实项目里，很多效果问题其实发生得更早：\n文档还没有进入索引之前，就已经被解析坏了。\n例如：\nPDF 双栏顺序错乱 表格表头丢失 页眉页脚混进正文 图片里的文字没有 OCR Markdown 标题层级丢失 Word 文档里的批注、脚注、目录处理不当 代码块被当成普通段落切碎 元数据没有保留下来 后面再好的召回和生成，也很难弥补这些问题。\n所以这篇文章专门讲 RAG 里的文档解析：\n如何把 PDF、Word、HTML、Markdown、图片、表格、代码等原始资料，转换成结构清晰、可切分、可索引、可评估的知识表示。\n这篇会覆盖：\n文档解析在 RAG 中的位置 文档解析到底要产出什么 不同文件格式怎么处理 PDF 解析的常见难点 表格、图片、OCR、代码怎么解析 清洗、去噪和结构恢复 元数据怎么设计 解析结果怎么进入 chunk 和索引 解析质量怎么评估 生产级文档解析链路怎么设计 一、文档解析在 RAG 中的位置 1.1 RAG 不是从 embedding 开始的 一个完整的 RAG 知识入库链路大概是：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 原始知识源 ↓ 文档采集 ↓ 文档解析 ↓ 清洗与结构化 ↓ 文本切分 ↓ embedding ↓ 索引构建 ↓ 检索与生成 很多教程会从“切 chunk + embedding”开始讲，但这默认了一个前提：\n">
+<meta name="twitter:description" content="写在前面 很多人做 RAG（Retrieval-Augmented Generation，检索增强生成），会把重点放在：\nembedding 向量数据库 BM25（Best Matching 25） 重排（rerank） prompt 大模型生成 但在真实项目里，很多效果问题其实发生得更早：\n文档还没有进入索引之前，就已经被解析坏了。\n例如：\nPDF（Portable Document Format，便携式文档格式）双栏顺序错乱 表格表头丢失 页眉页脚混进正文 图片里的文字没有 OCR（Optical Character Recognition，光学字符识别） Markdown 标题层级丢失 Word 文档里的批注、脚注、目录处理不当 代码块被当成普通段落切碎 元数据没有保留下来 后面再好的召回和生成，也很难弥补这些问题。\n所以这篇文章专门讲 RAG 里的文档解析：\n如何把 PDF、Word、HTML（HyperText Markup Language，超文本标记语言）、Markdown、图片、表格、代码等原始资料，转换成结构清晰、可切分、可索引、可评估的知识表示。\n这篇会覆盖：\n文档解析在 RAG 中的位置 文档解析到底要产出什么 不同文件格式怎么处理 PDF 解析的常见难点 表格、图片、OCR、代码怎么解析 清洗、去噪和结构恢复 元数据怎么设计 解析结果怎么进入 chunk 和索引 解析质量怎么评估 生产级文档解析链路怎么设计 一、文档解析在 RAG 中的位置 1.1 RAG 不是从 embedding 开始的 一个完整的 RAG 知识入库链路大概是：\n1 2 3 4 5 6 7 8 flowchart TD A[&#34;原始知识源&#34;] --&gt; B[&#34;文档采集&#34;] B --&gt; C[&#34;文档解析&#34;] C --&gt; D[&#34;清洗与结构化&#34;] D --&gt; E[&#34;文本切分&#34;] E --&gt; F[&#34;embedding&#34;] F --&gt; G[&#34;索引构建&#34;] G --&gt; H[&#34;检索与生成&#34;] 很多教程会从“切 chunk + embedding”开始讲，但这默认了一个前提：\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -267,7 +267,7 @@
       <ol>
         <li><a href="#行记录格式">行记录格式</a></li>
         <li><a href="#markdown-表格格式">Markdown 表格格式</a></li>
-        <li><a href="#json-格式">JSON 格式</a></li>
+        <li><a href="#jsonjavascript-object-notationjavascript-对象表示法格式"><code>JSON</code>（JavaScript Object Notation，JavaScript 对象表示法）格式</a></li>
       </ol>
     </li>
     <li><a href="#53-合并单元格怎么处理">5.3 合并单元格怎么处理</a></li>
@@ -415,12 +415,12 @@
     
     
     <h1 id="写在前面">写在前面
-</h1><p>很多人做 RAG，会把重点放在：</p>
+</h1><p>很多人做 <code>RAG</code>（Retrieval-Augmented Generation，检索增强生成），会把重点放在：</p>
 <ul>
 <li>embedding</li>
 <li>向量数据库</li>
-<li>BM25</li>
-<li>rerank</li>
+<li><code>BM25</code>（Best Matching 25）</li>
+<li>重排（rerank）</li>
 <li>prompt</li>
 <li>大模型生成</li>
 </ul>
@@ -429,10 +429,10 @@
 <p>文档还没有进入索引之前，就已经被解析坏了。</p></blockquote>
 <p>例如：</p>
 <ul>
-<li>PDF 双栏顺序错乱</li>
+<li><code>PDF</code>（Portable Document Format，便携式文档格式）双栏顺序错乱</li>
 <li>表格表头丢失</li>
 <li>页眉页脚混进正文</li>
-<li>图片里的文字没有 OCR</li>
+<li>图片里的文字没有 <code>OCR</code>（Optical Character Recognition，光学字符识别）</li>
 <li>Markdown 标题层级丢失</li>
 <li>Word 文档里的批注、脚注、目录处理不当</li>
 <li>代码块被当成普通段落切碎</li>
@@ -441,7 +441,7 @@
 <p>后面再好的召回和生成，也很难弥补这些问题。</p>
 <p>所以这篇文章专门讲 RAG 里的文档解析：</p>
 <blockquote>
-<p>如何把 PDF、Word、HTML、Markdown、图片、表格、代码等原始资料，转换成结构清晰、可切分、可索引、可评估的知识表示。</p></blockquote>
+<p>如何把 PDF、Word、<code>HTML</code>（HyperText Markup Language，超文本标记语言）、Markdown、图片、表格、代码等原始资料，转换成结构清晰、可切分、可索引、可评估的知识表示。</p></blockquote>
 <p>这篇会覆盖：</p>
 <ol>
 <li>文档解析在 RAG 中的位置</li>
@@ -460,38 +460,24 @@
 </h2><p>一个完整的 RAG 知识入库链路大概是：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">原始知识源
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">文档采集
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">文档解析
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">清洗与结构化
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">文本切分
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">embedding
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">索引构建
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">检索与生成
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;原始知识源&#34;] --&gt; B[&#34;文档采集&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;文档解析&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;清洗与结构化&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;文本切分&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;embedding&#34;]
+</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;索引构建&#34;]
+</span></span><span class="line"><span class="cl">  G --&gt; H[&#34;检索与生成&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>很多教程会从“切 chunk + embedding”开始讲，但这默认了一个前提：</p>
@@ -1290,7 +1276,7 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h3 id="markdown-表格格式">Markdown 表格格式
-</h3><p>适合给 LLM 阅读：</p>
+</h3><p>适合给 <code>LLM</code>（Large Language Model，大语言模型）阅读：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
@@ -1305,7 +1291,7 @@
 </span></span><span class="line"><span class="cl">| 上海 | 600 元 | 财务经理 |
 </span></span></code></pre></td></tr></table>
 </div>
-</div><h3 id="json-格式">JSON 格式
+</div><h3 id="jsonjavascript-object-notationjavascript-对象表示法格式"><code>JSON</code>（JavaScript Object Notation，JavaScript 对象表示法）格式
 </h3><p>适合系统处理：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
@@ -1980,45 +1966,21 @@
 </span><span class="lnt">11
 </span><span class="lnt">12
 </span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">文档上传
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">文件类型识别
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">文本型 / 扫描型判断
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">格式专用解析器
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">OCR 或版面分析
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">block 结构生成
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">清洗去噪
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">标题层级和 section_path 恢复
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">表格、图片、代码特殊处理
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">metadata 补充
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">质量检查
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">chunk 生成
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">索引入库
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;文档上传&#34;] --&gt; B[&#34;文件类型识别&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;文本型 / 扫描型判断&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;格式专用解析器&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;OCR 或版面分析&#34;]
+</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;block 结构生成&#34;]
+</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;清洗去噪&#34;]
+</span></span><span class="line"><span class="cl">  G --&gt; H[&#34;标题层级和 section_path 恢复&#34;]
+</span></span><span class="line"><span class="cl">  H --&gt; I[&#34;表格、图片、代码特殊处理&#34;]
+</span></span><span class="line"><span class="cl">  I --&gt; J[&#34;metadata 补充&#34;]
+</span></span><span class="line"><span class="cl">  J --&gt; K[&#34;质量检查&#34;]
+</span></span><span class="line"><span class="cl">  K --&gt; L[&#34;chunk 生成&#34;]
+</span></span><span class="line"><span class="cl">  L --&gt; M[&#34;索引入库&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h2 id="122-解析失败要可重试">12.2 解析失败要可重试
@@ -2666,21 +2628,13 @@
 </span><span class="lnt">3
 </span><span class="lnt">4
 </span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span><span class="lnt">9
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">原始文件
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">文档解析
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">结构化 block
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">文本切分
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">chunk
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">  A[&#34;原始文件&#34;] --&gt; B[&#34;文档解析&#34;]
+</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;结构化 block&#34;]
+</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;文本切分&#34;]
+</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;chunk&#34;]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>解析质量决定切分上限。</p>

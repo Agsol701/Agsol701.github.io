@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 Agent 的上层能力看起来复杂，但底层第一步仍然是稳定调用大模型。\n如果模型调用层不稳定，后面的工具调用、规划、记忆和工作流都会变得不可控。\n这篇文章重点讲 Agent 开发中必须掌握的 LLM（Large Language Model，大语言模型）调用基础。\n一、LLM 在 Agent 中的位置 1.1 LLM 不是整个 Agent LLM 是 Agent 的决策核心，但不是 Agent 的全部。\n一个完整 Agent 通常是：\n1 2 3 4 5 6 7 8 9 10 11 用户输入 ↓ 上下文组装 ↓ LLM 判断下一步 ↓ 工具调用或直接回答 ↓ 状态更新 ↓ 最终输出 LLM 负责理解和判断，工具负责真实执行，状态负责记住进展。\n1.2 LLM 最适合做什么 LLM 适合：\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 Agent 的上层能力看起来复杂，但底层第一步仍然是稳定调用大模型。\n如果模型调用层不稳定，后面的工具调用、规划、记忆和工作流都会变得不可控。\n这篇文章重点讲 Agent 开发中必须掌握的 Large Language Model（LLM，大语言模型）调用基础。\n一、LLM 在 Agent 中的位置 1.1 LLM 不是整个 Agent LLM 是 Agent 的决策核心，但不是 Agent 的全部。\n一个完整 Agent 通常是：\n1 2 3 4 5 6 flowchart TD A[用户输入] --&gt; B[上下文组装] B --&gt; C[LLM 判断下一步] C --&gt; D[工具调用或直接回答] D --&gt; E[状态更新] E --&gt; F[最终输出] LLM 负责理解和判断，工具负责真实执行，状态负责记住进展。\n1.2 LLM 最适合做什么 LLM 适合：\n意图理解 文本生成 信息抽取 分类路由 参数补全 计划生成 结果解释 LLM 不适合直接替代：\n">
 <title>AI Agent 中的 LLM 调用基础：消息结构、参数控制、流式输出、结构化结果与高频面试题</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/ai-agent-%E4%B8%AD%E7%9A%84-llm-%E8%B0%83%E7%94%A8%E5%9F%BA%E7%A1%80%E6%B6%88%E6%81%AF%E7%BB%93%E6%9E%84%E5%8F%82%E6%95%B0%E6%8E%A7%E5%88%B6%E6%B5%81%E5%BC%8F%E8%BE%93%E5%87%BA%E7%BB%93%E6%9E%84%E5%8C%96%E7%BB%93%E6%9E%9C%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="AI Agent 中的 LLM 调用基础：消息结构、参数控制、流式输出、结构化结果与高频面试题">
-<meta property='og:description' content="写在前面 Agent 的上层能力看起来复杂，但底层第一步仍然是稳定调用大模型。\n如果模型调用层不稳定，后面的工具调用、规划、记忆和工作流都会变得不可控。\n这篇文章重点讲 Agent 开发中必须掌握的 LLM（Large Language Model，大语言模型）调用基础。\n一、LLM 在 Agent 中的位置 1.1 LLM 不是整个 Agent LLM 是 Agent 的决策核心，但不是 Agent 的全部。\n一个完整 Agent 通常是：\n1 2 3 4 5 6 7 8 9 10 11 用户输入 ↓ 上下文组装 ↓ LLM 判断下一步 ↓ 工具调用或直接回答 ↓ 状态更新 ↓ 最终输出 LLM 负责理解和判断，工具负责真实执行，状态负责记住进展。\n1.2 LLM 最适合做什么 LLM 适合：\n">
+<meta property='og:description' content="写在前面 Agent 的上层能力看起来复杂，但底层第一步仍然是稳定调用大模型。\n如果模型调用层不稳定，后面的工具调用、规划、记忆和工作流都会变得不可控。\n这篇文章重点讲 Agent 开发中必须掌握的 Large Language Model（LLM，大语言模型）调用基础。\n一、LLM 在 Agent 中的位置 1.1 LLM 不是整个 Agent LLM 是 Agent 的决策核心，但不是 Agent 的全部。\n一个完整 Agent 通常是：\n1 2 3 4 5 6 flowchart TD A[用户输入] --&gt; B[上下文组装] B --&gt; C[LLM 判断下一步] C --&gt; D[工具调用或直接回答] D --&gt; E[状态更新] E --&gt; F[最终输出] LLM 负责理解和判断，工具负责真实执行，状态负责记住进展。\n1.2 LLM 最适合做什么 LLM 适合：\n意图理解 文本生成 信息抽取 分类路由 参数补全 计划生成 结果解释 LLM 不适合直接替代：\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/ai-agent-%E4%B8%AD%E7%9A%84-llm-%E8%B0%83%E7%94%A8%E5%9F%BA%E7%A1%80%E6%B6%88%E6%81%AF%E7%BB%93%E6%9E%84%E5%8F%82%E6%95%B0%E6%8E%A7%E5%88%B6%E6%B5%81%E5%BC%8F%E8%BE%93%E5%87%BA%E7%BB%93%E6%9E%84%E5%8C%96%E7%BB%93%E6%9E%9C%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='llm' /><meta property='article:published_time' content='2026-05-18T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-18T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="AI Agent 中的 LLM 调用基础：消息结构、参数控制、流式输出、结构化结果与高频面试题">
-<meta name="twitter:description" content="写在前面 Agent 的上层能力看起来复杂，但底层第一步仍然是稳定调用大模型。\n如果模型调用层不稳定，后面的工具调用、规划、记忆和工作流都会变得不可控。\n这篇文章重点讲 Agent 开发中必须掌握的 LLM（Large Language Model，大语言模型）调用基础。\n一、LLM 在 Agent 中的位置 1.1 LLM 不是整个 Agent LLM 是 Agent 的决策核心，但不是 Agent 的全部。\n一个完整 Agent 通常是：\n1 2 3 4 5 6 7 8 9 10 11 用户输入 ↓ 上下文组装 ↓ LLM 判断下一步 ↓ 工具调用或直接回答 ↓ 状态更新 ↓ 最终输出 LLM 负责理解和判断，工具负责真实执行，状态负责记住进展。\n1.2 LLM 最适合做什么 LLM 适合：\n">
+<meta name="twitter:description" content="写在前面 Agent 的上层能力看起来复杂，但底层第一步仍然是稳定调用大模型。\n如果模型调用层不稳定，后面的工具调用、规划、记忆和工作流都会变得不可控。\n这篇文章重点讲 Agent 开发中必须掌握的 Large Language Model（LLM，大语言模型）调用基础。\n一、LLM 在 Agent 中的位置 1.1 LLM 不是整个 Agent LLM 是 Agent 的决策核心，但不是 Agent 的全部。\n一个完整 Agent 通常是：\n1 2 3 4 5 6 flowchart TD A[用户输入] --&gt; B[上下文组装] B --&gt; C[LLM 判断下一步] C --&gt; D[工具调用或直接回答] D --&gt; E[状态更新] E --&gt; F[最终输出] LLM 负责理解和判断，工具负责真实执行，状态负责记住进展。\n1.2 LLM 最适合做什么 LLM 适合：\n意图理解 文本生成 信息抽取 分类路由 参数补全 计划生成 结果解释 LLM 不适合直接替代：\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -465,37 +465,27 @@
     <h1 id="写在前面">写在前面
 </h1><p>Agent 的上层能力看起来复杂，但底层第一步仍然是稳定调用大模型。</p>
 <p>如果模型调用层不稳定，后面的工具调用、规划、记忆和工作流都会变得不可控。</p>
-<p>这篇文章重点讲 Agent 开发中必须掌握的 LLM（Large Language Model，大语言模型）调用基础。</p>
+<p>这篇文章重点讲 Agent 开发中必须掌握的 Large Language Model（LLM，大语言模型）调用基础。</p>
 <h1 id="一llm-在-agent-中的位置">一、LLM 在 Agent 中的位置
 </h1><h2 id="11-llm-不是整个-agent">1.1 LLM 不是整个 Agent
 </h2><p>LLM 是 Agent 的决策核心，但不是 Agent 的全部。</p>
 <p>一个完整 Agent 通常是：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户输入
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">上下文组装
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">LLM 判断下一步
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">工具调用或直接回答
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">状态更新
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">最终输出
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[用户输入] --&gt; B[上下文组装]
+</span></span><span class="line"><span class="cl">    B --&gt; C[LLM 判断下一步]
+</span></span><span class="line"><span class="cl">    C --&gt; D[工具调用或直接回答]
+</span></span><span class="line"><span class="cl">    D --&gt; E[状态更新]
+</span></span><span class="line"><span class="cl">    E --&gt; F[最终输出]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>LLM 负责理解和判断，工具负责真实执行，状态负责记住进展。</p>
@@ -520,7 +510,7 @@
 </ul>
 <h1 id="二基于-langchain-10-调用-llm">二、基于 LangChain 1.0 调用 LLM
 </h1><h2 id="21-为什么-agent-项目常用-langchain">2.1 为什么 Agent 项目常用 LangChain
-</h2><p>直接调用各厂商 SDK（Software Development Kit，软件开发工具包）当然可以，但 Agent 项目通常会面对几个现实问题：</p>
+</h2><p>直接调用各厂商 Software Development Kit（SDK，软件开发工具包）当然可以，但 Agent 项目通常会面对几个现实问题：</p>
 <ul>
 <li>需要在不同模型厂商之间切换</li>
 <li>需要统一消息格式</li>
@@ -746,11 +736,11 @@
 </span></span><span class="line"><span class="cl">
 </span></span><span class="line"><span class="cl">    <span class="nd">@abstractmethod</span>
 </span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="nf">_generate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">messages</span><span class="p">,</span> <span class="n">stop</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">run_manager</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
-</span></span><span class="line"><span class="cl">        <span class="s2">&#34;&#34;&#34;子类必须实现：真正调用模型 API（Application Programming Interface，应用程序编程接口）的地方&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;&#34;&#34;子类必须实现：真正调用模型 Application Programming Interface（API，应用程序编程接口）的地方&#34;&#34;&#34;</span>
 </span></span><span class="line"><span class="cl">        <span class="o">...</span>
 </span></span></code></pre></td></tr></table>
 </div>
-</div><p>完整调用链（从 <code>invoke</code> 到 HTTP（HyperText Transfer Protocol，超文本传输协议）请求）：</p>
+</div><p>完整调用链（从 <code>invoke</code> 到 HyperText Transfer Protocol（HTTP，超文本传输协议）请求）：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -766,51 +756,21 @@
 </span><span class="lnt">11
 </span><span class="lnt">12
 </span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span><span class="lnt">26
-</span><span class="lnt">27
-</span><span class="lnt">28
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">model.invoke(messages)
-</span></span><span class="line"><span class="cl">  │
-</span></span><span class="line"><span class="cl">  ├── 1. 输入转换：统一各种输入格式为 [BaseMessage] 列表
-</span></span><span class="line"><span class="cl">  │
-</span></span><span class="line"><span class="cl">  ├── 2. Callback 触发：on_chat_model_start（trace 开始记录）
-</span></span><span class="line"><span class="cl">  │
-</span></span><span class="line"><span class="cl">  ├── 3. Rate Limiting：如果配了限流器，在这里等待令牌
-</span></span><span class="line"><span class="cl">  │
-</span></span><span class="line"><span class="cl">  ├── 4. Cache 检查：如果配了 LLM cache，命中则直接返回
-</span></span><span class="line"><span class="cl">  │
-</span></span><span class="line"><span class="cl">  ├── 5. _generate()：子类实现（如 ChatOpenAI._generate）
-</span></span><span class="line"><span class="cl">  │     │
-</span></span><span class="line"><span class="cl">  │     ├── 参数组装：messages + tools + temperature + ... → request body
-</span></span><span class="line"><span class="cl">  │     │
-</span></span><span class="line"><span class="cl">  │     ├── 调用 provider SDK：openai.chat.completions.create(...)
-</span></span><span class="line"><span class="cl">  │     │               ↓ SDK 内部发起真正的 HTTP 请求
-</span></span><span class="line"><span class="cl">  │     │               POST https://api.openai.com/v1/chat/completions
-</span></span><span class="line"><span class="cl">  │     │               Content-Type: application/json
-</span></span><span class="line"><span class="cl">  │     │               Authorization: Bearer sk-...
-</span></span><span class="line"><span class="cl">  │     │               Body: {&#34;model&#34;: &#34;gpt-4.1-mini&#34;, &#34;messages&#34;: [...], ...}
-</span></span><span class="line"><span class="cl">  │     │
-</span></span><span class="line"><span class="cl">  │     └── 响应解析：provider response → ChatResult → AIMessage
-</span></span><span class="line"><span class="cl">  │
-</span></span><span class="line"><span class="cl">  ├── 6. Retry：如果失败（限流/网络错误），按 max_retries 指数退避重试
-</span></span><span class="line"><span class="cl">  │
-</span></span><span class="line"><span class="cl">  ├── 7. Callback 触发：on_llm_end / on_llm_error
-</span></span><span class="line"><span class="cl">  │
-</span></span><span class="line"><span class="cl">  └── 8. 返回 AIMessage
+<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">flowchart</span> <span class="n">TD</span>
+</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="p">[</span><span class="n">model</span><span class="o">.</span><span class="n">invoke</span> <span class="n">messages</span><span class="p">]</span> <span class="o">--&gt;</span> <span class="n">B</span><span class="p">[</span><span class="err">输入转换</span><span class="p">:</span> <span class="err">统一为</span> <span class="n">BaseMessage</span> <span class="err">列表</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">B</span> <span class="o">--&gt;</span> <span class="n">C</span><span class="p">[</span><span class="n">Callback</span><span class="p">:</span> <span class="n">on_chat_model_start</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">C</span> <span class="o">--&gt;</span> <span class="n">D</span><span class="p">[</span><span class="n">Rate</span> <span class="n">Limiting</span><span class="p">:</span> <span class="err">等待令牌</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">D</span> <span class="o">--&gt;</span> <span class="n">E</span><span class="p">{</span><span class="n">Cache</span> <span class="err">命中?</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="n">E</span> <span class="o">--</span> <span class="err">是</span> <span class="o">--&gt;</span> <span class="n">K</span><span class="p">[</span><span class="err">返回</span> <span class="n">AIMessage</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">E</span> <span class="o">--</span> <span class="err">否</span> <span class="o">--&gt;</span> <span class="n">F</span><span class="p">[</span><span class="n">_generate</span><span class="p">:</span> <span class="err">子类实现</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">F</span> <span class="o">--&gt;</span> <span class="n">G</span><span class="p">[</span><span class="err">参数组装</span><span class="p">:</span> <span class="n">messages</span> <span class="o">+</span> <span class="n">tools</span> <span class="o">+</span> <span class="n">temperature</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">G</span> <span class="o">--&gt;</span> <span class="n">H</span><span class="p">[</span><span class="err">调用</span> <span class="n">provider</span> <span class="n">SDK</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">H</span> <span class="o">--&gt;</span> <span class="n">I</span><span class="p">[</span><span class="n">SDK</span> <span class="err">发起</span> <span class="n">HTTP</span> <span class="n">POST</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">I</span> <span class="o">--&gt;</span> <span class="n">J</span><span class="p">[</span><span class="err">响应解析</span><span class="p">:</span> <span class="n">provider</span> <span class="n">response</span> <span class="o">-&gt;</span> <span class="n">ChatResult</span> <span class="o">-&gt;</span> <span class="n">AIMessage</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">J</span> <span class="o">--&gt;</span> <span class="n">L</span><span class="p">[</span><span class="n">Retry</span> <span class="o">/</span> <span class="n">callbacks</span><span class="p">:</span> <span class="n">on_llm_end</span> <span class="err">或</span> <span class="n">on_llm_error</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">L</span> <span class="o">--&gt;</span> <span class="n">K</span>
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p><strong>HTTP 请求不是 LangChain 自己发的</strong>。LangChain 不直接做 HTTP 调用，而是调用各厂商的 Python SDK，由 SDK 内部处理 HTTP：</p>
@@ -849,10 +809,10 @@
 </span><span class="lnt">4
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">LangChain invoke
-</span></span><span class="line"><span class="cl">  → provider SDK（openai / anthropic / google-genai）
-</span></span><span class="line"><span class="cl">    → httpx / requests
-</span></span><span class="line"><span class="cl">      → HTTP POST to API endpoint
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[LangChain invoke] --&gt; B[provider SDK\nopenai / anthropic / google-genai]
+</span></span><span class="line"><span class="cl">    B --&gt; C[httpx / requests]
+</span></span><span class="line"><span class="cl">    C --&gt; D[HTTP POST to API endpoint]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p><code>invoke</code> 相比直接调 provider SDK 的附加值在于：统一接口 + cache + retry + rate limiting + callback/tracing。如果你只关心最终发了什么 HTTP 请求，可以开 debug 日志查看：</p>
@@ -869,7 +829,7 @@
 </span></span><span class="line"><span class="cl"><span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&#34;httpx&#34;</span><span class="p">)</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">DEBUG</span><span class="p">)</span>
 </span></span><span class="line"><span class="cl">
 </span></span><span class="line"><span class="cl"><span class="n">model</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="s2">&#34;hello&#34;</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 会打印出完整的 HTTP request URL（Uniform Resource Locator，统一资源定位符）、headers、body 和 response</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 会打印出完整的 HTTP request Uniform Resource Locator（URL，统一资源定位符）、headers、body 和 response</span>
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>每个 provider（ChatOpenAI、ChatAnthropic 等）只需实现 <code>_generate</code> 方法，上层的缓存、回调、重试、trace 全部由 <code>BaseChatModel</code> 统一处理。</p>
@@ -1102,7 +1062,7 @@
 <li>当前任务状态</li>
 <li>可用工具列表</li>
 <li>历史关键消息</li>
-<li>RAG（Retrieval-Augmented Generation，检索增强生成）检索结果</li>
+<li>Retrieval-Augmented Generation（RAG，检索增强生成）检索结果</li>
 <li>用户偏好</li>
 <li>输出格式要求</li>
 </ul>
@@ -1136,7 +1096,7 @@
 <p><code>max_tokens</code> 控制最大输出长度。</p>
 <p>在 Agent 中要避免两类问题：</p>
 <ul>
-<li>太小导致 JSON（JavaScript Object Notation，JS 对象表示法）、表格或代码被截断</li>
+<li>太小导致 JavaScript Object Notation（JSON，JS 对象表示法）、表格或代码被截断</li>
 <li>太大导致成本和延迟失控</li>
 </ul>
 <p><code>stop</code> 用来限制模型在特定位置停止输出。</p>
@@ -2687,18 +2647,14 @@
 </span><span class="lnt">4
 </span><span class="lnt">5
 </span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">总预算 = 模型上下文窗口 × 80%（留 20% 安全边际）
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">分配：
-</span></span><span class="line"><span class="cl">├── System Prompt（身份 + 约束 + 工具定义）：10-20%
-</span></span><span class="line"><span class="cl">├── 历史对话（关键上下文）：20-30%
-</span></span><span class="line"><span class="cl">├── 当前轮工具结果 / RAG 内容：30-40%
-</span></span><span class="line"><span class="cl">├── 用户当前输入：5-10%
-</span></span><span class="line"><span class="cl">└── 预留给模型输出：15-25%
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">pie title Token 预算分配建议（使用上下文窗口的 80%）
+</span></span><span class="line"><span class="cl">    &#34;System Prompt: 10-20%&#34; : 15
+</span></span><span class="line"><span class="cl">    &#34;历史对话: 20-30%&#34; : 25
+</span></span><span class="line"><span class="cl">    &#34;当前轮工具结果 / RAG 内容: 30-40%&#34; : 35
+</span></span><span class="line"><span class="cl">    &#34;用户当前输入: 5-10%&#34; : 7.5
+</span></span><span class="line"><span class="cl">    &#34;预留给模型输出: 15-25%&#34; : 17.5
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>实际项目中应该动态计算而不是硬编码比例：</p>
@@ -3034,6 +2990,34 @@
 </h2><p>Agent 中的缓存分为两个完全不同的层级：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[应用层缓存&lt;br/&gt;LangChain Cache / 自建缓存]
+</span></span><span class="line"><span class="cl">    A --&gt; A1[位置: 你的代码里]
+</span></span><span class="line"><span class="cl">    A --&gt; A2[相同输入: 跳过 API 调用并直接返回缓存结果]
+</span></span><span class="line"><span class="cl">    A --&gt; A3[节省: 整个 API 调用的费用和延迟]
+</span></span><span class="line"><span class="cl">    A -- 未命中 --&gt; B[Provider 层缓存&lt;br/&gt;Anthropic / OpenAI Prompt Caching]
+</span></span><span class="line"><span class="cl">    B --&gt; B1[位置: 模型厂商服务端]
+</span></span><span class="line"><span class="cl">    B --&gt; B2[相同前缀: 复用已计算的 KV Cache]
+</span></span><span class="line"><span class="cl">    B --&gt; B3[节省: 重复前缀的 token 处理费用]
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>两者可以同时使用，互不冲突。</p>
+<h2 id="123-应用层缓存langchain-cache">12.3 应用层缓存：LangChain Cache
+</h2><h3 id="原理">原理
+</h3><p>LangChain 内置了一套 LLM Cache 机制，在 <code>_generate_with_cache</code> 中实现。核心逻辑：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
 </span><span class="lnt"> 2
 </span><span class="lnt"> 3
@@ -3044,46 +3028,18 @@
 </span><span class="lnt"> 8
 </span><span class="lnt"> 9
 </span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">┌─────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│  应用层缓存（LangChain Cache / 自建缓存）             │
-</span></span><span class="line"><span class="cl">│  位置：你的代码里                                     │
-</span></span><span class="line"><span class="cl">│  原理：相同输入 → 跳过 API 调用 → 直接返回缓存结果     │
-</span></span><span class="line"><span class="cl">│  省的是：整个 API 调用的费用和延迟                     │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────┘
-</span></span><span class="line"><span class="cl">                        ↓ 如果未命中
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│  Provider 层缓存（Anthropic / OpenAI Prompt Caching） │
-</span></span><span class="line"><span class="cl">│  位置：模型厂商的服务端                               │
-</span></span><span class="line"><span class="cl">│  原理：相同前缀 → 复用已计算的 KV Cache（Key-Value Cache，键值缓存） → 省处理时间   │
-</span></span><span class="line"><span class="cl">│  省的是：重复前缀的 token 处理费用（不是跳过整个调用）  │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>两者可以同时使用，互不冲突。</p>
-<h2 id="123-应用层缓存langchain-cache">12.3 应用层缓存：LangChain Cache
-</h2><h3 id="原理">原理
-</h3><p>LangChain 内置了一套 LLM Cache 机制，在 <code>_generate_with_cache</code> 中实现。核心逻辑：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">invoke 调用进入
-</span></span><span class="line"><span class="cl">  → 检查是否启用缓存（self.cache != False）
-</span></span><span class="line"><span class="cl">  → 计算缓存 key：(prompt, llm_string)
-</span></span><span class="line"><span class="cl">  → 查询缓存：cache.lookup(prompt, llm_string)
-</span></span><span class="line"><span class="cl">  → 命中：直接返回缓存的 Generation
-</span></span><span class="line"><span class="cl">  → 未命中：调用 _generate() 请求 API → 存入缓存 → 返回结果
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[invoke 调用进入] --&gt; B{是否启用缓存&lt;br/&gt;self.cache != False}
+</span></span><span class="line"><span class="cl">    B -- 否 --&gt; F[调用 _generate 请求 API]
+</span></span><span class="line"><span class="cl">    B -- 是 --&gt; C[计算缓存 key: prompt + llm_string]
+</span></span><span class="line"><span class="cl">    C --&gt; D[查询缓存 cache.lookup]
+</span></span><span class="line"><span class="cl">    D --&gt; E{命中?}
+</span></span><span class="line"><span class="cl">    E -- 是 --&gt; G[直接返回缓存的 Generation]
+</span></span><span class="line"><span class="cl">    E -- 否 --&gt; F
+</span></span><span class="line"><span class="cl">    F --&gt; H[存入缓存]
+</span></span><span class="line"><span class="cl">    H --&gt; I[返回结果]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h3 id="缓存-key-如何计算">缓存 Key 如何计算
@@ -3861,32 +3817,22 @@
 <h3 id="语义缓存实现原理">语义缓存实现原理
 </h3><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户提问：”Agent 是什么东西？”
-</span></span><span class="line"><span class="cl">  │
-</span></span><span class="line"><span class="cl">  ├── 1. 用 Embedding 模型将问题转为向量
-</span></span><span class="line"><span class="cl">  │     → [0.12, -0.34, 0.56, ...]
-</span></span><span class="line"><span class="cl">  │
-</span></span><span class="line"><span class="cl">  ├── 2. 在向量数据库中搜索最相似的已缓存问题
-</span></span><span class="line"><span class="cl">  │     → 找到：”什么是 AI Agent？” 相似度 0.95
-</span></span><span class="line"><span class="cl">  │
-</span></span><span class="line"><span class="cl">  ├── 3. 判断相似度是否超过阈值（如 0.90）
-</span></span><span class="line"><span class="cl">  │     → 0.95 &gt; 0.90，命中
-</span></span><span class="line"><span class="cl">  │
-</span></span><span class="line"><span class="cl">  └── 4. 返回缓存的回答
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[用户提问: Agent 是什么东西?] --&gt; B[用 Embedding 模型转为向量]
+</span></span><span class="line"><span class="cl">    B --&gt; C[在向量数据库中搜索最相似的已缓存问题]
+</span></span><span class="line"><span class="cl">    C --&gt; D[找到: 什么是 AI Agent?&lt;br/&gt;相似度 0.95]
+</span></span><span class="line"><span class="cl">    D --&gt; E{是否超过阈值 0.90?}
+</span></span><span class="line"><span class="cl">    E -- 是 --&gt; F[返回缓存的回答]
+</span></span><span class="line"><span class="cl">    E -- 否 --&gt; G[调用模型生成新回答并写入缓存]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h3 id="langchain-语义缓存实现">LangChain 语义缓存实现
@@ -4145,26 +4091,28 @@
 </span><span class="lnt">16
 </span><span class="lnt">17
 </span><span class="lnt">18
+</span><span class="lnt">19
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Trace（一次完整任务）
-</span></span><span class="line"><span class="cl">├── Span: 意图识别
-</span></span><span class="line"><span class="cl">│   ├── input messages
-</span></span><span class="line"><span class="cl">│   ├── model: gpt-4.1-mini
-</span></span><span class="line"><span class="cl">│   ├── output: intent=query_order
-</span></span><span class="line"><span class="cl">│   ├── tokens: in=500, out=20
-</span></span><span class="line"><span class="cl">│   └── latency: 200ms
-</span></span><span class="line"><span class="cl">├── Span: 工具调用 - query_order
-</span></span><span class="line"><span class="cl">│   ├── args: {order_id: “A1024”}
-</span></span><span class="line"><span class="cl">│   ├── result: “已发货...”
-</span></span><span class="line"><span class="cl">│   └── latency: 150ms
-</span></span><span class="line"><span class="cl">├── Span: 最终回答生成
-</span></span><span class="line"><span class="cl">│   ├── input messages (含工具结果)
-</span></span><span class="line"><span class="cl">│   ├── model: gpt-4.1-mini
-</span></span><span class="line"><span class="cl">│   ├── output: “您的订单已发货...”
-</span></span><span class="line"><span class="cl">│   ├── tokens: in=800, out=50
-</span></span><span class="line"><span class="cl">│   └── latency: 300ms
-</span></span><span class="line"><span class="cl">└── Total: 650ms, 1370 tokens
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[Trace: 一次完整任务]
+</span></span><span class="line"><span class="cl">    A --&gt; B[Span: 意图识别]
+</span></span><span class="line"><span class="cl">    B --&gt; B1[input messages]
+</span></span><span class="line"><span class="cl">    B --&gt; B2[model: gpt-4.1-mini]
+</span></span><span class="line"><span class="cl">    B --&gt; B3[output: intent=query_order]
+</span></span><span class="line"><span class="cl">    B --&gt; B4[tokens: in=500, out=20]
+</span></span><span class="line"><span class="cl">    B --&gt; B5[latency: 200ms]
+</span></span><span class="line"><span class="cl">    A --&gt; C[Span: 工具调用 - query_order]
+</span></span><span class="line"><span class="cl">    C --&gt; C1[args: order_id=A1024]
+</span></span><span class="line"><span class="cl">    C --&gt; C2[result: 已发货]
+</span></span><span class="line"><span class="cl">    C --&gt; C3[latency: 150ms]
+</span></span><span class="line"><span class="cl">    A --&gt; D[Span: 最终回答生成]
+</span></span><span class="line"><span class="cl">    D --&gt; D1[input messages: 含工具结果]
+</span></span><span class="line"><span class="cl">    D --&gt; D2[model: gpt-4.1-mini]
+</span></span><span class="line"><span class="cl">    D --&gt; D3[output: 您的订单已发货]
+</span></span><span class="line"><span class="cl">    D --&gt; D4[tokens: in=800, out=50]
+</span></span><span class="line"><span class="cl">    D --&gt; D5[latency: 300ms]
+</span></span><span class="line"><span class="cl">    A --&gt; E[Total: 650ms, 1370 tokens]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h2 id="133-常用-tracing-工具">13.3 常用 Tracing 工具

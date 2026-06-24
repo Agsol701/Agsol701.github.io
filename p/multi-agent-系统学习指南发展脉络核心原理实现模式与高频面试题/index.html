@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 Multi-Agent 不是把多个 AI Agent 放在一起聊天这么简单。\n它真正解决的问题是：\n当一个任务太大、太长、太开放，单个 Agent 的上下文、工具、注意力和执行时间都不够用时，如何把任务拆成多个角色协作完成。\n所以 Multi-Agent 的核心不是&quot;多&quot;，而是分工、协作、调度和收敛。如果没有清晰的任务边界、通信协议、状态管理和停止条件，多个 Agent 很容易变成多个不稳定因素叠加。\n这篇文章按照&quot;发展脉络、基本原理、常见架构、工程实现、生产难点、面试题&quot;来整理 Multi-Agent 系统。读完后应该能回答三个问题：\n为什么需要 Multi-Agent，而不是一个更强的单 Agent？ Multi-Agent 系统通常怎么组织、怎么通信、怎么停止？ 真正落地时，应该优先控制哪些工程风险？ 文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、Agent、RAG、HITL、MCP、DAG、FSM、SOP、API、RPC、JSON 等。\n目录 Multi-Agent 到底是什么 发展脉络：从传统多智能体到 LLM Agent 协作 为什么需要 Multi-Agent 核心原理：分工、通信、状态与控制 常见架构模式 实现一个 Multi-Agent 系统 生产级工程问题 Multi-Agent 和相邻概念的区别 常见高频面试题 附录：进一步阅读 1. Multi-Agent 到底是什么 1.1 一句话定义 MAS（Multi-Agent System，多智能体系统） 可以理解为：\n多个具备独立角色、目标、工具或上下文的 Agent，通过某种协作机制共同完成一个任务的系统。\n这里的 Agent 通常由几部分组成：\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 Multi-Agent 不是把多个 AI Agent 放在一起聊天这么简单。\n它真正解决的问题是：\n当一个任务太大、太长、太开放，单个 Agent 的上下文、工具、注意力和执行时间都不够用时，如何把任务拆成多个角色协作完成。\n所以 Multi-Agent 的核心不是&quot;多&quot;，而是分工、协作、调度和收敛。如果没有清晰的任务边界、通信协议、状态管理和停止条件，多个 Agent 很容易变成多个不稳定因素叠加。\n这篇文章按照&quot;发展脉络、基本原理、常见架构、工程实现、生产难点、面试题&quot;来整理 Multi-Agent 系统。读完后应该能回答三个问题：\n为什么需要 Multi-Agent，而不是一个更强的单 Agent？ Multi-Agent 系统通常怎么组织、怎么通信、怎么停止？ 真正落地时，应该优先控制哪些工程风险？ 文中术语首次出现时给出全称和缩写，后续直接使用缩写。\n目录 Multi-Agent 到底是什么 发展脉络：从传统多智能体到 LLM Agent 协作 为什么需要 Multi-Agent 核心原理：分工、通信、状态与控制 常见架构模式 实现一个 Multi-Agent 系统 生产级工程问题 Multi-Agent 和相邻概念的区别 常见高频面试题 附录：进一步阅读 1. Multi-Agent 到底是什么 1.1 一句话定义 Multi-Agent System（MAS，多智能体系统） 可以理解为：\n多个具备独立角色、目标、工具或上下文的 Agent，通过某种协作机制共同完成一个任务的系统。\n这里的 Agent 通常由几部分组成：\n">
 <title>Multi-Agent 系统学习指南：发展脉络、核心原理、实现模式与高频面试题</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/multi-agent-%E7%B3%BB%E7%BB%9F%E5%AD%A6%E4%B9%A0%E6%8C%87%E5%8D%97%E5%8F%91%E5%B1%95%E8%84%89%E7%BB%9C%E6%A0%B8%E5%BF%83%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="Multi-Agent 系统学习指南：发展脉络、核心原理、实现模式与高频面试题">
-<meta property='og:description' content="写在前面 Multi-Agent 不是把多个 AI Agent 放在一起聊天这么简单。\n它真正解决的问题是：\n当一个任务太大、太长、太开放，单个 Agent 的上下文、工具、注意力和执行时间都不够用时，如何把任务拆成多个角色协作完成。\n所以 Multi-Agent 的核心不是&quot;多&quot;，而是分工、协作、调度和收敛。如果没有清晰的任务边界、通信协议、状态管理和停止条件，多个 Agent 很容易变成多个不稳定因素叠加。\n这篇文章按照&quot;发展脉络、基本原理、常见架构、工程实现、生产难点、面试题&quot;来整理 Multi-Agent 系统。读完后应该能回答三个问题：\n为什么需要 Multi-Agent，而不是一个更强的单 Agent？ Multi-Agent 系统通常怎么组织、怎么通信、怎么停止？ 真正落地时，应该优先控制哪些工程风险？ 文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、Agent、RAG、HITL、MCP、DAG、FSM、SOP、API、RPC、JSON 等。\n目录 Multi-Agent 到底是什么 发展脉络：从传统多智能体到 LLM Agent 协作 为什么需要 Multi-Agent 核心原理：分工、通信、状态与控制 常见架构模式 实现一个 Multi-Agent 系统 生产级工程问题 Multi-Agent 和相邻概念的区别 常见高频面试题 附录：进一步阅读 1. Multi-Agent 到底是什么 1.1 一句话定义 MAS（Multi-Agent System，多智能体系统） 可以理解为：\n多个具备独立角色、目标、工具或上下文的 Agent，通过某种协作机制共同完成一个任务的系统。\n这里的 Agent 通常由几部分组成：\n">
+<meta property='og:description' content="写在前面 Multi-Agent 不是把多个 AI Agent 放在一起聊天这么简单。\n它真正解决的问题是：\n当一个任务太大、太长、太开放，单个 Agent 的上下文、工具、注意力和执行时间都不够用时，如何把任务拆成多个角色协作完成。\n所以 Multi-Agent 的核心不是&quot;多&quot;，而是分工、协作、调度和收敛。如果没有清晰的任务边界、通信协议、状态管理和停止条件，多个 Agent 很容易变成多个不稳定因素叠加。\n这篇文章按照&quot;发展脉络、基本原理、常见架构、工程实现、生产难点、面试题&quot;来整理 Multi-Agent 系统。读完后应该能回答三个问题：\n为什么需要 Multi-Agent，而不是一个更强的单 Agent？ Multi-Agent 系统通常怎么组织、怎么通信、怎么停止？ 真正落地时，应该优先控制哪些工程风险？ 文中术语首次出现时给出全称和缩写，后续直接使用缩写。\n目录 Multi-Agent 到底是什么 发展脉络：从传统多智能体到 LLM Agent 协作 为什么需要 Multi-Agent 核心原理：分工、通信、状态与控制 常见架构模式 实现一个 Multi-Agent 系统 生产级工程问题 Multi-Agent 和相邻概念的区别 常见高频面试题 附录：进一步阅读 1. Multi-Agent 到底是什么 1.1 一句话定义 Multi-Agent System（MAS，多智能体系统） 可以理解为：\n多个具备独立角色、目标、工具或上下文的 Agent，通过某种协作机制共同完成一个任务的系统。\n这里的 Agent 通常由几部分组成：\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/multi-agent-%E7%B3%BB%E7%BB%9F%E5%AD%A6%E4%B9%A0%E6%8C%87%E5%8D%97%E5%8F%91%E5%B1%95%E8%84%89%E7%BB%9C%E6%A0%B8%E5%BF%83%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='multi-agent' /><meta property='article:tag' content='llm' /><meta property='article:published_time' content='2026-06-13T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-06-13T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="Multi-Agent 系统学习指南：发展脉络、核心原理、实现模式与高频面试题">
-<meta name="twitter:description" content="写在前面 Multi-Agent 不是把多个 AI Agent 放在一起聊天这么简单。\n它真正解决的问题是：\n当一个任务太大、太长、太开放，单个 Agent 的上下文、工具、注意力和执行时间都不够用时，如何把任务拆成多个角色协作完成。\n所以 Multi-Agent 的核心不是&quot;多&quot;，而是分工、协作、调度和收敛。如果没有清晰的任务边界、通信协议、状态管理和停止条件，多个 Agent 很容易变成多个不稳定因素叠加。\n这篇文章按照&quot;发展脉络、基本原理、常见架构、工程实现、生产难点、面试题&quot;来整理 Multi-Agent 系统。读完后应该能回答三个问题：\n为什么需要 Multi-Agent，而不是一个更强的单 Agent？ Multi-Agent 系统通常怎么组织、怎么通信、怎么停止？ 真正落地时，应该优先控制哪些工程风险？ 文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、Agent、RAG、HITL、MCP、DAG、FSM、SOP、API、RPC、JSON 等。\n目录 Multi-Agent 到底是什么 发展脉络：从传统多智能体到 LLM Agent 协作 为什么需要 Multi-Agent 核心原理：分工、通信、状态与控制 常见架构模式 实现一个 Multi-Agent 系统 生产级工程问题 Multi-Agent 和相邻概念的区别 常见高频面试题 附录：进一步阅读 1. Multi-Agent 到底是什么 1.1 一句话定义 MAS（Multi-Agent System，多智能体系统） 可以理解为：\n多个具备独立角色、目标、工具或上下文的 Agent，通过某种协作机制共同完成一个任务的系统。\n这里的 Agent 通常由几部分组成：\n">
+<meta name="twitter:description" content="写在前面 Multi-Agent 不是把多个 AI Agent 放在一起聊天这么简单。\n它真正解决的问题是：\n当一个任务太大、太长、太开放，单个 Agent 的上下文、工具、注意力和执行时间都不够用时，如何把任务拆成多个角色协作完成。\n所以 Multi-Agent 的核心不是&quot;多&quot;，而是分工、协作、调度和收敛。如果没有清晰的任务边界、通信协议、状态管理和停止条件，多个 Agent 很容易变成多个不稳定因素叠加。\n这篇文章按照&quot;发展脉络、基本原理、常见架构、工程实现、生产难点、面试题&quot;来整理 Multi-Agent 系统。读完后应该能回答三个问题：\n为什么需要 Multi-Agent，而不是一个更强的单 Agent？ Multi-Agent 系统通常怎么组织、怎么通信、怎么停止？ 真正落地时，应该优先控制哪些工程风险？ 文中术语首次出现时给出全称和缩写，后续直接使用缩写。\n目录 Multi-Agent 到底是什么 发展脉络：从传统多智能体到 LLM Agent 协作 为什么需要 Multi-Agent 核心原理：分工、通信、状态与控制 常见架构模式 实现一个 Multi-Agent 系统 生产级工程问题 Multi-Agent 和相邻概念的区别 常见高频面试题 附录：进一步阅读 1. Multi-Agent 到底是什么 1.1 一句话定义 Multi-Agent System（MAS，多智能体系统） 可以理解为：\n多个具备独立角色、目标、工具或上下文的 Agent，通过某种协作机制共同完成一个任务的系统。\n这里的 Agent 通常由几部分组成：\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -418,7 +418,7 @@
 <li>真正落地时，应该优先控制哪些工程风险？</li>
 </ul>
 <blockquote>
-<p>文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、Agent、RAG、HITL、MCP、DAG、FSM、SOP、API、RPC、JSON 等。</p></blockquote>
+<p>文中术语首次出现时给出全称和缩写，后续直接使用缩写。</p></blockquote>
 <h2 id="目录">目录
 </h2><ol>
 <li><a class="link" href="#1-multi-agent-%e5%88%b0%e5%ba%95%e6%98%af%e4%bb%80%e4%b9%88" >Multi-Agent 到底是什么</a></li>
@@ -435,12 +435,12 @@
 <hr>
 <h2 id="1-multi-agent-到底是什么">1. Multi-Agent 到底是什么
 </h2><h3 id="11-一句话定义">1.1 一句话定义
-</h3><p><code>MAS（Multi-Agent System，多智能体系统）</code> 可以理解为：</p>
+</h3><p><code>Multi-Agent System（MAS，多智能体系统）</code> 可以理解为：</p>
 <blockquote>
 <p>多个具备独立角色、目标、工具或上下文的 Agent，通过某种协作机制共同完成一个任务的系统。</p></blockquote>
 <p>这里的 Agent 通常由几部分组成：</p>
 <ul>
-<li>LLM（Large Language Model，大语言模型）</li>
+<li>Large Language Model（LLM，大语言模型）</li>
 <li>Prompt 或 system instructions</li>
 <li>Tools</li>
 <li>Memory</li>
@@ -453,30 +453,20 @@
 </h3><p>Multi-Agent 的本质是把复杂任务拆成多个局部问题：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户目标
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">任务分解
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">分配给多个 Agent
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">各自执行、调用工具、产出中间结果
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">汇总、验证、冲突解决
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">生成最终答案或执行最终动作
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[用户目标] --&gt; B[任务分解]
+</span></span><span class="line"><span class="cl">    B --&gt; C[分配给多个 Agent]
+</span></span><span class="line"><span class="cl">    C --&gt; D[各自执行、调用工具、产出中间结果]
+</span></span><span class="line"><span class="cl">    D --&gt; E[汇总、验证、冲突解决]
+</span></span><span class="line"><span class="cl">    E --&gt; F[生成最终答案或执行最终动作]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>它解决的是&quot;单个 Agent 处理不过来&quot;的问题，而不是&quot;让系统看起来更智能&quot;的问题。</p>
@@ -535,7 +525,7 @@
 <hr>
 <h2 id="2-发展脉络从传统多智能体到-llm-agent-协作">2. 发展脉络：从传统多智能体到 LLM Agent 协作
 </h2><h3 id="21-传统-multi-agent-system">2.1 传统 Multi-Agent System
-</h3><p><code>MAS</code>（Multi-Agent System，多智能体系统）不是大模型时代才出现的概念。</p>
+</h3><p>MAS 不是大模型时代才出现的概念。</p>
 <p>传统 MAS 研究的是多个自治实体如何在环境中协作、竞争、通信和决策，例如：</p>
 <ul>
 <li>机器人集群协作</li>
@@ -620,7 +610,7 @@
       </tr>
   </tbody>
 </table></div>
-<p>AutoGen 的 team、CrewAI 的 crew、OpenAI Agents SDK（Software Development Kit，软件开发工具包）的 handoff、Stanford OVAL 的 STORM、GPT Researcher、Anthropic Research 的 orchestrator-worker 模式，都是这些思想的具体实现。</p>
+<p>AutoGen 的 team、CrewAI 的 crew、OpenAI Agents Software Development Kit（SDK，软件开发工具包）的 handoff、Stanford OVAL 的 STORM、GPT Researcher、Anthropic Research 的 orchestrator-worker 模式，都是这些思想的具体实现。</p>
 <hr>
 <h2 id="3-为什么需要-multi-agent">3. 为什么需要 Multi-Agent
 </h2><h3 id="31-任务可以并行">3.1 任务可以并行
@@ -682,13 +672,17 @@
 </span><span class="lnt">3
 </span><span class="lnt">4
 </span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">原始材料 A -&gt; Agent A -&gt; 摘要 A
-</span></span><span class="line"><span class="cl">原始材料 B -&gt; Agent B -&gt; 摘要 B
-</span></span><span class="line"><span class="cl">原始材料 C -&gt; Agent C -&gt; 摘要 C
-</span></span><span class="line"><span class="cl">                      ↓
-</span></span><span class="line"><span class="cl">                 Lead Agent 汇总
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart LR
+</span></span><span class="line"><span class="cl">    A[原始材料 A] --&gt; B[Agent A] --&gt; C[摘要 A]
+</span></span><span class="line"><span class="cl">    D[原始材料 B] --&gt; E[Agent B] --&gt; F[摘要 B]
+</span></span><span class="line"><span class="cl">    G[原始材料 C] --&gt; H[Agent C] --&gt; I[摘要 C]
+</span></span><span class="line"><span class="cl">    C --&gt; J[Lead Agent 汇总]
+</span></span><span class="line"><span class="cl">    F --&gt; J
+</span></span><span class="line"><span class="cl">    I --&gt; J
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>这种模式的本质是<strong>分布式上下文压缩</strong>。</p>
@@ -1700,7 +1694,7 @@
 <li>达到最大 token 或预算</li>
 <li>连续失败超过阈值</li>
 <li>需要用户补充信息</li>
-<li>命中高风险操作，需要 HITL（Human-in-the-Loop，人在回路）</li>
+<li>命中高风险操作，需要 Human-in-the-Loop（HITL，人在回路）</li>
 </ul>
 <p>停止条件是系统设计，不应该完全交给模型自由判断。</p>
 <hr>
@@ -1709,28 +1703,26 @@
 </h3><p>这是最常见、也最容易工程化的模式。</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户请求
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">Orchestrator Agent
-</span></span><span class="line"><span class="cl">  ├── Worker Agent A
-</span></span><span class="line"><span class="cl">  ├── Worker Agent B
-</span></span><span class="line"><span class="cl">  ├── Worker Agent C
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">Synthesizer / Reviewer
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">最终输出
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[用户请求] --&gt; B[Orchestrator Agent]
+</span></span><span class="line"><span class="cl">    B --&gt; C[Worker Agent A]
+</span></span><span class="line"><span class="cl">    B --&gt; D[Worker Agent B]
+</span></span><span class="line"><span class="cl">    B --&gt; E[Worker Agent C]
+</span></span><span class="line"><span class="cl">    C --&gt; F[Synthesizer / Reviewer]
+</span></span><span class="line"><span class="cl">    D --&gt; F
+</span></span><span class="line"><span class="cl">    E --&gt; F
+</span></span><span class="line"><span class="cl">    F --&gt; G[最终输出]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>Orchestrator 负责：</p>
@@ -1779,11 +1771,19 @@
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
 </span><span class="lnt">2
 </span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">共享状态 / 文件 / 数据库
-</span></span><span class="line"><span class="cl">  ↑        ↑        ↑
-</span></span><span class="line"><span class="cl">Agent A  Agent B  Agent C
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[Agent A] --&gt; D[共享状态 / 文件 / 数据库]
+</span></span><span class="line"><span class="cl">    B[Agent B] --&gt; D
+</span></span><span class="line"><span class="cl">    C[Agent C] --&gt; D
+</span></span><span class="line"><span class="cl">    D --&gt; A
+</span></span><span class="line"><span class="cl">    D --&gt; B
+</span></span><span class="line"><span class="cl">    D --&gt; C
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>它适合需要沉淀中间产物的场景，例如：</p>
@@ -1803,13 +1803,17 @@
 </span><span class="lnt">3
 </span><span class="lnt">4
 </span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">plan -&gt; dispatch -&gt; wait_workers -&gt; review
-</span></span><span class="line"><span class="cl">                         ↑             ↓
-</span></span><span class="line"><span class="cl">                         └── retry &lt;- failed?
-</span></span><span class="line"><span class="cl">                                       ↓
-</span></span><span class="line"><span class="cl">                                     final
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart LR
+</span></span><span class="line"><span class="cl">    A[plan] --&gt; B[dispatch]
+</span></span><span class="line"><span class="cl">    B --&gt; C[wait_workers]
+</span></span><span class="line"><span class="cl">    C --&gt; D[review]
+</span></span><span class="line"><span class="cl">    D --&gt; E{failed?}
+</span></span><span class="line"><span class="cl">    E -- yes: retry --&gt; C
+</span></span><span class="line"><span class="cl">    E -- no --&gt; F[final]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>这种模式适合生产系统，因为它具备：</p>
@@ -1828,18 +1832,22 @@
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">plan -&gt; research -&gt; summarize -&gt; write -&gt; review -&gt; publish
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart LR
+</span></span><span class="line"><span class="cl">    A[plan] --&gt; B[research] --&gt; C[summarize] --&gt; D[write] --&gt; E[review] --&gt; F[publish]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>或者在代码任务里：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">plan -&gt; code -&gt; test -&gt; debug -&gt; review -&gt; final
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart LR
+</span></span><span class="line"><span class="cl">    A[plan] --&gt; B[code] --&gt; C[test] --&gt; D[debug] --&gt; E[review] --&gt; F[final]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>Pipeline 的优点是稳定、便于测试、便于观测。</p>
@@ -1855,10 +1863,10 @@
 </span><span class="lnt">4
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Agent A 给方案
-</span></span><span class="line"><span class="cl">Agent B 挑问题
-</span></span><span class="line"><span class="cl">Agent C 给替代方案
-</span></span><span class="line"><span class="cl">Judge 汇总并选择
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[Agent A 给方案] --&gt; D[Judge 汇总并选择]
+</span></span><span class="line"><span class="cl">    B[Agent B 挑问题] --&gt; D
+</span></span><span class="line"><span class="cl">    C[Agent C 给替代方案] --&gt; D
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>它适合：</p>
@@ -1879,10 +1887,10 @@
 </span><span class="lnt">4
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Actor 生成初稿
-</span></span><span class="line"><span class="cl">Reflector 找问题
-</span></span><span class="line"><span class="cl">Actor 修正
-</span></span><span class="line"><span class="cl">Reflector 再检查
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart LR
+</span></span><span class="line"><span class="cl">    A[Actor 生成初稿] --&gt; B[Reflector 找问题]
+</span></span><span class="line"><span class="cl">    B --&gt; C[Actor 修正]
+</span></span><span class="line"><span class="cl">    C --&gt; D[Reflector 再检查]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>这类模式常用于写作、代码生成、SQL 生成、报告生成。</p>
@@ -1913,12 +1921,20 @@
 </span><span class="lnt">2
 </span><span class="lnt">3
 </span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">目标
-</span></span><span class="line"><span class="cl">  ├── 路径 A -&gt; 评估
-</span></span><span class="line"><span class="cl">  ├── 路径 B -&gt; 评估
-</span></span><span class="line"><span class="cl">  └── 路径 C -&gt; 评估
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[目标]
+</span></span><span class="line"><span class="cl">    A --&gt; B[路径 A]
+</span></span><span class="line"><span class="cl">    A --&gt; C[路径 B]
+</span></span><span class="line"><span class="cl">    A --&gt; D[路径 C]
+</span></span><span class="line"><span class="cl">    B --&gt; E[评估]
+</span></span><span class="line"><span class="cl">    C --&gt; E
+</span></span><span class="line"><span class="cl">    D --&gt; E
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>它适合开放式问题，例如算法设计、复杂规划、研究选题、代码修复路径探索。</p>
@@ -1939,30 +1955,20 @@
 </h4><p>你提到的 <code>multiagentcoder</code>，如果指的是代码生成类的多 Agent 实现，它通常不是一个单一固定架构名，而是一类模式：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">需求
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">Planner Agent：拆任务、定方案
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">Coder Agent：修改代码
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">Tester Agent：运行测试、收集失败
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">Debugger Agent：根据错误修复
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">Reviewer Agent：检查质量和风险
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[需求] --&gt; B[Planner Agent: 拆任务、定方案]
+</span></span><span class="line"><span class="cl">    B --&gt; C[Coder Agent: 修改代码]
+</span></span><span class="line"><span class="cl">    C --&gt; D[Tester Agent: 运行测试、收集失败]
+</span></span><span class="line"><span class="cl">    D --&gt; E[Debugger Agent: 根据错误修复]
+</span></span><span class="line"><span class="cl">    E --&gt; F[Reviewer Agent: 检查质量和风险]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>这类系统的核心启发是：代码任务不能只靠&quot;生成&quot;，必须引入<strong>执行反馈</strong>。</p>
@@ -1997,16 +2003,16 @@
 </span><span class="lnt">10
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pre-writing
-</span></span><span class="line"><span class="cl">  ├── 检索资料
-</span></span><span class="line"><span class="cl">  ├── 生成多视角问题
-</span></span><span class="line"><span class="cl">  ├── 模拟 writer 和 expert 的对话
-</span></span><span class="line"><span class="cl">  └── 生成大纲
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">Writing
-</span></span><span class="line"><span class="cl">  ├── 基于大纲和资料写文章
-</span></span><span class="line"><span class="cl">  ├── 加引用
-</span></span><span class="line"><span class="cl">  └── polish
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[Pre-writing]
+</span></span><span class="line"><span class="cl">    A --&gt; A1[检索资料]
+</span></span><span class="line"><span class="cl">    A --&gt; A2[生成多视角问题]
+</span></span><span class="line"><span class="cl">    A --&gt; A3[模拟 writer 和 expert 的对话]
+</span></span><span class="line"><span class="cl">    A --&gt; A4[生成大纲]
+</span></span><span class="line"><span class="cl">    A4 --&gt; B[Writing]
+</span></span><span class="line"><span class="cl">    B --&gt; B1[基于大纲和资料写文章]
+</span></span><span class="line"><span class="cl">    B --&gt; B2[加引用]
+</span></span><span class="line"><span class="cl">    B --&gt; B3[polish]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>STORM 对 Multi-Agent 的启发主要有三点。</p>
@@ -2038,30 +2044,20 @@
 <p>它的 README 描述了一条很典型的研究链路：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">根据研究问题创建 task-specific agent
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">生成一组问题
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">crawler agent 为每个问题收集资料
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">摘要并追踪来源
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">过滤和聚合摘要
-</span></span><span class="line"><span class="cl">  ↓
-</span></span><span class="line"><span class="cl">生成最终研究报告
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[根据研究问题创建 task-specific agent] --&gt; B[生成一组问题]
+</span></span><span class="line"><span class="cl">    B --&gt; C[crawler agent 为每个问题收集资料]
+</span></span><span class="line"><span class="cl">    C --&gt; D[摘要并追踪来源]
+</span></span><span class="line"><span class="cl">    D --&gt; E[过滤和聚合摘要]
+</span></span><span class="line"><span class="cl">    E --&gt; F[生成最终研究报告]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>GPT Researcher 对 Multi-Agent 的启发是：研究任务要把&quot;搜、读、摘、筛、写&quot;分开。</p>
@@ -2404,15 +2400,17 @@
 </span><span class="lnt">5
 </span><span class="lnt">6
 </span><span class="lnt">7
+</span><span class="lnt">8
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">run_id
-</span></span><span class="line"><span class="cl">  ├── planner_span
-</span></span><span class="line"><span class="cl">  ├── worker_span_A
-</span></span><span class="line"><span class="cl">  ├── worker_span_B
-</span></span><span class="line"><span class="cl">  ├── worker_span_C
-</span></span><span class="line"><span class="cl">  ├── reviewer_span
-</span></span><span class="line"><span class="cl">  └── writer_span
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[run_id]
+</span></span><span class="line"><span class="cl">    A --&gt; B[planner_span]
+</span></span><span class="line"><span class="cl">    A --&gt; C[worker_span_A]
+</span></span><span class="line"><span class="cl">    A --&gt; D[worker_span_B]
+</span></span><span class="line"><span class="cl">    A --&gt; E[worker_span_C]
+</span></span><span class="line"><span class="cl">    A --&gt; F[reviewer_span]
+</span></span><span class="line"><span class="cl">    A --&gt; G[writer_span]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>没有 trace 的 Multi-Agent 很难排查问题。</p>
@@ -2589,7 +2587,7 @@
 </div>
 </div><p>在生产系统里，常见做法是用 Workflow 包住 Multi-Agent，而不是让一组 Agent 完全自由聊天。</p>
 <h3 id="84-multi-agent-vs-mcp">8.4 Multi-Agent vs MCP
-</h3><p><code>MCP</code>（Model Context Protocol，模型上下文协议）解决的是模型宿主程序如何标准化连接工具和上下文。</p>
+</h3><p>Model Context Protocol（MCP，模型上下文协议）解决的是模型宿主程序如何标准化连接工具和上下文。</p>
 <p>Multi-Agent 可以使用 MCP 暴露工具，但 MCP 本身不是 Multi-Agent。</p>
 <p>关系可以这样理解：</p>
 <div class="highlight"><div class="chroma">

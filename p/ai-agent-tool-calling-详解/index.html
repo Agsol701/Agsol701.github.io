@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 Tool Calling 是 Agent 从&quot;会说话&quot;变成&quot;能做事&quot;的关键。没有工具，模型只能生成文本；有了工具，Agent 才能查询数据库、检索知识库、调用业务系统。\n本文以 Tool Calling 机制为主线，结合 LangChain 1.0+ 源码进行工程实践分析，帮助你理解从工具定义到执行闭环的完整链路。\n一、Tool Calling 核心概念 1.1 基本定义 模型根据当前任务，选择一个工具，并生成该工具需要的结构化参数，由程序执行工具后再把结果返回给模型。\n核心要点：\n模型负责决策：选择哪个工具、生成什么参数 程序负责执行：校验参数、调用工具、返回结果 模型不直接执行任何操作：它只输出结构化的&quot;调用意图&quot; 1.2 两种实现范式 范式指的是模型如何传递工具调用意图——LLM 如何告诉程序&quot;我要调用哪个工具&quot;。\n范式 代表 本质 优缺点 Prompt-based 早期 LangChain Agent 模型输出文本，程序解析文本 兼容任何模型，但格式不稳定，容易解析失败 Native Function Calling OpenAI/Claude/Gemini API 模型输出结构化数据，程序直接读取 格式稳定、可并行调用多工具，是当前主流方案 注意：这里说的是通信机制，不是思维框架。 ReAct（Reasoning + Acting）是一种思维框架——让模型交替&quot;思考→行动→观察&quot;循环推理。 ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling 实现，两者不是同一维度：\n1 2 3 ReAct（思维框架：Thought → Action → Observation 循环） ├── 早期实现：Prompt-based（输出文本，正则解析） └── 现代实现：Native Function Calling（输出结构化 tool_calls） Prompt-based：靠&quot;约定格式&quot; 在 Prompt 里告诉模型&quot;请按这个格式输出&quot;，模型输出普通文本，程序用正则解析：\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 Tool Calling 是 Agent 从&quot;会说话&quot;变成&quot;能做事&quot;的关键。没有工具，模型只能生成文本；有了工具，Agent 才能查询数据库、检索知识库、调用业务系统。\n本文以 Tool Calling 机制为主线，结合 LangChain 1.0+ 源码进行工程实践分析，帮助你理解从工具定义到执行闭环的完整链路。\n一、Tool Calling 核心概念 1.1 基本定义 模型根据当前任务，选择一个工具，并生成该工具需要的结构化参数，由程序执行工具后再把结果返回给模型。\n核心要点：\n模型负责决策：选择哪个工具、生成什么参数 程序负责执行：校验参数、调用工具、返回结果 模型不直接执行任何操作：它只输出结构化的&quot;调用意图&quot; 1.2 两种实现范式 范式指的是模型如何传递工具调用意图——Large Language Model（LLM，大语言模型）如何告诉程序&quot;我要调用哪个工具&quot;。\n范式 代表 本质 优缺点 Prompt-based 早期 LangChain Agent 模型输出文本，程序解析文本 兼容任何模型，但格式不稳定，容易解析失败 Native Function Calling OpenAI/Claude/Gemini Application Programming Interface（API，应用程序编程接口） 模型输出结构化数据，程序直接读取 格式稳定、可并行调用多工具，是当前主流方案 注意：这里说的是通信机制，不是思维框架。 ReAct（Reasoning + Acting）是一种思维框架——让模型交替&quot;思考→行动→观察&quot;循环推理。 ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling 实现，两者不是同一维度：\n1 2 3 ReAct（思维框架：Thought → Action → Observation 循环） ├── 早期实现：Prompt-based（输出文本，正则解析） └── 现代实现：Native Function Calling（输出结构化 tool_calls） Prompt-based：靠&quot;约定格式&quot; 在 Prompt 里告诉模型&quot;请按这个格式输出&quot;，模型输出普通文本，程序用正则解析：\n">
 <title>AI Agent Tool Calling 详解</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/ai-agent-tool-calling-%E8%AF%A6%E8%A7%A3/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="AI Agent Tool Calling 详解">
-<meta property='og:description' content="写在前面 Tool Calling 是 Agent 从&quot;会说话&quot;变成&quot;能做事&quot;的关键。没有工具，模型只能生成文本；有了工具，Agent 才能查询数据库、检索知识库、调用业务系统。\n本文以 Tool Calling 机制为主线，结合 LangChain 1.0+ 源码进行工程实践分析，帮助你理解从工具定义到执行闭环的完整链路。\n一、Tool Calling 核心概念 1.1 基本定义 模型根据当前任务，选择一个工具，并生成该工具需要的结构化参数，由程序执行工具后再把结果返回给模型。\n核心要点：\n模型负责决策：选择哪个工具、生成什么参数 程序负责执行：校验参数、调用工具、返回结果 模型不直接执行任何操作：它只输出结构化的&quot;调用意图&quot; 1.2 两种实现范式 范式指的是模型如何传递工具调用意图——LLM 如何告诉程序&quot;我要调用哪个工具&quot;。\n范式 代表 本质 优缺点 Prompt-based 早期 LangChain Agent 模型输出文本，程序解析文本 兼容任何模型，但格式不稳定，容易解析失败 Native Function Calling OpenAI/Claude/Gemini API 模型输出结构化数据，程序直接读取 格式稳定、可并行调用多工具，是当前主流方案 注意：这里说的是通信机制，不是思维框架。 ReAct（Reasoning + Acting）是一种思维框架——让模型交替&quot;思考→行动→观察&quot;循环推理。 ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling 实现，两者不是同一维度：\n1 2 3 ReAct（思维框架：Thought → Action → Observation 循环） ├── 早期实现：Prompt-based（输出文本，正则解析） └── 现代实现：Native Function Calling（输出结构化 tool_calls） Prompt-based：靠&quot;约定格式&quot; 在 Prompt 里告诉模型&quot;请按这个格式输出&quot;，模型输出普通文本，程序用正则解析：\n">
+<meta property='og:description' content="写在前面 Tool Calling 是 Agent 从&quot;会说话&quot;变成&quot;能做事&quot;的关键。没有工具，模型只能生成文本；有了工具，Agent 才能查询数据库、检索知识库、调用业务系统。\n本文以 Tool Calling 机制为主线，结合 LangChain 1.0+ 源码进行工程实践分析，帮助你理解从工具定义到执行闭环的完整链路。\n一、Tool Calling 核心概念 1.1 基本定义 模型根据当前任务，选择一个工具，并生成该工具需要的结构化参数，由程序执行工具后再把结果返回给模型。\n核心要点：\n模型负责决策：选择哪个工具、生成什么参数 程序负责执行：校验参数、调用工具、返回结果 模型不直接执行任何操作：它只输出结构化的&quot;调用意图&quot; 1.2 两种实现范式 范式指的是模型如何传递工具调用意图——Large Language Model（LLM，大语言模型）如何告诉程序&quot;我要调用哪个工具&quot;。\n范式 代表 本质 优缺点 Prompt-based 早期 LangChain Agent 模型输出文本，程序解析文本 兼容任何模型，但格式不稳定，容易解析失败 Native Function Calling OpenAI/Claude/Gemini Application Programming Interface（API，应用程序编程接口） 模型输出结构化数据，程序直接读取 格式稳定、可并行调用多工具，是当前主流方案 注意：这里说的是通信机制，不是思维框架。 ReAct（Reasoning + Acting）是一种思维框架——让模型交替&quot;思考→行动→观察&quot;循环推理。 ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling 实现，两者不是同一维度：\n1 2 3 ReAct（思维框架：Thought → Action → Observation 循环） ├── 早期实现：Prompt-based（输出文本，正则解析） └── 现代实现：Native Function Calling（输出结构化 tool_calls） Prompt-based：靠&quot;约定格式&quot; 在 Prompt 里告诉模型&quot;请按这个格式输出&quot;，模型输出普通文本，程序用正则解析：\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/ai-agent-tool-calling-%E8%AF%A6%E8%A7%A3/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='tool-calling' /><meta property='article:tag' content='langchain' /><meta property='article:published_time' content='2026-05-18T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-18T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="AI Agent Tool Calling 详解">
-<meta name="twitter:description" content="写在前面 Tool Calling 是 Agent 从&quot;会说话&quot;变成&quot;能做事&quot;的关键。没有工具，模型只能生成文本；有了工具，Agent 才能查询数据库、检索知识库、调用业务系统。\n本文以 Tool Calling 机制为主线，结合 LangChain 1.0+ 源码进行工程实践分析，帮助你理解从工具定义到执行闭环的完整链路。\n一、Tool Calling 核心概念 1.1 基本定义 模型根据当前任务，选择一个工具，并生成该工具需要的结构化参数，由程序执行工具后再把结果返回给模型。\n核心要点：\n模型负责决策：选择哪个工具、生成什么参数 程序负责执行：校验参数、调用工具、返回结果 模型不直接执行任何操作：它只输出结构化的&quot;调用意图&quot; 1.2 两种实现范式 范式指的是模型如何传递工具调用意图——LLM 如何告诉程序&quot;我要调用哪个工具&quot;。\n范式 代表 本质 优缺点 Prompt-based 早期 LangChain Agent 模型输出文本，程序解析文本 兼容任何模型，但格式不稳定，容易解析失败 Native Function Calling OpenAI/Claude/Gemini API 模型输出结构化数据，程序直接读取 格式稳定、可并行调用多工具，是当前主流方案 注意：这里说的是通信机制，不是思维框架。 ReAct（Reasoning + Acting）是一种思维框架——让模型交替&quot;思考→行动→观察&quot;循环推理。 ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling 实现，两者不是同一维度：\n1 2 3 ReAct（思维框架：Thought → Action → Observation 循环） ├── 早期实现：Prompt-based（输出文本，正则解析） └── 现代实现：Native Function Calling（输出结构化 tool_calls） Prompt-based：靠&quot;约定格式&quot; 在 Prompt 里告诉模型&quot;请按这个格式输出&quot;，模型输出普通文本，程序用正则解析：\n">
+<meta name="twitter:description" content="写在前面 Tool Calling 是 Agent 从&quot;会说话&quot;变成&quot;能做事&quot;的关键。没有工具，模型只能生成文本；有了工具，Agent 才能查询数据库、检索知识库、调用业务系统。\n本文以 Tool Calling 机制为主线，结合 LangChain 1.0+ 源码进行工程实践分析，帮助你理解从工具定义到执行闭环的完整链路。\n一、Tool Calling 核心概念 1.1 基本定义 模型根据当前任务，选择一个工具，并生成该工具需要的结构化参数，由程序执行工具后再把结果返回给模型。\n核心要点：\n模型负责决策：选择哪个工具、生成什么参数 程序负责执行：校验参数、调用工具、返回结果 模型不直接执行任何操作：它只输出结构化的&quot;调用意图&quot; 1.2 两种实现范式 范式指的是模型如何传递工具调用意图——Large Language Model（LLM，大语言模型）如何告诉程序&quot;我要调用哪个工具&quot;。\n范式 代表 本质 优缺点 Prompt-based 早期 LangChain Agent 模型输出文本，程序解析文本 兼容任何模型，但格式不稳定，容易解析失败 Native Function Calling OpenAI/Claude/Gemini Application Programming Interface（API，应用程序编程接口） 模型输出结构化数据，程序直接读取 格式稳定、可并行调用多工具，是当前主流方案 注意：这里说的是通信机制，不是思维框架。 ReAct（Reasoning + Acting）是一种思维框架——让模型交替&quot;思考→行动→观察&quot;循环推理。 ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling 实现，两者不是同一维度：\n1 2 3 ReAct（思维框架：Thought → Action → Observation 循环） ├── 早期实现：Prompt-based（输出文本，正则解析） └── 现代实现：Native Function Calling（输出结构化 tool_calls） Prompt-based：靠&quot;约定格式&quot; 在 Prompt 里告诉模型&quot;请按这个格式输出&quot;，模型输出普通文本，程序用正则解析：\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -388,7 +388,7 @@
 <li><strong>模型不直接执行任何操作</strong>：它只输出结构化的&quot;调用意图&quot;</li>
 </ul>
 <h2 id="12-两种实现范式">1.2 两种实现范式
-</h2><p>范式指的是模型如何传递工具调用意图——<strong>LLM 如何告诉程序&quot;我要调用哪个工具&quot;。</strong></p>
+</h2><p>范式指的是模型如何传递工具调用意图——<strong>Large Language Model（LLM，大语言模型）如何告诉程序&quot;我要调用哪个工具&quot;。</strong></p>
 <div class="table-wrapper"><table>
   <thead>
       <tr>
@@ -407,7 +407,7 @@
       </tr>
       <tr>
           <td><strong>Native Function Calling</strong></td>
-          <td>OpenAI/Claude/Gemini API</td>
+          <td>OpenAI/Claude/Gemini Application Programming Interface（API，应用程序编程接口）</td>
           <td>模型输出<strong>结构化数据</strong>，程序<strong>直接读取</strong></td>
           <td>格式稳定、可并行调用多工具，是当前主流方案</td>
       </tr>
@@ -460,7 +460,7 @@ ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling �
 </div>
 </div><p>问题：模型可能不按格式输出（多打个空格、换行位置不对），正则就解析失败了。</p>
 <h3 id="native-function-calling靠api-原生支持">Native Function Calling：靠&quot;API 原生支持&quot;
-</h3><p>模型训练时就学会了输出结构化的工具调用字段，API 直接返回 JSON 结构：</p>
+</h3><p>模型训练时就学会了输出结构化的工具调用字段，API 直接返回 JavaScript Object Notation（JSON，JS 对象表示法）结构：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -515,66 +515,22 @@ ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling �
 </span><span class="lnt">12
 </span><span class="lnt">13
 </span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span><span class="lnt">26
-</span><span class="lnt">27
-</span><span class="lnt">28
-</span><span class="lnt">29
-</span><span class="lnt">30
-</span><span class="lnt">31
-</span><span class="lnt">32
-</span><span class="lnt">33
-</span><span class="lnt">34
-</span><span class="lnt">35
-</span><span class="lnt">36
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl"> 用户              Agent Runtime(程序层)           LLM(大模型)              Tool(外部API)
-</span></span><span class="line"><span class="cl">  │                      │                          │                        │
-</span></span><span class="line"><span class="cl">  │  &#34;北京今天天气？&#34;     │                          │                        │
-</span></span><span class="line"><span class="cl">  │─────────────────────▶│                          │                        │
-</span></span><span class="line"><span class="cl">  │                      │  ① 发送请求：             │                        │
-</span></span><span class="line"><span class="cl">  │                      │  - System Prompt          │                        │
-</span></span><span class="line"><span class="cl">  │                      │  - 可用工具列表(Schema)    │                        │
-</span></span><span class="line"><span class="cl">  │                      │  - 用户消息               │                        │
-</span></span><span class="line"><span class="cl">  │                      │─────────────────────────▶│                        │
-</span></span><span class="line"><span class="cl">  │                      │                          │                        │
-</span></span><span class="line"><span class="cl">  │                      │  ② 返回 AIMessage：       │                        │
-</span></span><span class="line"><span class="cl">  │                      │  tool_calls: [{          │                        │
-</span></span><span class="line"><span class="cl">  │                      │    name: &#34;get_weather&#34;,  │                        │
-</span></span><span class="line"><span class="cl">  │                      │    args: {city:&#34;北京&#34;},   │                        │
-</span></span><span class="line"><span class="cl">  │                      │    id: &#34;call_001&#34;        │                        │
-</span></span><span class="line"><span class="cl">  │                      │  }]                      │                        │
-</span></span><span class="line"><span class="cl">  │                      │◀─────────────────────────│                        │
-</span></span><span class="line"><span class="cl">  │                      │                          │                        │
-</span></span><span class="line"><span class="cl">  │                      │ ③ 校验参数: city是string ✓│                        │
-</span></span><span class="line"><span class="cl">  │                      │                          │                        │
-</span></span><span class="line"><span class="cl">  │                      │  ④ 调用: get_weather(city=&#34;北京&#34;)                  │
-</span></span><span class="line"><span class="cl">  │                      │─────────────────────────────────────────────────▶│
-</span></span><span class="line"><span class="cl">  │                      │                          │                        │
-</span></span><span class="line"><span class="cl">  │                      │  ⑤ 返回: {temp:28, condition:&#34;晴&#34;}                │
-</span></span><span class="line"><span class="cl">  │                      │◀─────────────────────────────────────────────────│
-</span></span><span class="line"><span class="cl">  │                      │                          │                        │
-</span></span><span class="line"><span class="cl">  │                      │  ⑥ 发送 ToolMessage：     │                        │
-</span></span><span class="line"><span class="cl">  │                      │  content: {temp:28,..}   │                        │
-</span></span><span class="line"><span class="cl">  │                      │  tool_call_id:&#34;call_001&#34; │                        │
-</span></span><span class="line"><span class="cl">  │                      │─────────────────────────▶│                        │
-</span></span><span class="line"><span class="cl">  │                      │                          │                        │
-</span></span><span class="line"><span class="cl">  │                      │  ⑦ &#34;北京今天晴朗，28°C&#34;   │                        │
-</span></span><span class="line"><span class="cl">  │                      │◀─────────────────────────│                        │
-</span></span><span class="line"><span class="cl">  │                      │                          │                        │
-</span></span><span class="line"><span class="cl">  │  &#34;北京今天晴朗，28°C&#34; │                          │                        │
-</span></span><span class="line"><span class="cl">  │◀─────────────────────│                          │                        │
+<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">sequenceDiagram</span>
+</span></span><span class="line"><span class="cl">    <span class="n">participant</span> <span class="n">U</span> <span class="n">as</span> <span class="err">用户</span>
+</span></span><span class="line"><span class="cl">    <span class="n">participant</span> <span class="n">A</span> <span class="n">as</span> <span class="n">Agent</span> <span class="n">Runtime</span><span class="err">（程序层）</span>
+</span></span><span class="line"><span class="cl">    <span class="n">participant</span> <span class="n">L</span> <span class="n">as</span> <span class="n">LLM</span><span class="err">（大模型）</span>
+</span></span><span class="line"><span class="cl">    <span class="n">participant</span> <span class="n">T</span> <span class="n">as</span> <span class="n">Tool</span><span class="err">（外部</span> <span class="n">API</span><span class="err">）</span>
+</span></span><span class="line"><span class="cl">    <span class="n">U</span><span class="o">-&gt;&gt;</span><span class="n">A</span><span class="p">:</span> <span class="err">北京今天天气？</span>
+</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="o">-&gt;&gt;</span><span class="n">L</span><span class="p">:</span> <span class="err">发送请求（</span><span class="n">System</span> <span class="n">Prompt</span> <span class="o">+</span> <span class="err">工具列表</span> <span class="o">+</span> <span class="err">用户消息）</span>
+</span></span><span class="line"><span class="cl">    <span class="n">L</span><span class="o">--&gt;&gt;</span><span class="n">A</span><span class="p">:</span> <span class="n">AIMessage</span><span class="p">(</span><span class="n">tool_calls</span><span class="p">:</span> <span class="n">get_weather</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="o">-&gt;&gt;</span><span class="n">A</span><span class="p">:</span> <span class="err">校验参数</span> <span class="n">city</span><span class="p">:</span> <span class="n">string</span>
+</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="o">-&gt;&gt;</span><span class="n">T</span><span class="p">:</span> <span class="n">get_weather</span><span class="p">(</span><span class="n">city</span><span class="o">=</span><span class="s2">&#34;北京&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">T</span><span class="o">--&gt;&gt;</span><span class="n">A</span><span class="p">:</span> <span class="p">{</span><span class="n">temp</span><span class="p">:</span> <span class="mi">28</span><span class="p">,</span> <span class="n">condition</span><span class="p">:</span> <span class="s2">&#34;晴&#34;</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="o">-&gt;&gt;</span><span class="n">L</span><span class="p">:</span> <span class="n">ToolMessage</span><span class="p">(</span><span class="n">content</span><span class="p">,</span> <span class="n">tool_call_id</span><span class="o">=</span><span class="s2">&#34;call_001&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">L</span><span class="o">--&gt;&gt;</span><span class="n">A</span><span class="p">:</span> <span class="err">北京今天晴朗，</span><span class="mi">28</span><span class="err">°</span><span class="n">C</span>
+</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="o">--&gt;&gt;</span><span class="n">U</span><span class="p">:</span> <span class="err">北京今天晴朗，</span><span class="mi">28</span><span class="err">°</span><span class="n">C</span>
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p><strong>逐步拆解：</strong></p>
@@ -597,7 +553,7 @@ ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling �
       <tr>
           <td>③ 校验</td>
           <td>Agent 自身</td>
-          <td>用 JSON（JavaScript Object Notation）Schema 校验 LLM 生成的参数</td>
+          <td>用 JSON Schema 校验 LLM 生成的参数</td>
           <td>程序负责安全边界</td>
       </tr>
       <tr>
@@ -691,66 +647,24 @@ ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling �
 <h2 id="23-消息流转全景图">2.3 消息流转全景图
 </h2><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span><span class="lnt">26
-</span><span class="lnt">27
-</span><span class="lnt">28
-</span><span class="lnt">29
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Round 1:
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│ messages = [                                                     │
-</span></span><span class="line"><span class="cl">│   SystemMessage(&#34;You are a helpful assistant...&#34;),               │
-</span></span><span class="line"><span class="cl">│   HumanMessage(&#34;北京今天天气怎么样？&#34;)                            │
-</span></span><span class="line"><span class="cl">│ ]                                                                │
-</span></span><span class="line"><span class="cl">│                          ▼ LLM                                   │
-</span></span><span class="line"><span class="cl">│ messages += [                                                    │
-</span></span><span class="line"><span class="cl">│   AIMessage(                                                     │
-</span></span><span class="line"><span class="cl">│     content=&#34;&#34;,                                                  │
-</span></span><span class="line"><span class="cl">│     tool_calls=[{name:&#34;get_weather&#34;, args:{city:&#34;北京&#34;},          │
-</span></span><span class="line"><span class="cl">│                  id:&#34;call_abc123&#34;}]                               │
-</span></span><span class="line"><span class="cl">│   )                                                              │
-</span></span><span class="line"><span class="cl">│ ]                                                                │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────────────────┘
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">Round 2 (工具执行后):
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│ messages += [                                                    │
-</span></span><span class="line"><span class="cl">│   ToolMessage(                                                   │
-</span></span><span class="line"><span class="cl">│     content=&#39;{&#34;temp&#34;: 28, &#34;condition&#34;: &#34;晴&#34;}&#39;,                   │
-</span></span><span class="line"><span class="cl">│     tool_call_id=&#34;call_abc123&#34;                                   │
-</span></span><span class="line"><span class="cl">│   )                                                              │
-</span></span><span class="line"><span class="cl">│ ]                                                                │
-</span></span><span class="line"><span class="cl">│                          ▼ LLM                                   │
-</span></span><span class="line"><span class="cl">│ messages += [                                                    │
-</span></span><span class="line"><span class="cl">│   AIMessage(&#34;北京今天天气晴朗，气温28°C，适合出行。&#34;)               │
-</span></span><span class="line"><span class="cl">│ ]                                                                │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────────────────┘
+<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">sequenceDiagram</span>
+</span></span><span class="line"><span class="cl">    <span class="n">participant</span> <span class="n">M</span> <span class="n">as</span> <span class="n">messages</span>
+</span></span><span class="line"><span class="cl">    <span class="n">participant</span> <span class="n">L</span> <span class="n">as</span> <span class="n">LLM</span>
+</span></span><span class="line"><span class="cl">    <span class="n">M</span><span class="o">-&gt;&gt;</span><span class="n">L</span><span class="p">:</span> <span class="n">Round</span> <span class="mi">1</span><span class="p">:</span> <span class="n">SystemMessage</span> <span class="o">+</span> <span class="n">HumanMessage</span>
+</span></span><span class="line"><span class="cl">    <span class="n">L</span><span class="o">--&gt;&gt;</span><span class="n">M</span><span class="p">:</span> <span class="n">AIMessage</span><span class="p">(</span><span class="n">tool_calls</span><span class="p">:</span> <span class="n">get_weather</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">M</span><span class="o">-&gt;&gt;</span><span class="n">M</span><span class="p">:</span> <span class="err">执行工具并追加</span> <span class="n">ToolMessage</span>
+</span></span><span class="line"><span class="cl">    <span class="n">M</span><span class="o">-&gt;&gt;</span><span class="n">L</span><span class="p">:</span> <span class="n">Round</span> <span class="mi">2</span><span class="p">:</span> <span class="n">ToolMessage</span><span class="p">(</span><span class="n">content</span><span class="p">,</span> <span class="n">tool_call_id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">L</span><span class="o">--&gt;&gt;</span><span class="n">M</span><span class="p">:</span> <span class="n">AIMessage</span><span class="p">(</span><span class="err">最终回答</span><span class="p">)</span>
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h1 id="三工具定义与-schema-设计">三、工具定义与 Schema 设计
@@ -903,19 +817,37 @@ ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling �
 </span><span class="lnt"> 9
 </span><span class="lnt">10
 </span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">RunnableSerializable (LCEL（LangChain Expression Language） 基础接口)
-</span></span><span class="line"><span class="cl">    │
-</span></span><span class="line"><span class="cl">    ▼
-</span></span><span class="line"><span class="cl">BaseTool (抽象基类)
-</span></span><span class="line"><span class="cl">    │
-</span></span><span class="line"><span class="cl">    ├── StructuredTool (函数包装，支持复杂参数)
-</span></span><span class="line"><span class="cl">    │       ▲
-</span></span><span class="line"><span class="cl">    │       │── @tool 装饰器创建
-</span></span><span class="line"><span class="cl">    │       │── StructuredTool.from_function() 创建
-</span></span><span class="line"><span class="cl">    │
-</span></span><span class="line"><span class="cl">    └── Tool (简单工具，单字符串输入)
+<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">classDiagram</span>
+</span></span><span class="line"><span class="cl">    <span class="n">RunnableSerializable</span> <span class="o">&lt;|--</span> <span class="n">BaseTool</span>
+</span></span><span class="line"><span class="cl">    <span class="n">BaseTool</span> <span class="o">&lt;|--</span> <span class="n">StructuredTool</span>
+</span></span><span class="line"><span class="cl">    <span class="n">BaseTool</span> <span class="o">&lt;|--</span> <span class="n">Tool</span>
+</span></span><span class="line"><span class="cl">    <span class="n">StructuredTool</span> <span class="o">..&gt;</span> <span class="n">tool_decorator</span> <span class="p">:</span> <span class="err">由</span> <span class="err">@</span><span class="k">tool</span> <span class="err">创建</span>
+</span></span><span class="line"><span class="cl">    <span class="n">StructuredTool</span> <span class="o">..&gt;</span> <span class="n">from_function</span> <span class="p">:</span> <span class="err">由</span> <span class="n">from_function</span> <span class="err">创建</span>
+</span></span><span class="line"><span class="cl">    <span class="k">class</span> <span class="n">RunnableSerializable</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="n">LCEL</span> <span class="err">基础接口</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">class</span> <span class="n">BaseTool</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="err">抽象基类</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">class</span> <span class="n">StructuredTool</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="err">函数包装</span>
+</span></span><span class="line"><span class="cl">        <span class="err">支持复杂参数</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">class</span> <span class="n">Tool</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="err">简单工具</span>
+</span></span><span class="line"><span class="cl">        <span class="err">单字符串输入</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
 </span></span></code></pre></td></tr></table>
 </div>
 </div><blockquote>
@@ -980,48 +912,26 @@ ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling �
 </div><p>装饰器内部流程：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">@tool 装饰器执行流程:
-</span></span><span class="line"><span class="cl">┌────────────────────┐
-</span></span><span class="line"><span class="cl">│ 1. inspect 函数签名 │  → 获取参数名、类型注解、默认值
-</span></span><span class="line"><span class="cl">└────────┬───────────┘
-</span></span><span class="line"><span class="cl">         ▼
-</span></span><span class="line"><span class="cl">┌────────────────────────────┐
-</span></span><span class="line"><span class="cl">│ 2. create_schema_from_     │  → 动态创建 Pydantic Model
-</span></span><span class="line"><span class="cl">│    function()              │     pydantic.create_model(
-</span></span><span class="line"><span class="cl">│                            │       &#34;search_docsSchema&#34;,
-</span></span><span class="line"><span class="cl">│                            │       query=(str, ...),
-</span></span><span class="line"><span class="cl">│                            │       top_k=(int, 5)
-</span></span><span class="line"><span class="cl">│                            │     )
-</span></span><span class="line"><span class="cl">└────────┬───────────────────┘
-</span></span><span class="line"><span class="cl">         ▼
-</span></span><span class="line"><span class="cl">┌────────────────────────────┐
-</span></span><span class="line"><span class="cl">│ 3. 创建 StructuredTool     │  → name = &#34;search_docs&#34;
-</span></span><span class="line"><span class="cl">│    实例                     │     description = docstring
-</span></span><span class="line"><span class="cl">│                            │     func = 原函数
-</span></span><span class="line"><span class="cl">│                            │     args_schema = 动态Model
-</span></span><span class="line"><span class="cl">└────────────────────────────┘
+<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">flowchart</span> <span class="n">TD</span>
+</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="p">[</span><span class="n">inspect</span> <span class="err">函数签名</span><span class="p">]</span> <span class="o">--&gt;</span> <span class="n">B</span><span class="p">[</span><span class="err">获取参数名、类型注解、默认值</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">B</span> <span class="o">--&gt;</span> <span class="n">C</span><span class="p">[</span><span class="n">create_schema_from_function</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">C</span> <span class="o">--&gt;</span> <span class="n">D</span><span class="p">[</span><span class="err">动态创建</span> <span class="n">Pydantic</span> <span class="n">Model</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">D</span> <span class="o">--&gt;</span> <span class="n">E</span><span class="p">[</span><span class="err">创建</span> <span class="n">StructuredTool</span> <span class="err">实例</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">E</span> <span class="o">--&gt;</span> <span class="n">F</span><span class="p">[</span><span class="n">name</span> <span class="o">=</span> <span class="n">search_docs</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">E</span> <span class="o">--&gt;</span> <span class="n">G</span><span class="p">[</span><span class="n">description</span> <span class="o">=</span> <span class="n">docstring</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">E</span> <span class="o">--&gt;</span> <span class="n">H</span><span class="p">[</span><span class="k">func</span> <span class="o">=</span> <span class="err">原函数</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">E</span> <span class="o">--&gt;</span> <span class="n">I</span><span class="p">[</span><span class="n">args_schema</span> <span class="o">=</span> <span class="err">动态</span> <span class="n">Model</span><span class="p">]</span>
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h3 id="schema-转换convert_to_openai_tool">Schema 转换：convert_to_openai_tool()
@@ -1111,34 +1021,20 @@ ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling �
 <h2 id="42-多层校验策略">4.2 多层校验策略
 </h2><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│ Layer 1: JSON Schema 格式校验                                │
-</span></span><span class="line"><span class="cl">│   → 类型、必填、枚举、长度                                    │
-</span></span><span class="line"><span class="cl">├─────────────────────────────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│ Layer 2: 业务逻辑校验                                        │
-</span></span><span class="line"><span class="cl">│   → 金额范围、日期合理性、ID 存在性                           │
-</span></span><span class="line"><span class="cl">├─────────────────────────────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│ Layer 3: 安全校验                                            │
-</span></span><span class="line"><span class="cl">│   → 权限检查、注入检测、敏感操作拦截                          │
-</span></span><span class="line"><span class="cl">├─────────────────────────────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│ Layer 4: 上下文校验                                          │
-</span></span><span class="line"><span class="cl">│   → 参数与对话上下文是否一致、是否越权                        │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────────────┘
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[Layer 1: JSON Schema 格式校验\n类型 / 必填 / 枚举 / 长度]
+</span></span><span class="line"><span class="cl">    B[Layer 2: 业务逻辑校验\n金额范围 / 日期合理性 / ID 存在性]
+</span></span><span class="line"><span class="cl">    C[Layer 3: 安全校验\n权限检查 / 注入检测 / 敏感操作拦截]
+</span></span><span class="line"><span class="cl">    D[Layer 4: 上下文校验\n参数与对话上下文是否一致 / 是否越权]
+</span></span><span class="line"><span class="cl">    A --&gt; B --&gt; C --&gt; D
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h2 id="43-校验失败的处理策略">4.3 校验失败的处理策略
@@ -1176,38 +1072,18 @@ ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling �
 <h2 id="44-langchain-源码参数校验流程">4.4 LangChain 源码：参数校验流程
 </h2><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">BaseTool.invoke() 内部校验流程:
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">┌──────────────┐     ┌───────────────────┐     ┌──────────────┐
-</span></span><span class="line"><span class="cl">│ 原始 ToolCall │────▶│ args_schema 校验   │────▶│ _run() 执行  │
-</span></span><span class="line"><span class="cl">│ {name, args} │     │ (Pydantic Model)  │     │              │
-</span></span><span class="line"><span class="cl">└──────────────┘     └────────┬──────────┘     └──────────────┘
-</span></span><span class="line"><span class="cl">                              │
-</span></span><span class="line"><span class="cl">                     校验失败  │
-</span></span><span class="line"><span class="cl">                              ▼
-</span></span><span class="line"><span class="cl">                     ┌──────────────────┐
-</span></span><span class="line"><span class="cl">                     │ ValidationError  │
-</span></span><span class="line"><span class="cl">                     │ → handle_        │
-</span></span><span class="line"><span class="cl">                     │   validation_    │
-</span></span><span class="line"><span class="cl">                     │   error          │
-</span></span><span class="line"><span class="cl">                     └──────────────────┘
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart LR
+</span></span><span class="line"><span class="cl">    A[原始 ToolCall\n{name, args}] --&gt; B{args_schema 校验\nPydantic Model}
+</span></span><span class="line"><span class="cl">    B -- 通过 --&gt; C[_run 执行]
+</span></span><span class="line"><span class="cl">    B -- 校验失败 --&gt; D[ValidationError]
+</span></span><span class="line"><span class="cl">    D --&gt; E[handle_validation_error]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><div class="highlight"><div class="chroma">
@@ -1308,40 +1184,18 @@ ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling �
 </h2><p>Agent 的核心是一个&quot;LLM 决策 → 工具执行 → 结果回填&quot;的循环，直到 LLM 认为信息充足为止。</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">         ┌─────────┐
-</span></span><span class="line"><span class="cl">┌───────▶│  Agent  │◀───────┐
-</span></span><span class="line"><span class="cl">│        │  (LLM)  │        │
-</span></span><span class="line"><span class="cl">│        └────┬────┘        │
-</span></span><span class="line"><span class="cl">│             │             │
-</span></span><span class="line"><span class="cl">│    has tool_calls?        │
-</span></span><span class="line"><span class="cl">│       │          │        │
-</span></span><span class="line"><span class="cl">│      Yes         No       │
-</span></span><span class="line"><span class="cl">│       │          │        │
-</span></span><span class="line"><span class="cl">│       ▼          ▼        │
-</span></span><span class="line"><span class="cl">│  ┌────────┐  ┌──────┐    │
-</span></span><span class="line"><span class="cl">│  │ Tools  │  │ END  │    │
-</span></span><span class="line"><span class="cl">│  │(execute)│  └──────┘    │
-</span></span><span class="line"><span class="cl">│  └────┬───┘               │
-</span></span><span class="line"><span class="cl">│       │  ToolMessage      │
-</span></span><span class="line"><span class="cl">│       └───────────────────┘
+<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">flowchart</span> <span class="n">TD</span>
+</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="p">[</span><span class="n">Agent</span> <span class="o">/</span> <span class="n">LLM</span><span class="p">]</span> <span class="o">--&gt;</span> <span class="n">B</span><span class="p">{</span><span class="n">has</span> <span class="n">tool_calls</span><span class="err">?</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="n">B</span> <span class="o">--</span> <span class="n">Yes</span> <span class="o">--&gt;</span> <span class="n">C</span><span class="p">[</span><span class="n">Tools</span> <span class="n">execute</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">C</span> <span class="o">--</span> <span class="n">ToolMessage</span> <span class="o">--&gt;</span> <span class="n">A</span>
+</span></span><span class="line"><span class="cl">    <span class="n">B</span> <span class="o">--</span> <span class="n">No</span> <span class="o">--&gt;</span> <span class="n">D</span><span class="p">[</span><span class="n">END</span><span class="p">]</span>
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h2 id="52-终止条件">5.2 终止条件

@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 Agent 的关键不是一次模型调用，而是一轮一轮地推进任务。\n这个循环通常包括：理解当前状态、决定下一步、调用工具、观察结果、更新状态、判断是否结束。\n本文分三部分：\n概念理解（一~三）：Agent Loop 和 ReAct 的核心思想、执行机制 工程实践（四）：基于 langchain 1.0+ 的实现与源码分析（含 Human-in-the-Loop） 参考资料（五~七）：历史实现原理、版本演进、面试题 一、Agent Loop 概念 1.1 基本循环 Agent Loop 是一个围绕任务目标持续执行的控制循环。每一轮循环中，Agent 都会完成一次完整的「感知 → 决策 → 行动 → 观察」周期：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 ┌─────────────────────────────────────┐ │ 目标输入 (Goal) │ └──────────────────┬──────────────────┘ ▼ ┌─────────────────────────────────────┐ │ 读取当前状态 (Read State) │ └──────────────────┬──────────────────┘ ▼ ┌─────────────────────────────────────┐ │ 决定下一步动作 (Plan / Reason) │ └──────────────────┬──────────────────┘ ▼ ┌─────────────────────────────────────┐ │ 执行动作 (Act / Tool) │ └──────────────────┬──────────────────┘ ▼ ┌─────────────────────────────────────┐ │ 观察结果 (Observe Result) │ └──────────────────┬──────────────────┘ ▼ ┌─────────────────────────────────────┐ │ 更新状态 (Update State) │ └──────────────────┬──────────────────┘ ▼ ┌─────────────────────────────────────┐ │ 判断是否结束 (Should Stop?) │ └──────┬──────────────────────┬───────┘ │ │ YES NO │ │ ▼ └──────→ 回到「读取当前状态」 ┌─────────────────┐ │ 输出最终答案 │ └─────────────────┘ 1.2 为什么不能只调用一次模型 很多任务需要外部信息或多步执行。例如：\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 Agent 的关键不是一次模型调用，而是一轮一轮地推进任务。\n这个循环通常包括：理解当前状态、决定下一步、调用工具、观察结果、更新状态、判断是否结束。\n本文分三部分：\n概念理解（一~三）：Agent Loop 和 ReAct 的核心思想、执行机制 工程实践（四）：基于 langchain 1.0+ 的实现与源码分析（含 Human-in-the-Loop） 参考资料（五~七）：历史实现原理、版本演进、面试题 一、Agent Loop 概念 1.1 基本循环 Agent Loop 是一个围绕任务目标持续执行的控制循环。每一轮循环中，Agent 都会完成一次完整的「感知 → 决策 → 行动 → 观察」周期：\n1 2 3 4 5 6 7 8 9 flowchart TD A[目标输入 Goal] --&gt; B[读取当前状态 Read State] B --&gt; C[决定下一步动作 Plan / Reason] C --&gt; D[执行动作 Act / Tool] D --&gt; E[观察结果 Observe Result] E --&gt; F[更新状态 Update State] F --&gt; G{判断是否结束 Should Stop?} G -- YES --&gt; H[输出最终答案] G -- NO --&gt; B 1.2 为什么不能只调用一次模型 很多任务需要外部信息或多步执行。例如：\n">
 <title>AI Agent Loop 与 ReAct 模式详解：思考、行动、观察、停止条件与高频面试题</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/ai-agent-loop-%E4%B8%8E-react-%E6%A8%A1%E5%BC%8F%E8%AF%A6%E8%A7%A3%E6%80%9D%E8%80%83%E8%A1%8C%E5%8A%A8%E8%A7%82%E5%AF%9F%E5%81%9C%E6%AD%A2%E6%9D%A1%E4%BB%B6%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="AI Agent Loop 与 ReAct 模式详解：思考、行动、观察、停止条件与高频面试题">
-<meta property='og:description' content="写在前面 Agent 的关键不是一次模型调用，而是一轮一轮地推进任务。\n这个循环通常包括：理解当前状态、决定下一步、调用工具、观察结果、更新状态、判断是否结束。\n本文分三部分：\n概念理解（一~三）：Agent Loop 和 ReAct 的核心思想、执行机制 工程实践（四）：基于 langchain 1.0+ 的实现与源码分析（含 Human-in-the-Loop） 参考资料（五~七）：历史实现原理、版本演进、面试题 一、Agent Loop 概念 1.1 基本循环 Agent Loop 是一个围绕任务目标持续执行的控制循环。每一轮循环中，Agent 都会完成一次完整的「感知 → 决策 → 行动 → 观察」周期：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 ┌─────────────────────────────────────┐ │ 目标输入 (Goal) │ └──────────────────┬──────────────────┘ ▼ ┌─────────────────────────────────────┐ │ 读取当前状态 (Read State) │ └──────────────────┬──────────────────┘ ▼ ┌─────────────────────────────────────┐ │ 决定下一步动作 (Plan / Reason) │ └──────────────────┬──────────────────┘ ▼ ┌─────────────────────────────────────┐ │ 执行动作 (Act / Tool) │ └──────────────────┬──────────────────┘ ▼ ┌─────────────────────────────────────┐ │ 观察结果 (Observe Result) │ └──────────────────┬──────────────────┘ ▼ ┌─────────────────────────────────────┐ │ 更新状态 (Update State) │ └──────────────────┬──────────────────┘ ▼ ┌─────────────────────────────────────┐ │ 判断是否结束 (Should Stop?) │ └──────┬──────────────────────┬───────┘ │ │ YES NO │ │ ▼ └──────→ 回到「读取当前状态」 ┌─────────────────┐ │ 输出最终答案 │ └─────────────────┘ 1.2 为什么不能只调用一次模型 很多任务需要外部信息或多步执行。例如：\n">
+<meta property='og:description' content="写在前面 Agent 的关键不是一次模型调用，而是一轮一轮地推进任务。\n这个循环通常包括：理解当前状态、决定下一步、调用工具、观察结果、更新状态、判断是否结束。\n本文分三部分：\n概念理解（一~三）：Agent Loop 和 ReAct 的核心思想、执行机制 工程实践（四）：基于 langchain 1.0+ 的实现与源码分析（含 Human-in-the-Loop） 参考资料（五~七）：历史实现原理、版本演进、面试题 一、Agent Loop 概念 1.1 基本循环 Agent Loop 是一个围绕任务目标持续执行的控制循环。每一轮循环中，Agent 都会完成一次完整的「感知 → 决策 → 行动 → 观察」周期：\n1 2 3 4 5 6 7 8 9 flowchart TD A[目标输入 Goal] --&gt; B[读取当前状态 Read State] B --&gt; C[决定下一步动作 Plan / Reason] C --&gt; D[执行动作 Act / Tool] D --&gt; E[观察结果 Observe Result] E --&gt; F[更新状态 Update State] F --&gt; G{判断是否结束 Should Stop?} G -- YES --&gt; H[输出最终答案] G -- NO --&gt; B 1.2 为什么不能只调用一次模型 很多任务需要外部信息或多步执行。例如：\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/ai-agent-loop-%E4%B8%8E-react-%E6%A8%A1%E5%BC%8F%E8%AF%A6%E8%A7%A3%E6%80%9D%E8%80%83%E8%A1%8C%E5%8A%A8%E8%A7%82%E5%AF%9F%E5%81%9C%E6%AD%A2%E6%9D%A1%E4%BB%B6%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='react' /><meta property='article:tag' content='langchain' /><meta property='article:published_time' content='2026-05-18T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-18T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="AI Agent Loop 与 ReAct 模式详解：思考、行动、观察、停止条件与高频面试题">
-<meta name="twitter:description" content="写在前面 Agent 的关键不是一次模型调用，而是一轮一轮地推进任务。\n这个循环通常包括：理解当前状态、决定下一步、调用工具、观察结果、更新状态、判断是否结束。\n本文分三部分：\n概念理解（一~三）：Agent Loop 和 ReAct 的核心思想、执行机制 工程实践（四）：基于 langchain 1.0+ 的实现与源码分析（含 Human-in-the-Loop） 参考资料（五~七）：历史实现原理、版本演进、面试题 一、Agent Loop 概念 1.1 基本循环 Agent Loop 是一个围绕任务目标持续执行的控制循环。每一轮循环中，Agent 都会完成一次完整的「感知 → 决策 → 行动 → 观察」周期：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 ┌─────────────────────────────────────┐ │ 目标输入 (Goal) │ └──────────────────┬──────────────────┘ ▼ ┌─────────────────────────────────────┐ │ 读取当前状态 (Read State) │ └──────────────────┬──────────────────┘ ▼ ┌─────────────────────────────────────┐ │ 决定下一步动作 (Plan / Reason) │ └──────────────────┬──────────────────┘ ▼ ┌─────────────────────────────────────┐ │ 执行动作 (Act / Tool) │ └──────────────────┬──────────────────┘ ▼ ┌─────────────────────────────────────┐ │ 观察结果 (Observe Result) │ └──────────────────┬──────────────────┘ ▼ ┌─────────────────────────────────────┐ │ 更新状态 (Update State) │ └──────────────────┬──────────────────┘ ▼ ┌─────────────────────────────────────┐ │ 判断是否结束 (Should Stop?) │ └──────┬──────────────────────┬───────┘ │ │ YES NO │ │ ▼ └──────→ 回到「读取当前状态」 ┌─────────────────┐ │ 输出最终答案 │ └─────────────────┘ 1.2 为什么不能只调用一次模型 很多任务需要外部信息或多步执行。例如：\n">
+<meta name="twitter:description" content="写在前面 Agent 的关键不是一次模型调用，而是一轮一轮地推进任务。\n这个循环通常包括：理解当前状态、决定下一步、调用工具、观察结果、更新状态、判断是否结束。\n本文分三部分：\n概念理解（一~三）：Agent Loop 和 ReAct 的核心思想、执行机制 工程实践（四）：基于 langchain 1.0+ 的实现与源码分析（含 Human-in-the-Loop） 参考资料（五~七）：历史实现原理、版本演进、面试题 一、Agent Loop 概念 1.1 基本循环 Agent Loop 是一个围绕任务目标持续执行的控制循环。每一轮循环中，Agent 都会完成一次完整的「感知 → 决策 → 行动 → 观察」周期：\n1 2 3 4 5 6 7 8 9 flowchart TD A[目标输入 Goal] --&gt; B[读取当前状态 Read State] B --&gt; C[决定下一步动作 Plan / Reason] C --&gt; D[执行动作 Act / Tool] D --&gt; E[观察结果 Observe Result] E --&gt; F[更新状态 Update State] F --&gt; G{判断是否结束 Should Stop?} G -- YES --&gt; H[输出最终答案] G -- NO --&gt; B 1.2 为什么不能只调用一次模型 很多任务需要外部信息或多步执行。例如：\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -350,76 +350,26 @@
 </h2><p>Agent Loop 是一个围绕任务目标持续执行的控制循环。每一轮循环中，Agent 都会完成一次完整的「感知 → 决策 → 行动 → 观察」周期：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span><span class="lnt">26
-</span><span class="lnt">27
-</span><span class="lnt">28
-</span><span class="lnt">29
-</span><span class="lnt">30
-</span><span class="lnt">31
-</span><span class="lnt">32
-</span><span class="lnt">33
-</span><span class="lnt">34
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">┌─────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│           目标输入 (Goal)            │
-</span></span><span class="line"><span class="cl">└──────────────────┬──────────────────┘
-</span></span><span class="line"><span class="cl">                   ▼
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│       读取当前状态 (Read State)       │
-</span></span><span class="line"><span class="cl">└──────────────────┬──────────────────┘
-</span></span><span class="line"><span class="cl">                   ▼
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│    决定下一步动作 (Plan / Reason)     │
-</span></span><span class="line"><span class="cl">└──────────────────┬──────────────────┘
-</span></span><span class="line"><span class="cl">                   ▼
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│        执行动作 (Act / Tool)         │
-</span></span><span class="line"><span class="cl">└──────────────────┬──────────────────┘
-</span></span><span class="line"><span class="cl">                   ▼
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│      观察结果 (Observe Result)       │
-</span></span><span class="line"><span class="cl">└──────────────────┬──────────────────┘
-</span></span><span class="line"><span class="cl">                   ▼
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│       更新状态 (Update State)        │
-</span></span><span class="line"><span class="cl">└──────────────────┬──────────────────┘
-</span></span><span class="line"><span class="cl">                   ▼
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│       判断是否结束 (Should Stop?)     │
-</span></span><span class="line"><span class="cl">└──────┬──────────────────────┬───────┘
-</span></span><span class="line"><span class="cl">       │                      │
-</span></span><span class="line"><span class="cl">      YES                     NO
-</span></span><span class="line"><span class="cl">       │                      │
-</span></span><span class="line"><span class="cl">       ▼                      └──────→ 回到「读取当前状态」
-</span></span><span class="line"><span class="cl">┌─────────────────┐
-</span></span><span class="line"><span class="cl">│   输出最终答案   │
-</span></span><span class="line"><span class="cl">└─────────────────┘
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[目标输入 Goal] --&gt; B[读取当前状态 Read State]
+</span></span><span class="line"><span class="cl">    B --&gt; C[决定下一步动作 Plan / Reason]
+</span></span><span class="line"><span class="cl">    C --&gt; D[执行动作 Act / Tool]
+</span></span><span class="line"><span class="cl">    D --&gt; E[观察结果 Observe Result]
+</span></span><span class="line"><span class="cl">    E --&gt; F[更新状态 Update State]
+</span></span><span class="line"><span class="cl">    F --&gt; G{判断是否结束 Should Stop?}
+</span></span><span class="line"><span class="cl">    G -- YES --&gt; H[输出最终答案]
+</span></span><span class="line"><span class="cl">    G -- NO --&gt; B
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h2 id="12-为什么不能只调用一次模型">1.2 为什么不能只调用一次模型
@@ -435,7 +385,7 @@
 </div><p>这需要：</p>
 <ul>
 <li>识别时间范围</li>
-<li>查询订单（需要调用数据库/API（Application Programming Interface，应用程序编程接口））</li>
+<li>查询订单（需要调用数据库/Application Programming Interface（API，应用程序编程接口））</li>
 <li>判断异常（基于规则或模型推理）</li>
 <li>生成回复</li>
 <li>可能还要请求用户确认</li>
@@ -447,81 +397,51 @@
 <li><strong>不确定性</strong>：中间步骤可能失败或需要重试</li>
 </ol>
 <h2 id="13-agent-loop-的本质有限状态机">1.3 Agent Loop 的本质：有限状态机
-</h2><p>从计算理论角度看，Agent Loop 本质上是一个<strong>有限状态机</strong>（FSM，Finite State Machine），状态转移由 LLM 驱动：</p>
+</h2><p>从计算理论角度看，Agent Loop 本质上是一个<strong>Finite State Machine（FSM，有限状态机）</strong>，状态转移由 Large Language Model（LLM，大语言模型）驱动：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">                    ┌───────────┐
-</span></span><span class="line"><span class="cl">                    │   Start   │
-</span></span><span class="line"><span class="cl">                    └─────┬─────┘
-</span></span><span class="line"><span class="cl">                          │ 接收任务
-</span></span><span class="line"><span class="cl">                          ▼
-</span></span><span class="line"><span class="cl">               ┌────────────────────┐
-</span></span><span class="line"><span class="cl">        ┌─────→│     Reasoning      │─────────────┐
-</span></span><span class="line"><span class="cl">        │      └──────┬─────────────┘             │
-</span></span><span class="line"><span class="cl">        │             │                           │ 决定直接回答
-</span></span><span class="line"><span class="cl">        │             │ 决定调用工具                │
-</span></span><span class="line"><span class="cl">        │             ▼                           ▼
-</span></span><span class="line"><span class="cl">        │      ┌─────────────┐           ┌──────────────┐
-</span></span><span class="line"><span class="cl">        │      │   Acting    │           │   Finished   │
-</span></span><span class="line"><span class="cl">        │      └──────┬──────┘           └──────┬───────┘
-</span></span><span class="line"><span class="cl">        │             │ 获得工具结果               │
-</span></span><span class="line"><span class="cl">        │             ▼                           ▼
-</span></span><span class="line"><span class="cl">        │      ┌─────────────┐              返回答案
-</span></span><span class="line"><span class="cl">        │      │  Observing  │
-</span></span><span class="line"><span class="cl">        │      └──────┬──────┘
-</span></span><span class="line"><span class="cl">        │             │ 更新状态
-</span></span><span class="line"><span class="cl">        └─────────────┘ 继续推理
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">stateDiagram-v2
+</span></span><span class="line"><span class="cl">    [*] --&gt; Reasoning: 接收任务
+</span></span><span class="line"><span class="cl">    Reasoning --&gt; Acting: 决定调用工具
+</span></span><span class="line"><span class="cl">    Reasoning --&gt; Finished: 决定直接回答
+</span></span><span class="line"><span class="cl">    Acting --&gt; Observing: 获得工具结果
+</span></span><span class="line"><span class="cl">    Observing --&gt; Reasoning: 更新状态 / 继续推理
+</span></span><span class="line"><span class="cl">    Finished --&gt; [*]: 返回答案
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h2 id="14-循环策略-vs-通信机制">1.4 循环策略 vs 通信机制
 </h2><p>Agent Loop 是一个抽象的控制模式，具体实现时需要回答两个问题：<strong>如何推进循环</strong>（循环策略）和<strong>如何表达动作</strong>（通信机制）。这两个维度是正交的：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Agent Loop（循环控制模式）
-</span></span><span class="line"><span class="cl">│
-</span></span><span class="line"><span class="cl">├── 循环策略（HOW to loop —— 决定循环结构和推进方式）
-</span></span><span class="line"><span class="cl">│   ├── ReAct：每步都 推理→行动→观察，逐步推进
-</span></span><span class="line"><span class="cl">│   ├── Plan-and-Execute：先一次性规划所有步骤，再逐步执行（可选重规划）
-</span></span><span class="line"><span class="cl">│   └── Reflexion：在循环中加入「自我反思/评估」环节，修正策略
-</span></span><span class="line"><span class="cl">│
-</span></span><span class="line"><span class="cl">└── 动作表达机制（HOW to express action —— 决定 LLM 如何表达工具调用意图）
-</span></span><span class="line"><span class="cl">    ├── 文本协议：LLM 输出 &#34;Action: xxx&#34; 文本，靠正则解析
-</span></span><span class="line"><span class="cl">    └── Function Calling：LLM（Large Language Model，大语言模型）原生返回结构化 tool_calls JSON（JavaScript Object Notation）
+<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">flowchart</span> <span class="n">TD</span>
+</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="p">[</span><span class="n">Agent</span> <span class="n">Loop</span> <span class="err">循环控制模式</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">A</span> <span class="o">--&gt;</span> <span class="n">B</span><span class="p">[</span><span class="err">循环策略</span> <span class="n">HOW</span> <span class="n">to</span> <span class="n">loop</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">A</span> <span class="o">--&gt;</span> <span class="n">C</span><span class="p">[</span><span class="err">动作表达机制</span> <span class="n">HOW</span> <span class="n">to</span> <span class="n">express</span> <span class="n">action</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">B</span> <span class="o">--&gt;</span> <span class="n">B1</span><span class="p">[</span><span class="n">ReAct</span><span class="p">:</span> <span class="err">推理</span> <span class="o">-&gt;</span> <span class="err">行动</span> <span class="o">-&gt;</span> <span class="err">观察</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">B</span> <span class="o">--&gt;</span> <span class="n">B2</span><span class="p">[</span><span class="n">Plan</span><span class="o">-</span><span class="ow">and</span><span class="o">-</span><span class="n">Execute</span><span class="p">:</span> <span class="err">先规划再执行</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">B</span> <span class="o">--&gt;</span> <span class="n">B3</span><span class="p">[</span><span class="n">Reflexion</span><span class="p">:</span> <span class="err">加入反思</span> <span class="o">/</span> <span class="err">评估</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">C</span> <span class="o">--&gt;</span> <span class="n">C1</span><span class="p">[</span><span class="err">文本协议</span><span class="p">:</span> <span class="err">输出</span> <span class="n">Action</span> <span class="err">文本</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">C</span> <span class="o">--&gt;</span> <span class="n">C2</span><span class="p">[</span><span class="n">Function</span> <span class="n">Calling</span><span class="p">:</span> <span class="err">输出结构化</span> <span class="n">tool_calls</span> <span class="n">JSON</span><span class="p">]</span>
 </span></span></code></pre></td></tr></table>
 </div>
 </div><div class="table-wrapper"><table>
@@ -559,7 +479,7 @@
 </h1><h2 id="21-核心思想">2.1 核心思想
 </h2><p>ReAct（Reasoning + Acting）来源于 2022 年 Yao et al. 的论文 <a class="link" href="https://arxiv.org/abs/2210.03629"  target="_blank" rel="noopener"
     >《ReAct: Synergizing Reasoning and Acting in Language Models》</a>。</p>
-<p>其核心洞察是：<strong>将 CoT（Chain-of-Thought，链式思维）的推理能力与工具调用的行动能力交织在一起</strong>，每一步推理都可以触发行动，每一次行动的结果都能参与下一步推理。</p>
+<p>其核心洞察是：<strong>将 Chain-of-Thought（CoT，链式思维）的推理能力与工具调用的行动能力交织在一起</strong>，每一步推理都可以触发行动，每一次行动的结果都能参与下一步推理。</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -572,18 +492,22 @@
 </span><span class="lnt"> 8
 </span><span class="lnt"> 9
 </span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">传统 CoT:   Thought → Thought → ... → Answer
-</span></span><span class="line"><span class="cl">                          (纯推理，无外部信息)
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">传统 Act:   Action → Observation → Answer
-</span></span><span class="line"><span class="cl">                          (纯行动，无规划)
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">ReAct:      Thought → Action → Observation
-</span></span><span class="line"><span class="cl">                → Thought → Action → Observation
-</span></span><span class="line"><span class="cl">                → ... → Thought → Final Answer
-</span></span><span class="line"><span class="cl">                          (推理与行动交织)
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart LR
+</span></span><span class="line"><span class="cl">    subgraph C[传统 CoT]
+</span></span><span class="line"><span class="cl">        C1[Thought] --&gt; C2[Thought] --&gt; C3[Answer]
+</span></span><span class="line"><span class="cl">    end
+</span></span><span class="line"><span class="cl">    subgraph A[传统 Act]
+</span></span><span class="line"><span class="cl">        A1[Action] --&gt; A2[Observation] --&gt; A3[Answer]
+</span></span><span class="line"><span class="cl">    end
+</span></span><span class="line"><span class="cl">    subgraph R[ReAct]
+</span></span><span class="line"><span class="cl">        R1[Thought] --&gt; R2[Action] --&gt; R3[Observation]
+</span></span><span class="line"><span class="cl">        R3 --&gt; R4[Thought] --&gt; R5[Action] --&gt; R6[Observation]
+</span></span><span class="line"><span class="cl">        R6 --&gt; R7[Thought] --&gt; R8[Final Answer]
+</span></span><span class="line"><span class="cl">    end
 </span></span></code></pre></td></tr></table>
 </div>
 </div><div class="table-wrapper"><table>
@@ -597,7 +521,7 @@
   </thead>
   <tbody>
       <tr>
-          <td>CoT（纯推理）</td>
+          <td>CoT</td>
           <td>强</td>
           <td>无</td>
           <td>无法获取外部信息，容易幻觉</td>
@@ -693,73 +617,21 @@
 </span><span class="lnt">11
 </span><span class="lnt">12
 </span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span><span class="lnt">26
-</span><span class="lnt">27
-</span><span class="lnt">28
-</span><span class="lnt">29
-</span><span class="lnt">30
-</span><span class="lnt">31
-</span><span class="lnt">32
-</span><span class="lnt">33
-</span><span class="lnt">34
-</span><span class="lnt">35
-</span><span class="lnt">36
-</span><span class="lnt">37
-</span><span class="lnt">38
-</span><span class="lnt">39
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">┌──────────────────┐
-</span></span><span class="line"><span class="cl">│  用户输入 Question │
-</span></span><span class="line"><span class="cl">└────────┬─────────┘
-</span></span><span class="line"><span class="cl">         ▼
-</span></span><span class="line"><span class="cl">┌──────────────────┐
-</span></span><span class="line"><span class="cl">│   构建 Prompt     │
-</span></span><span class="line"><span class="cl">└────────┬─────────┘
-</span></span><span class="line"><span class="cl">         ▼
-</span></span><span class="line"><span class="cl">┌──────────────────┐
-</span></span><span class="line"><span class="cl">│ LLM 生成 Thought  │◄─────────────────────────┐
-</span></span><span class="line"><span class="cl">└────────┬─────────┘                           │
-</span></span><span class="line"><span class="cl">         ▼                                     │
-</span></span><span class="line"><span class="cl">┌──────────────────────┐                       │
-</span></span><span class="line"><span class="cl">│    输出类型判断        │                       │
-</span></span><span class="line"><span class="cl">├──────────┬───────────┤                       │
-</span></span><span class="line"><span class="cl">│          │           │                       │
-</span></span><span class="line"><span class="cl">▼          │           ▼                       │
-</span></span><span class="line"><span class="cl">包含        │         包含                      │
-</span></span><span class="line"><span class="cl">Action:    │         Final Answer:             │
-</span></span><span class="line"><span class="cl">│          │           │                       │
-</span></span><span class="line"><span class="cl">▼          │           ▼                       │
-</span></span><span class="line"><span class="cl">解析 Action │        提取最终答案                │
-</span></span><span class="line"><span class="cl">+ Action Input        │                       │
-</span></span><span class="line"><span class="cl">│          │           ▼                       │
-</span></span><span class="line"><span class="cl">▼          │     ┌──────────┐                  │
-</span></span><span class="line"><span class="cl">执行工具    │     │ 返回给用户 │                  │
-</span></span><span class="line"><span class="cl">Tool.run   │     └──────────┘                  │
-</span></span><span class="line"><span class="cl">│          │           ▲                       │
-</span></span><span class="line"><span class="cl">▼          │           │                       │
-</span></span><span class="line"><span class="cl">获得        │      强制停止                      │
-</span></span><span class="line"><span class="cl">Observation│      返回中间结果                   │
-</span></span><span class="line"><span class="cl">│          │           ▲                       │
-</span></span><span class="line"><span class="cl">▼          │           │ 是(超时/超次数)         │
-</span></span><span class="line"><span class="cl">追加到      │     ┌───────────────┐             │
-</span></span><span class="line"><span class="cl">Scratchpad │     │ 是否达到停止条件? │            │
-</span></span><span class="line"><span class="cl">│          │     └───────┬───────┘             │
-</span></span><span class="line"><span class="cl">│          │             │ 否                   │
-</span></span><span class="line"><span class="cl">│          │             └─────────────────────→│
-</span></span><span class="line"><span class="cl">└──────────┴───────────────────────────────────┘
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[用户输入 Question] --&gt; B[构建 Prompt]
+</span></span><span class="line"><span class="cl">    B --&gt; C[LLM 生成 Thought]
+</span></span><span class="line"><span class="cl">    C --&gt; D{输出类型判断}
+</span></span><span class="line"><span class="cl">    D -- 包含 Action --&gt; E[解析 Action + Action Input]
+</span></span><span class="line"><span class="cl">    E --&gt; F[执行工具 Tool.run]
+</span></span><span class="line"><span class="cl">    F --&gt; G[获得 Observation]
+</span></span><span class="line"><span class="cl">    G --&gt; H[追加到 Scratchpad]
+</span></span><span class="line"><span class="cl">    H --&gt; I{是否达到停止条件?}
+</span></span><span class="line"><span class="cl">    I -- 否 --&gt; C
+</span></span><span class="line"><span class="cl">    I -- 是: 超时 / 超次数 --&gt; J[强制停止并返回中间结果]
+</span></span><span class="line"><span class="cl">    D -- 包含 Final Answer --&gt; K[提取最终答案]
+</span></span><span class="line"><span class="cl">    K --&gt; L[返回给用户]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h1 id="三agent-loop-的状态停止与动作">三、Agent Loop 的状态、停止与动作
@@ -823,21 +695,19 @@
 </span><span class="lnt"> 9
 </span><span class="lnt">10
 </span><span class="lnt">11
-</span><span class="lnt">12
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">停止条件
-</span></span><span class="line"><span class="cl">├── 正常停止
-</span></span><span class="line"><span class="cl">│   ├── LLM 不发起 tool_calls → 路由到 END（它认为信息够了）
-</span></span><span class="line"><span class="cl">│   └── 工具设置 return_direct=True → 直接返回工具结果
-</span></span><span class="line"><span class="cl">│
-</span></span><span class="line"><span class="cl">├── 限制停止（防止无限循环）
-</span></span><span class="line"><span class="cl">│   ├── 模型调用次数达到上限（ModelCallLimitMiddleware）
-</span></span><span class="line"><span class="cl">│   └── 工具调用次数达到上限（ToolCallLimitMiddleware）
-</span></span><span class="line"><span class="cl">│
-</span></span><span class="line"><span class="cl">└── 异常停止
-</span></span><span class="line"><span class="cl">    ├── LLM API 调用失败（可通过 ModelRetryMiddleware 重试）
-</span></span><span class="line"><span class="cl">    └── 工具执行异常（可通过 ToolRetryMiddleware 重试）
+<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">flowchart</span> <span class="n">TD</span>
+</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="p">[</span><span class="err">停止条件</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">A</span> <span class="o">--&gt;</span> <span class="n">B</span><span class="p">[</span><span class="err">正常停止</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">B</span> <span class="o">--&gt;</span> <span class="n">B1</span><span class="p">[</span><span class="n">LLM</span> <span class="err">不发起</span> <span class="n">tool_calls</span><span class="o">&lt;</span><span class="n">br</span><span class="o">/&gt;</span><span class="err">路由到</span> <span class="n">END</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">B</span> <span class="o">--&gt;</span> <span class="n">B2</span><span class="p">[</span><span class="err">工具设置</span> <span class="n">return_direct</span><span class="o">=</span><span class="n">True</span><span class="o">&lt;</span><span class="n">br</span><span class="o">/&gt;</span><span class="err">直接返回工具结果</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">A</span> <span class="o">--&gt;</span> <span class="n">C</span><span class="p">[</span><span class="err">限制停止</span><span class="p">:</span> <span class="err">防止无限循环</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">C</span> <span class="o">--&gt;</span> <span class="n">C1</span><span class="p">[</span><span class="err">模型调用次数达到上限</span><span class="o">&lt;</span><span class="n">br</span><span class="o">/&gt;</span><span class="n">ModelCallLimitMiddleware</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">C</span> <span class="o">--&gt;</span> <span class="n">C2</span><span class="p">[</span><span class="err">工具调用次数达到上限</span><span class="o">&lt;</span><span class="n">br</span><span class="o">/&gt;</span><span class="n">ToolCallLimitMiddleware</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">A</span> <span class="o">--&gt;</span> <span class="n">D</span><span class="p">[</span><span class="err">异常停止</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">D</span> <span class="o">--&gt;</span> <span class="n">D1</span><span class="p">[</span><span class="n">LLM</span> <span class="n">API</span> <span class="err">调用失败</span><span class="o">&lt;</span><span class="n">br</span><span class="o">/&gt;</span><span class="err">可通过</span> <span class="n">ModelRetryMiddleware</span> <span class="err">重试</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">D</span> <span class="o">--&gt;</span> <span class="n">D2</span><span class="p">[</span><span class="err">工具执行异常</span><span class="o">&lt;</span><span class="n">br</span><span class="o">/&gt;</span><span class="err">可通过</span> <span class="n">ToolRetryMiddleware</span> <span class="err">重试</span><span class="p">]</span>
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p><strong>为什么必须有停止条件</strong>：没有停止条件可能导致死循环（重复相同动作）、成本失控（无限调用 LLM）、资源耗尽（上下文溢出）。</p>
@@ -1036,60 +906,20 @@
 </div>
 </div><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span><span class="lnt">26
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">┌───────┐
-</span></span><span class="line"><span class="cl">│ Start │
-</span></span><span class="line"><span class="cl">└───┬───┘
-</span></span><span class="line"><span class="cl">    ▼
-</span></span><span class="line"><span class="cl">┌─────────────────┐
-</span></span><span class="line"><span class="cl">│  Agent 节点      │
-</span></span><span class="line"><span class="cl">│  (调用 LLM)     │◄──────────────────┐
-</span></span><span class="line"><span class="cl">└────────┬────────┘                   │
-</span></span><span class="line"><span class="cl">         ▼                            │
-</span></span><span class="line"><span class="cl">┌─────────────────┐                   │
-</span></span><span class="line"><span class="cl">│ tools_condition  │                   │
-</span></span><span class="line"><span class="cl">│ 检查 tool_calls  │                   │
-</span></span><span class="line"><span class="cl">└───┬─────────┬───┘                   │
-</span></span><span class="line"><span class="cl">    │         │                       │
-</span></span><span class="line"><span class="cl"> tool_calls  tool_calls               │
-</span></span><span class="line"><span class="cl">   非空        为空                    │
-</span></span><span class="line"><span class="cl">    │         │                       │
-</span></span><span class="line"><span class="cl">    ▼         ▼                       │
-</span></span><span class="line"><span class="cl">┌────────┐  ┌───────┐                │
-</span></span><span class="line"><span class="cl">│ Tools  │  │  End  │                │
-</span></span><span class="line"><span class="cl">│ 节点   │  └───────┘                │
-</span></span><span class="line"><span class="cl">│(执行   │                           │
-</span></span><span class="line"><span class="cl">│所有工具)│                           │
-</span></span><span class="line"><span class="cl">└───┬────┘                           │
-</span></span><span class="line"><span class="cl">    │  返回 ToolMessage               │
-</span></span><span class="line"><span class="cl">    └─────────────────────────────────┘
+<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">flowchart</span> <span class="n">TD</span>
+</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="p">[</span><span class="n">Start</span><span class="p">]</span> <span class="o">--&gt;</span> <span class="n">B</span><span class="p">[</span><span class="n">Agent</span> <span class="err">节点</span><span class="p">:</span> <span class="err">调用</span> <span class="n">LLM</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">B</span> <span class="o">--&gt;</span> <span class="n">C</span><span class="p">{</span><span class="n">tools_condition</span>\<span class="n">n检查</span> <span class="n">tool_calls</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="n">C</span> <span class="o">--</span> <span class="n">tool_calls</span> <span class="err">非空</span> <span class="o">--&gt;</span> <span class="n">D</span><span class="p">[</span><span class="n">Tools</span> <span class="err">节点</span><span class="p">:</span> <span class="err">执行所有工具</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">C</span> <span class="o">--</span> <span class="n">tool_calls</span> <span class="err">为空</span> <span class="o">--&gt;</span> <span class="n">E</span><span class="p">[</span><span class="n">End</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">D</span> <span class="o">--</span> <span class="err">返回</span> <span class="n">ToolMessage</span> <span class="o">--&gt;</span> <span class="n">B</span>
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h2 id="44-middleware-扩展机制">4.4 Middleware 扩展机制
@@ -1226,26 +1056,18 @@
 </span><span class="lnt"> 8
 </span><span class="lnt"> 9
 </span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">┌─────────┐     ┌──────────────┐     ┌─────────────────┐     ┌──────────┐
-</span></span><span class="line"><span class="cl">│  Agent  │────▶│ AIMessage    │────▶│ Human Review    │────▶│  Tools   │
-</span></span><span class="line"><span class="cl">│  (LLM)  │     │ tool_calls:  │     │ (拦截高风险工具)  │     │ (执行)   │
-</span></span><span class="line"><span class="cl">└─────────┘     │ send_email   │     └────────┬────────┘     └──────────┘
-</span></span><span class="line"><span class="cl">                └──────────────┘              │
-</span></span><span class="line"><span class="cl">                                        用户决策
-</span></span><span class="line"><span class="cl">                                    ┌────┬────┬────┐
-</span></span><span class="line"><span class="cl">                                    │    │    │    │
-</span></span><span class="line"><span class="cl">                                approve edit reject respond
-</span></span><span class="line"><span class="cl">                                    │    │    │    │
-</span></span><span class="line"><span class="cl">                                    ▼    ▼    ▼    ▼
-</span></span><span class="line"><span class="cl">                                  执行  修改  拒绝  人工
-</span></span><span class="line"><span class="cl">                                  原始  参数  并告  代替
-</span></span><span class="line"><span class="cl">                                  调用  后执行 知LLM 工具回答
+<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">flowchart</span> <span class="n">LR</span>
+</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="p">[</span><span class="n">Agent</span> <span class="o">/</span> <span class="n">LLM</span><span class="p">]</span> <span class="o">--&gt;</span> <span class="n">B</span><span class="p">[</span><span class="n">AIMessage</span><span class="p">:</span> <span class="n">tool_calls</span> <span class="n">send_email</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">B</span> <span class="o">--&gt;</span> <span class="n">C</span><span class="p">[</span><span class="n">Human</span> <span class="n">Review</span><span class="p">:</span> <span class="err">拦截高风险工具</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">C</span> <span class="o">--&gt;</span> <span class="n">D</span><span class="p">{</span><span class="err">用户决策</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="n">D</span> <span class="o">--</span> <span class="n">approve</span> <span class="o">--&gt;</span> <span class="n">E</span><span class="p">[</span><span class="err">执行原始调用</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">D</span> <span class="o">--</span> <span class="n">edit</span> <span class="o">--&gt;</span> <span class="n">F</span><span class="p">[</span><span class="err">修改参数后执行</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">D</span> <span class="o">--</span> <span class="n">reject</span> <span class="o">--&gt;</span> <span class="n">G</span><span class="p">[</span><span class="err">拒绝并告知</span> <span class="n">LLM</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">D</span> <span class="o">--</span> <span class="n">respond</span> <span class="o">--&gt;</span> <span class="n">H</span><span class="p">[</span><span class="err">人工代替工具回答</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">E</span> <span class="o">--&gt;</span> <span class="n">I</span><span class="p">[</span><span class="n">Tools</span> <span class="err">执行</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">F</span> <span class="o">--&gt;</span> <span class="n">I</span>
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h3 id="四种人工决策">四种人工决策
@@ -1339,80 +1161,18 @@
 </span><span class="lnt"> 8
 </span><span class="lnt"> 9
 </span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span><span class="lnt">26
-</span><span class="lnt">27
-</span><span class="lnt">28
-</span><span class="lnt">29
-</span><span class="lnt">30
-</span><span class="lnt">31
-</span><span class="lnt">32
-</span><span class="lnt">33
-</span><span class="lnt">34
-</span><span class="lnt">35
-</span><span class="lnt">36
-</span><span class="lnt">37
-</span><span class="lnt">38
-</span><span class="lnt">39
-</span><span class="lnt">40
-</span><span class="lnt">41
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Agent 输出: AIMessage(tool_calls=[
-</span></span><span class="line"><span class="cl">    {name: &#34;search_docs&#34;, args: {...}, id: &#34;call_1&#34;},
-</span></span><span class="line"><span class="cl">    {name: &#34;send_email&#34;,  args: {...}, id: &#34;call_2&#34;},
-</span></span><span class="line"><span class="cl">])
-</span></span><span class="line"><span class="cl">        │
-</span></span><span class="line"><span class="cl">        ▼
-</span></span><span class="line"><span class="cl">HumanInTheLoopMiddleware.after_model() 触发
-</span></span><span class="line"><span class="cl">        │
-</span></span><span class="line"><span class="cl">        ├── search_docs: 不在 interrupt_on 中 → 自动通过
-</span></span><span class="line"><span class="cl">        │
-</span></span><span class="line"><span class="cl">        └── send_email: 在 interrupt_on 中 → 触发 interrupt
-</span></span><span class="line"><span class="cl">                │
-</span></span><span class="line"><span class="cl">                ▼
-</span></span><span class="line"><span class="cl">        ┌──────────────────────────────────┐
-</span></span><span class="line"><span class="cl">        │  暂停执行，发送 HITLRequest:       │
-</span></span><span class="line"><span class="cl">        │  {                                │
-</span></span><span class="line"><span class="cl">        │    action_requests: [{            │
-</span></span><span class="line"><span class="cl">        │      name: &#34;send_email&#34;,          │
-</span></span><span class="line"><span class="cl">        │      args: {to: &#34;x@y.com&#34;, ...},  │
-</span></span><span class="line"><span class="cl">        │      description: &#34;发送邮件...&#34;    │
-</span></span><span class="line"><span class="cl">        │    }],                             │
-</span></span><span class="line"><span class="cl">        │    review_configs: [{             │
-</span></span><span class="line"><span class="cl">        │      action_name: &#34;send_email&#34;,   │
-</span></span><span class="line"><span class="cl">        │      allowed_decisions: [         │
-</span></span><span class="line"><span class="cl">        │        &#34;approve&#34;,&#34;edit&#34;,          │
-</span></span><span class="line"><span class="cl">        │        &#34;reject&#34;,&#34;respond&#34;         │
-</span></span><span class="line"><span class="cl">        │      ]                            │
-</span></span><span class="line"><span class="cl">        │    }]                              │
-</span></span><span class="line"><span class="cl">        │  }                                │
-</span></span><span class="line"><span class="cl">        └──────────────┬───────────────────┘
-</span></span><span class="line"><span class="cl">                       │
-</span></span><span class="line"><span class="cl">                  等待人工响应
-</span></span><span class="line"><span class="cl">                       │
-</span></span><span class="line"><span class="cl">                       ▼
-</span></span><span class="line"><span class="cl">        ┌──────────────────────────────────┐
-</span></span><span class="line"><span class="cl">        │  收到 HITLResponse:               │
-</span></span><span class="line"><span class="cl">        │  {decisions: [{type: &#34;approve&#34;}]} │
-</span></span><span class="line"><span class="cl">        └──────────────┬───────────────────┘
-</span></span><span class="line"><span class="cl">                       │
-</span></span><span class="line"><span class="cl">                       ▼
-</span></span><span class="line"><span class="cl">              继续执行 send_email 工具
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[Agent 输出 AIMessage: search_docs + send_email] --&gt; B[HumanInTheLoopMiddleware.after_model]
+</span></span><span class="line"><span class="cl">    B --&gt; C[search_docs 不在 interrupt_on]
+</span></span><span class="line"><span class="cl">    C --&gt; D[自动通过]
+</span></span><span class="line"><span class="cl">    B --&gt; E[send_email 在 interrupt_on]
+</span></span><span class="line"><span class="cl">    E --&gt; F[触发 interrupt]
+</span></span><span class="line"><span class="cl">    F --&gt; G[暂停执行并发送 HITLRequest]
+</span></span><span class="line"><span class="cl">    G --&gt; H[等待人工响应]
+</span></span><span class="line"><span class="cl">    H --&gt; I[收到 HITLResponse: approve]
+</span></span><span class="line"><span class="cl">    I --&gt; J[继续执行 send_email 工具]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h3 id="各决策类型的消息影响">各决策类型的消息影响
@@ -1581,32 +1341,24 @@
 </h2><p>Scratchpad（草稿本）是 Agent 在循环中累积的<strong>历史执行记录文本</strong>，拼接到 prompt 末尾让 LLM &ldquo;看到&quot;之前做了什么：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">prompt 结构:
-</span></span><span class="line"><span class="cl">┌────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│  系统指令 + 工具描述 + 格式要求             │ ← 固定部分
-</span></span><span class="line"><span class="cl">├────────────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│  Question: 用户的问题                       │ ← 固定部分
-</span></span><span class="line"><span class="cl">├────────────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│  Thought: 我需要查订单...                   │
-</span></span><span class="line"><span class="cl">│  Action: query_orders                      │
-</span></span><span class="line"><span class="cl">│  Action Input: {&#34;user_id&#34;: &#34;1&#34;}            │  ← scratchpad
-</span></span><span class="line"><span class="cl">│  Observation: [订单数据...]                 │    每轮追加一组
-</span></span><span class="line"><span class="cl">│  Thought:                                  │ ← LLM 从这里继续
-</span></span><span class="line"><span class="cl">└────────────────────────────────────────────┘
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[系统指令 + 工具描述 + 格式要求&lt;br/&gt;固定部分] --&gt; B[Question: 用户的问题&lt;br/&gt;固定部分]
+</span></span><span class="line"><span class="cl">    B --&gt; C[Scratchpad: 每轮追加一组执行记录]
+</span></span><span class="line"><span class="cl">    C --&gt; C1[Thought: 我需要查订单...]
+</span></span><span class="line"><span class="cl">    C1 --&gt; C2[Action: query_orders]
+</span></span><span class="line"><span class="cl">    C2 --&gt; C3[Action Input: user_id = 1]
+</span></span><span class="line"><span class="cl">    C3 --&gt; C4[Observation: 订单数据]
+</span></span><span class="line"><span class="cl">    C4 --&gt; D[Thought:&lt;br/&gt;LLM 从这里继续]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><div class="table-wrapper"><table>
@@ -1641,13 +1393,17 @@
 </span><span class="lnt">3
 </span><span class="lnt">4
 </span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">LLM 生成: &#34;Thought: ...\nAction: search\nAction Input: query\n&#34;
-</span></span><span class="line"><span class="cl">                                                              │
-</span></span><span class="line"><span class="cl">            API 检测到即将输出 &#34;\nObservation&#34; → 强制停止 ←────┘
-</span></span><span class="line"><span class="cl">                                                              │
-</span></span><span class="line"><span class="cl">程序拿到截断文本 → 正则解析 → 调用工具 → 将真实结果填入 Observation
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[LLM 生成&lt;br/&gt;Thought / Action / Action Input] --&gt; B{API 检测到 Observation 停止序列?}
+</span></span><span class="line"><span class="cl">    B -- 是 --&gt; C[强制停止生成]
+</span></span><span class="line"><span class="cl">    C --&gt; D[程序拿到截断文本]
+</span></span><span class="line"><span class="cl">    D --&gt; E[正则解析]
+</span></span><span class="line"><span class="cl">    E --&gt; F[调用工具]
+</span></span><span class="line"><span class="cl">    F --&gt; G[将真实结果填入 Observation]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>这是模型服务端的功能，不是 LangChain 实现的。LangChain 只是通过 <code>llm.bind(stop=...)</code> 把参数传给 API。</p>
@@ -1668,70 +1424,42 @@
 </span><span class="lnt">10
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">LLM 输出文本
-</span></span><span class="line"><span class="cl">    │
-</span></span><span class="line"><span class="cl">    ├── 匹配到 &#34;Action:&#34; + &#34;Action Input:&#34; ?
-</span></span><span class="line"><span class="cl">    │       └── YES → 提取工具名和参数 → AgentAction（继续循环）
-</span></span><span class="line"><span class="cl">    │
-</span></span><span class="line"><span class="cl">    ├── 匹配到 &#34;Final Answer:&#34; ?
-</span></span><span class="line"><span class="cl">    │       └── YES → 提取最终答案 → AgentFinish（结束循环）
-</span></span><span class="line"><span class="cl">    │
-</span></span><span class="line"><span class="cl">    └── 都不匹配 → OutputParserException
-</span></span><span class="line"><span class="cl">              └── handle_parsing_errors=True → 错误反馈给 LLM 自我修正
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[LLM 输出文本] --&gt; B{匹配到 Action + Action Input?}
+</span></span><span class="line"><span class="cl">    B -- YES --&gt; C[提取工具名和参数]
+</span></span><span class="line"><span class="cl">    C --&gt; D[AgentAction: 继续循环]
+</span></span><span class="line"><span class="cl">    B -- NO --&gt; E{匹配到 Final Answer?}
+</span></span><span class="line"><span class="cl">    E -- YES --&gt; F[提取最终答案]
+</span></span><span class="line"><span class="cl">    F --&gt; G[AgentFinish: 结束循环]
+</span></span><span class="line"><span class="cl">    E -- NO --&gt; H[OutputParserException]
+</span></span><span class="line"><span class="cl">    H --&gt; I[handle_parsing_errors=True]
+</span></span><span class="line"><span class="cl">    I --&gt; J[错误反馈给 LLM 自我修正]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h2 id="54-旧版循环逻辑">5.4 旧版循环逻辑
 </h2><p>AgentExecutor 的核心是一个 while 循环：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">初始化 intermediate_steps=[]
-</span></span><span class="line"><span class="cl">        │
-</span></span><span class="line"><span class="cl">        ▼
-</span></span><span class="line"><span class="cl">┌──── _should_continue? ◀────────────────┐
-</span></span><span class="line"><span class="cl">│     (iterations &lt; max_iterations?)     │
-</span></span><span class="line"><span class="cl">│           │                             │
-</span></span><span class="line"><span class="cl">│          YES                            │
-</span></span><span class="line"><span class="cl">│           ▼                             │
-</span></span><span class="line"><span class="cl">│     agent.plan(intermediate_steps)      │
-</span></span><span class="line"><span class="cl">│           │                             │
-</span></span><span class="line"><span class="cl">│     ┌─────┴─────┐                      │
-</span></span><span class="line"><span class="cl">│     ▼           ▼                      │
-</span></span><span class="line"><span class="cl">│ AgentAction  AgentFinish               │
-</span></span><span class="line"><span class="cl">│     │           │                      │
-</span></span><span class="line"><span class="cl">│     ▼           ▼                      │
-</span></span><span class="line"><span class="cl">│ tool.run()   返回最终答案               │
-</span></span><span class="line"><span class="cl">│     │                                   │
-</span></span><span class="line"><span class="cl">│     ▼                                   │
-</span></span><span class="line"><span class="cl">│ intermediate_steps.append(action, obs) ─┘
-</span></span><span class="line"><span class="cl">│
-</span></span><span class="line"><span class="cl">│ NO (超出限制)
-</span></span><span class="line"><span class="cl">▼
-</span></span><span class="line"><span class="cl">强制停止，返回结果
+<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">flowchart</span> <span class="n">TD</span>
+</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="p">[</span><span class="err">初始化</span> <span class="n">intermediate_steps</span> <span class="o">=</span> <span class="p">[]]</span> <span class="o">--&gt;</span> <span class="n">B</span><span class="p">{</span><span class="n">_should_continue</span><span class="err">?</span>\<span class="n">niterations</span> <span class="o">&lt;</span> <span class="n">max_iterations</span><span class="err">?</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="n">B</span> <span class="o">--</span> <span class="n">NO</span><span class="p">:</span> <span class="err">超出限制</span> <span class="o">--&gt;</span> <span class="n">C</span><span class="p">[</span><span class="err">强制停止，返回结果</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">B</span> <span class="o">--</span> <span class="n">YES</span> <span class="o">--&gt;</span> <span class="n">D</span><span class="p">[</span><span class="n">agent</span><span class="o">.</span><span class="n">plan</span><span class="p">(</span><span class="n">intermediate_steps</span><span class="p">)]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">D</span> <span class="o">--&gt;</span> <span class="n">E</span><span class="p">{</span><span class="err">返回类型</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="n">E</span> <span class="o">--</span> <span class="n">AgentAction</span> <span class="o">--&gt;</span> <span class="n">F</span><span class="p">[</span><span class="k">tool</span><span class="o">.</span><span class="n">run</span><span class="p">()]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">F</span> <span class="o">--&gt;</span> <span class="n">G</span><span class="p">[</span><span class="n">intermediate_steps</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">action</span><span class="p">,</span> <span class="n">obs</span><span class="p">)]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">G</span> <span class="o">--&gt;</span> <span class="n">B</span>
+</span></span><span class="line"><span class="cl">    <span class="n">E</span> <span class="o">--</span> <span class="n">AgentFinish</span> <span class="o">--&gt;</span> <span class="n">H</span><span class="p">[</span><span class="err">返回最终答案</span><span class="p">]</span>
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>核心数据结构：</p>
@@ -1743,28 +1471,16 @@
 <h1 id="六版本演进">六、版本演进
 </h1><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
 </span></code></pre></td>
 <td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">langchain 0.1.x (2023)
-</span></span><span class="line"><span class="cl">│  AgentExecutor + ZeroShotAgent（文本协议 + 正则解析）
-</span></span><span class="line"><span class="cl">│
-</span></span><span class="line"><span class="cl">├── langchain 0.2.x (2024)
-</span></span><span class="line"><span class="cl">│   AgentExecutor + create_react_agent（LCEL（LangChain Expression Language） 链）
-</span></span><span class="line"><span class="cl">│   langgraph.prebuilt.create_react_agent（状态图，推荐）
-</span></span><span class="line"><span class="cl">│
-</span></span><span class="line"><span class="cl">└── langchain 1.0+ (2025)
-</span></span><span class="line"><span class="cl">    langchain.agents.create_agent（统一入口）
-</span></span><span class="line"><span class="cl">    AgentExecutor 已移除
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
+</span></span><span class="line"><span class="cl">    A[langchain 0.1.x 2023\nAgentExecutor + ZeroShotAgent\n文本协议 + 正则解析]
+</span></span><span class="line"><span class="cl">    A --&gt; B[langchain 0.2.x 2024\nAgentExecutor + create_react_agent\nlanggraph.prebuilt.create_react_agent]
+</span></span><span class="line"><span class="cl">    B --&gt; C[langchain 1.0+ 2025\nlangchain.agents.create_agent\nAgentExecutor 已移除]
 </span></span></code></pre></td></tr></table>
 </div>
 </div><div class="table-wrapper"><table>
