@@ -8360,11 +8360,122 @@ Claude Code 支持在 frontmatter 里加 &lt;code&gt;disable-model-invocation: t
   &lt;/tbody&gt;
 &lt;/table&gt;
 &lt;p&gt;Claude Code 的 &lt;code&gt;skillListingBudgetFraction&lt;/code&gt;（默认 1% context window）+ 对低频 Skill 的 trim 机制，本质上就是在全量写入的基础上做了&lt;strong&gt;轻量级优先级排序&lt;/strong&gt;，不需要引入外部 Router。&lt;/p&gt;
+&lt;h4 id=&#34;624a-skills-30100分类分组--按类别动态挂载&#34;&gt;6.2.4a Skills 30–100：分类分组 + 按类别动态挂载
+&lt;/h4&gt;&lt;p&gt;&lt;strong&gt;核心思路&lt;/strong&gt;：不是一次性把所有 Skill 的 metadata 写入 system prompt，而是先按&lt;strong&gt;领域/功能&lt;/strong&gt;分组，每轮根据用户意图只挂载相关分组的 metadata。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;实现方式&lt;/strong&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;给每个 Skill 打 category 标签&lt;/strong&gt;，在 SKILL.md 的 frontmatter 里加一个 &lt;code&gt;category&lt;/code&gt; 字段：&lt;/li&gt;
+&lt;/ol&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-yaml&#34; data-lang=&#34;yaml&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;nn&#34;&gt;---&lt;/span&gt;&lt;span class=&#34;w&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;w&#34;&gt;&lt;/span&gt;&lt;span class=&#34;nt&#34;&gt;name&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;&lt;span class=&#34;w&#34;&gt; &lt;/span&gt;&lt;span class=&#34;l&#34;&gt;create-chart&lt;/span&gt;&lt;span class=&#34;w&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;w&#34;&gt;&lt;/span&gt;&lt;span class=&#34;nt&#34;&gt;description&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;&lt;span class=&#34;w&#34;&gt; &lt;/span&gt;&lt;span class=&#34;l&#34;&gt;生成各类数据可视化图表（柱状图、折线图、饼图）&lt;/span&gt;&lt;span class=&#34;w&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;w&#34;&gt;&lt;/span&gt;&lt;span class=&#34;nt&#34;&gt;category&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;&lt;span class=&#34;w&#34;&gt; &lt;/span&gt;&lt;span class=&#34;l&#34;&gt;data-visualization&lt;/span&gt;&lt;span class=&#34;w&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;w&#34;&gt;&lt;/span&gt;&lt;span class=&#34;nn&#34;&gt;---&lt;/span&gt;&lt;span class=&#34;w&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;ol start=&#34;2&#34;&gt;
+&lt;li&gt;&lt;strong&gt;维护一个分类索引&lt;/strong&gt;，例如 &lt;code&gt;skills-registry.yaml&lt;/code&gt;，记录每个 category 包含哪些 Skills 及其 description：&lt;/li&gt;
+&lt;/ol&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-yaml&#34; data-lang=&#34;yaml&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;nt&#34;&gt;categories&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;&lt;span class=&#34;w&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;w&#34;&gt;  &lt;/span&gt;&lt;span class=&#34;nt&#34;&gt;data-visualization&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;&lt;span class=&#34;w&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;w&#34;&gt;    &lt;/span&gt;- &lt;span class=&#34;nt&#34;&gt;name&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;&lt;span class=&#34;w&#34;&gt; &lt;/span&gt;&lt;span class=&#34;l&#34;&gt;create-chart&lt;/span&gt;&lt;span class=&#34;w&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;w&#34;&gt;      &lt;/span&gt;&lt;span class=&#34;nt&#34;&gt;description&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;&lt;span class=&#34;w&#34;&gt; &lt;/span&gt;&lt;span class=&#34;l&#34;&gt;生成各类数据可视化图表&lt;/span&gt;&lt;span class=&#34;w&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;w&#34;&gt;    &lt;/span&gt;- &lt;span class=&#34;nt&#34;&gt;name&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;&lt;span class=&#34;w&#34;&gt; &lt;/span&gt;&lt;span class=&#34;l&#34;&gt;export-csv&lt;/span&gt;&lt;span class=&#34;w&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;w&#34;&gt;      &lt;/span&gt;&lt;span class=&#34;nt&#34;&gt;description&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;&lt;span class=&#34;w&#34;&gt; &lt;/span&gt;&lt;span class=&#34;l&#34;&gt;将数据导出为 CSV 文件&lt;/span&gt;&lt;span class=&#34;w&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;w&#34;&gt;  &lt;/span&gt;&lt;span class=&#34;nt&#34;&gt;code-review&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;&lt;span class=&#34;w&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;w&#34;&gt;    &lt;/span&gt;- &lt;span class=&#34;nt&#34;&gt;name&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;&lt;span class=&#34;w&#34;&gt; &lt;/span&gt;&lt;span class=&#34;l&#34;&gt;review-pr&lt;/span&gt;&lt;span class=&#34;w&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;w&#34;&gt;      &lt;/span&gt;&lt;span class=&#34;nt&#34;&gt;description&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;&lt;span class=&#34;w&#34;&gt; &lt;/span&gt;&lt;span class=&#34;l&#34;&gt;审查 Pull Request，检查 bug 和安全风险&lt;/span&gt;&lt;span class=&#34;w&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;w&#34;&gt;    &lt;/span&gt;- &lt;span class=&#34;nt&#34;&gt;name&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;&lt;span class=&#34;w&#34;&gt; &lt;/span&gt;&lt;span class=&#34;l&#34;&gt;lint-fix&lt;/span&gt;&lt;span class=&#34;w&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;w&#34;&gt;      &lt;/span&gt;&lt;span class=&#34;nt&#34;&gt;description&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt;&lt;span class=&#34;w&#34;&gt; &lt;/span&gt;&lt;span class=&#34;l&#34;&gt;自动修复代码风格问题&lt;/span&gt;&lt;span class=&#34;w&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;ol start=&#34;3&#34;&gt;
+&lt;li&gt;&lt;strong&gt;前置意图分类器&lt;/strong&gt;：每轮对话开始时，用一个轻量 prompt（或规则匹配）判断当前请求属于哪些 category，只把这些 category 的 Skill metadata 注入上下文。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;strong&gt;代价与注意事项&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;分类粒度需要仔细设计：太粗（一个 category 50 个 Skills）等于没分；太细（一个 category 2 个 Skills）维护成本高且容易漏挂。&lt;/li&gt;
+&lt;li&gt;意图分类本身可能出错，导致正确的 category 没被挂载。可以设一个&amp;quot;通用 category&amp;rdquo;（放跨领域的常用 Skills）每次都挂载，作为兜底。&lt;/li&gt;
+&lt;li&gt;适合场景：Skills 有明显的业务域边界，比如&amp;quot;代码类&amp;rdquo;、&amp;ldquo;文档类&amp;rdquo;、&amp;ldquo;数据类&amp;quot;各自独立，跨域调用少。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4 id=&#34;624b-skills-100前置-embedding-检索--动态注入&#34;&gt;6.2.4b Skills 100+：前置 embedding 检索 + 动态注入
+&lt;/h4&gt;&lt;p&gt;&lt;strong&gt;核心思路&lt;/strong&gt;：把所有 Skill 的 &lt;code&gt;name + description&lt;/code&gt; 离线建立向量索引，每轮对话用用户的请求做 embedding 检索，只把 Top-K 个最相关的 Skill metadata 动态注入当轮 system prompt。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;实现步骤&lt;/strong&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;离线建索引&lt;/strong&gt;：对每个 Skill 的 &lt;code&gt;name + description&lt;/code&gt; 做 embedding，存入向量数据库（Pinecone、Weaviate、pgvector 等）。Skill 更新时重建对应向量。&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;每轮检索&lt;/strong&gt;：用户请求到来时，先对请求文本做 embedding，在向量库里检索 Top-K（通常 5–15）个相似 Skill。&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;动态注入&lt;/strong&gt;：将检索出的 Skill metadata 拼成列表，注入当轮的 system prompt 或第一条 user message 之前。后续流程与全量写入完全相同——模型从这份缩减列表里决策是否触发某个 Skill。&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;strong&gt;关键工程细节&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;K 的选取&lt;/strong&gt;：K 太小会漏掉相关 Skill；K 太大等于没检索。经验值：先检索 Top-20，再用模型做一轮 rerank 取 Top-5 注入。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;冷启动问题&lt;/strong&gt;：用户第一句话往往很短，embedding 质量差。可以用对话前几轮的消息拼接作为检索 query，而不是只用当轮输入。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;缓存&lt;/strong&gt;：相似请求的检索结果可以缓存（TTL 5–10 分钟），减少向量检索的延迟和费用。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;兜底策略&lt;/strong&gt;：始终把&amp;quot;高频通用 Skills&amp;rdquo;（使用频率 Top-5）加入每轮注入列表，不经过检索，防止漏召回。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;代价汇总&lt;/strong&gt;&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;代价&lt;/th&gt;
+          &lt;th&gt;说明&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Router 误召回&lt;/td&gt;
+          &lt;td&gt;漏掉的 Skill 模型完全看不到，比&amp;quot;看到没选&amp;quot;更严重&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;额外延迟&lt;/td&gt;
+          &lt;td&gt;每轮多一次 embedding 计算 + 向量检索（通常 50–200ms）&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;系统复杂度&lt;/td&gt;
+          &lt;td&gt;多了索引构建、向量库维护、检索服务三个组件&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;级联失败&lt;/td&gt;
+          &lt;td&gt;检索服务挂了 = 只剩兜底的通用 Skills&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;&lt;strong&gt;适合场景&lt;/strong&gt;：Skills 数量确实超过 100 且有明显的长尾分布（大部分 Skills 只在特定垂类被使用），或者上下文窗口成本极其敏感的场景。如果 100 个 Skills 的 description 都很常用，全量写入仍然更可靠。&lt;/p&gt;
 &lt;h4 id=&#34;625-一个关键澄清多轮循环中挑选的表述&#34;&gt;6.2.5 一个关键澄清：&amp;ldquo;多轮循环中挑选&amp;quot;的表述
 &lt;/h4&gt;&lt;p&gt;严格来说，Skill 的选择发生在&lt;strong&gt;每一轮独立决策&lt;/strong&gt;，而非&amp;quot;跨多轮演进&amp;rdquo;：&lt;/p&gt;
 &lt;ul&gt;
-&lt;li&gt;第 1 轮用户说&amp;quot;查天气&amp;rdquo; → 模型扫描列表，选 &lt;code&gt;get_weather&lt;/code&gt;&lt;/li&gt;
-&lt;li&gt;第 2 轮用户说&amp;quot;翻译文章&amp;rdquo; → 模型&lt;strong&gt;重新&lt;/strong&gt;扫描列表，选 &lt;code&gt;translate&lt;/code&gt;，不受上一轮影响&lt;/li&gt;
+&lt;li&gt;第 1 轮用户说&amp;quot;查天气&amp;quot; → 模型扫描列表，选 &lt;code&gt;get_weather&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;第 2 轮用户说&amp;quot;翻译文章&amp;quot; → 模型&lt;strong&gt;重新&lt;/strong&gt;扫描列表，选 &lt;code&gt;translate&lt;/code&gt;，不受上一轮影响&lt;/li&gt;
 &lt;/ul&gt;
 &lt;p&gt;所以它是&amp;quot;每轮静态全量扫描&amp;quot;，不是&amp;quot;多轮动态演进&amp;quot;。这个表述是准确的。&lt;/p&gt;
 &lt;h4 id=&#34;626-一句话记住&#34;&gt;6.2.6 一句话记住

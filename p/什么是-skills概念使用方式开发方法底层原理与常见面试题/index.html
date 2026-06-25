@@ -10,7 +10,7 @@
 <meta property='og:description' content="写在前面 最近在使用 Claude Code、Cursor、Ducc 这类命令行 / IDE 研发 Agent 时，&ldquo;Skills&quot;这个词出现得越来越频繁。\n很多人第一次接触 Skills，会把它和：\nPrompt 模板 System Prompt MCP（Model Context Protocol） Tools / Function Calling Agent / Subagent Slash Command Plugin 混为一谈。\n但 Skills 实际上是一个有明确边界的概念。\n如果用一句话先做总定义：\nSkills 是一种按需加载、可被模型自主发现并使用的&quot;任务方法包&rdquo;，它把&quot;做某一类任务的方法、流程、约束、参考资料&quot;封装成一组文件，让 Agent 在合适的时机自动取用。\n它解决的核心问题是：\n怎么把&quot;经验和方法&quot;喂给模型，而不是每次都靠用户在 prompt 里反复说 怎么避免一次性把所有方法塞进 system prompt，把上下文撑爆 怎么让&quot;团队最佳实践&quot;和&quot;工具能力&quot;一起被 Agent 复用 下面分十一个部分，把 Skills 从概念到落地讲清楚。本文使用 Claude Code 的 Skills 实现作为例子，因为它是目前 Skills 形态最完整、最具代表性的实现。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、SOP、MCP、IDE、CLI、YAML、MD、DSL、SDK、SP（System Prompt）。\n目录 Skills 是什么 Skills 解决了什么问题 Skills 的基本结构 Skills 怎么使用 Skills 怎么开发 Skills 的底层原理 Skills 与 MCP、Tools、Subagent 的区别 Skills 的最佳实践 Skills 常见高频面试题 附录：进一步阅读 1. Skills 是什么 1.1 一句话定义 Skills 是 Agent 用的&quot;按需加载的方法书&quot;。\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/%E4%BB%80%E4%B9%88%E6%98%AF-skills%E6%A6%82%E5%BF%B5%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F%E5%BC%80%E5%8F%91%E6%96%B9%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/'>
 <meta property='og:site_name' content='Agsol Blog'>
-<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='skills' /><meta property='article:tag' content='claude-code' /><meta property='article:tag' content='agent' /><meta property='article:published_time' content='2026-06-11T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-06-11T00:00:00&#43;00:00'/>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='skills' /><meta property='article:tag' content='agent' /><meta property='article:published_time' content='2026-06-11T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-06-11T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题">
 <meta name="twitter:description" content="写在前面 最近在使用 Claude Code、Cursor、Ducc 这类命令行 / IDE 研发 Agent 时，&ldquo;Skills&quot;这个词出现得越来越频繁。\n很多人第一次接触 Skills，会把它和：\nPrompt 模板 System Prompt MCP（Model Context Protocol） Tools / Function Calling Agent / Subagent Slash Command Plugin 混为一谈。\n但 Skills 实际上是一个有明确边界的概念。\n如果用一句话先做总定义：\nSkills 是一种按需加载、可被模型自主发现并使用的&quot;任务方法包&rdquo;，它把&quot;做某一类任务的方法、流程、约束、参考资料&quot;封装成一组文件，让 Agent 在合适的时机自动取用。\n它解决的核心问题是：\n怎么把&quot;经验和方法&quot;喂给模型，而不是每次都靠用户在 prompt 里反复说 怎么避免一次性把所有方法塞进 system prompt，把上下文撑爆 怎么让&quot;团队最佳实践&quot;和&quot;工具能力&quot;一起被 Agent 复用 下面分十一个部分，把 Skills 从概念到落地讲清楚。本文使用 Claude Code 的 Skills 实现作为例子，因为它是目前 Skills 形态最完整、最具代表性的实现。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、SOP、MCP、IDE、CLI、YAML、MD、DSL、SDK、SP（System Prompt）。\n目录 Skills 是什么 Skills 解决了什么问题 Skills 的基本结构 Skills 怎么使用 Skills 怎么开发 Skills 的底层原理 Skills 与 MCP、Tools、Subagent 的区别 Skills 的最佳实践 Skills 常见高频面试题 附录：进一步阅读 1. Skills 是什么 1.1 一句话定义 Skills 是 Agent 用的&quot;按需加载的方法书&quot;。\n">
     <link rel="shortcut icon" href="/favicon.ico" />
@@ -314,6 +314,8 @@
             <li><a href="#622-lost-in-the-middle-问题被夸大了">6.2.2 &ldquo;Lost-in-the-Middle&rdquo; 问题被夸大了</a></li>
             <li><a href="#623-每轮-embedding-检索--动态注入不是银弹">6.2.3 &ldquo;每轮 embedding 检索 + 动态注入&quot;不是银弹</a></li>
             <li><a href="#624-实际的工程权衡">6.2.4 实际的工程权衡</a></li>
+            <li><a href="#624a-skills-30100分类分组--按类别动态挂载">6.2.4a Skills 30–100：分类分组 + 按类别动态挂载</a></li>
+            <li><a href="#624b-skills-100前置-embedding-检索--动态注入">6.2.4b Skills 100+：前置 embedding 检索 + 动态注入</a></li>
             <li><a href="#625-一个关键澄清多轮循环中挑选的表述">6.2.5 一个关键澄清：&ldquo;多轮循环中挑选&quot;的表述</a></li>
             <li><a href="#626-一句话记住">6.2.6 一句话记住</a></li>
           </ul>
@@ -2473,11 +2475,122 @@ Claude Code 支持在 frontmatter 里加 <code>disable-model-invocation: true</c
   </tbody>
 </table></div>
 <p>Claude Code 的 <code>skillListingBudgetFraction</code>（默认 1% context window）+ 对低频 Skill 的 trim 机制，本质上就是在全量写入的基础上做了<strong>轻量级优先级排序</strong>，不需要引入外部 Router。</p>
+<h4 id="624a-skills-30100分类分组--按类别动态挂载">6.2.4a Skills 30–100：分类分组 + 按类别动态挂载
+</h4><p><strong>核心思路</strong>：不是一次性把所有 Skill 的 metadata 写入 system prompt，而是先按<strong>领域/功能</strong>分组，每轮根据用户意图只挂载相关分组的 metadata。</p>
+<p><strong>实现方式</strong></p>
+<ol>
+<li><strong>给每个 Skill 打 category 标签</strong>，在 SKILL.md 的 frontmatter 里加一个 <code>category</code> 字段：</li>
+</ol>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nn">---</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l">create-chart</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l">生成各类数据可视化图表（柱状图、折线图、饼图）</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">category</span><span class="p">:</span><span class="w"> </span><span class="l">data-visualization</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nn">---</span><span class="w">
+</span></span></span></code></pre></td></tr></table>
+</div>
+</div><ol start="2">
+<li><strong>维护一个分类索引</strong>，例如 <code>skills-registry.yaml</code>，记录每个 category 包含哪些 Skills 及其 description：</li>
+</ol>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nt">categories</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">data-visualization</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span>- <span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l">create-chart</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l">生成各类数据可视化图表</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span>- <span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l">export-csv</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l">将数据导出为 CSV 文件</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">code-review</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span>- <span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l">review-pr</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l">审查 Pull Request，检查 bug 和安全风险</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span>- <span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l">lint-fix</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l">自动修复代码风格问题</span><span class="w">
+</span></span></span></code></pre></td></tr></table>
+</div>
+</div><ol start="3">
+<li><strong>前置意图分类器</strong>：每轮对话开始时，用一个轻量 prompt（或规则匹配）判断当前请求属于哪些 category，只把这些 category 的 Skill metadata 注入上下文。</li>
+</ol>
+<p><strong>代价与注意事项</strong></p>
+<ul>
+<li>分类粒度需要仔细设计：太粗（一个 category 50 个 Skills）等于没分；太细（一个 category 2 个 Skills）维护成本高且容易漏挂。</li>
+<li>意图分类本身可能出错，导致正确的 category 没被挂载。可以设一个&quot;通用 category&rdquo;（放跨领域的常用 Skills）每次都挂载，作为兜底。</li>
+<li>适合场景：Skills 有明显的业务域边界，比如&quot;代码类&rdquo;、&ldquo;文档类&rdquo;、&ldquo;数据类&quot;各自独立，跨域调用少。</li>
+</ul>
+<h4 id="624b-skills-100前置-embedding-检索--动态注入">6.2.4b Skills 100+：前置 embedding 检索 + 动态注入
+</h4><p><strong>核心思路</strong>：把所有 Skill 的 <code>name + description</code> 离线建立向量索引，每轮对话用用户的请求做 embedding 检索，只把 Top-K 个最相关的 Skill metadata 动态注入当轮 system prompt。</p>
+<p><strong>实现步骤</strong></p>
+<ol>
+<li>
+<p><strong>离线建索引</strong>：对每个 Skill 的 <code>name + description</code> 做 embedding，存入向量数据库（Pinecone、Weaviate、pgvector 等）。Skill 更新时重建对应向量。</p>
+</li>
+<li>
+<p><strong>每轮检索</strong>：用户请求到来时，先对请求文本做 embedding，在向量库里检索 Top-K（通常 5–15）个相似 Skill。</p>
+</li>
+<li>
+<p><strong>动态注入</strong>：将检索出的 Skill metadata 拼成列表，注入当轮的 system prompt 或第一条 user message 之前。后续流程与全量写入完全相同——模型从这份缩减列表里决策是否触发某个 Skill。</p>
+</li>
+</ol>
+<p><strong>关键工程细节</strong></p>
+<ul>
+<li><strong>K 的选取</strong>：K 太小会漏掉相关 Skill；K 太大等于没检索。经验值：先检索 Top-20，再用模型做一轮 rerank 取 Top-5 注入。</li>
+<li><strong>冷启动问题</strong>：用户第一句话往往很短，embedding 质量差。可以用对话前几轮的消息拼接作为检索 query，而不是只用当轮输入。</li>
+<li><strong>缓存</strong>：相似请求的检索结果可以缓存（TTL 5–10 分钟），减少向量检索的延迟和费用。</li>
+<li><strong>兜底策略</strong>：始终把&quot;高频通用 Skills&rdquo;（使用频率 Top-5）加入每轮注入列表，不经过检索，防止漏召回。</li>
+</ul>
+<p><strong>代价汇总</strong></p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>代价</th>
+          <th>说明</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Router 误召回</td>
+          <td>漏掉的 Skill 模型完全看不到，比&quot;看到没选&quot;更严重</td>
+      </tr>
+      <tr>
+          <td>额外延迟</td>
+          <td>每轮多一次 embedding 计算 + 向量检索（通常 50–200ms）</td>
+      </tr>
+      <tr>
+          <td>系统复杂度</td>
+          <td>多了索引构建、向量库维护、检索服务三个组件</td>
+      </tr>
+      <tr>
+          <td>级联失败</td>
+          <td>检索服务挂了 = 只剩兜底的通用 Skills</td>
+      </tr>
+  </tbody>
+</table></div>
+<p><strong>适合场景</strong>：Skills 数量确实超过 100 且有明显的长尾分布（大部分 Skills 只在特定垂类被使用），或者上下文窗口成本极其敏感的场景。如果 100 个 Skills 的 description 都很常用，全量写入仍然更可靠。</p>
 <h4 id="625-一个关键澄清多轮循环中挑选的表述">6.2.5 一个关键澄清：&ldquo;多轮循环中挑选&quot;的表述
 </h4><p>严格来说，Skill 的选择发生在<strong>每一轮独立决策</strong>，而非&quot;跨多轮演进&rdquo;：</p>
 <ul>
-<li>第 1 轮用户说&quot;查天气&rdquo; → 模型扫描列表，选 <code>get_weather</code></li>
-<li>第 2 轮用户说&quot;翻译文章&rdquo; → 模型<strong>重新</strong>扫描列表，选 <code>translate</code>，不受上一轮影响</li>
+<li>第 1 轮用户说&quot;查天气&quot; → 模型扫描列表，选 <code>get_weather</code></li>
+<li>第 2 轮用户说&quot;翻译文章&quot; → 模型<strong>重新</strong>扫描列表，选 <code>translate</code>，不受上一轮影响</li>
 </ul>
 <p>所以它是&quot;每轮静态全量扫描&quot;，不是&quot;多轮动态演进&quot;。这个表述是准确的。</p>
 <h4 id="626-一句话记住">6.2.6 一句话记住
@@ -2907,8 +3020,6 @@ Claude Code 支持在 frontmatter 里加 <code>disable-model-invocation: true</c
             <a href="/tags/ai/">AI</a>
         
             <a href="/tags/skills/">Skills</a>
-        
-            <a href="/tags/claude-code/">Claude-Code</a>
         
             <a href="/tags/agent/">Agent</a>
         

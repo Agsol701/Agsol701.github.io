@@ -10,7 +10,7 @@
 <meta property='og:description' content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把“向量化与索引构建”简单理解成：\n1 2 把 chunk 调 embedding 接口 然后写入向量数据库 这句话不算错，但太粗了。\n因为生产级 RAG 里，真正影响检索效果、成本、延迟和可维护性的，往往不是“有没有向量库”，而是：\nembedding 内容到底怎么组织 title、section_path、metadata 是否参与向量化 一个 chunk 对应几个索引记录 向量索引、倒排索引、metadata 索引怎么配合 增量更新时怎么避免脏数据和重复数据 模型升级后怎么重建索引 权限、版本、时间、业务范围怎么过滤 索引质量怎么评估和回滚 所以这篇文章只聚焦 RAG 完整流程中的这一段：\n1 2 3 4 5 6 flowchart TD A[&#34;文档解析&#34;] --&gt; B[&#34;文本切分&#34;] B --&gt; C[&#34;向量化与索引构建&#34;] C --&gt; D[&#34;召回&#34;] D --&gt; E[&#34;重排&#34;] E --&gt; F[&#34;生成&#34;] 也就是：\n知识已经被切成 chunk 之后，如何把它变成一个可检索、可过滤、可更新、可评估的索引系统。\n这篇会覆盖：\n向量化与索引构建在 RAG 里的位置 embedding 到底应该嵌入什么内容 embedding 模型怎么选 向量相似度怎么理解 向量索引的常见算法 HNSW（Hierarchical Navigable Small World，分层可导航小世界）、IVF（Inverted File Index，倒排文件索引）、PQ（Product Quantization，乘积量化）分别解决什么问题 向量库里一条记录应该长什么样 metadata 索引怎么设计 倒排索引和混合索引怎么构建 增量更新、删除、版本管理怎么做 索引构建质量怎么评估 工程上最常见的坑和调优建议 一、先理解向量化与索引构建的目标 1.1 它不是简单的数据写入 文本切分完成后，我们得到的是一批 chunk。\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/rag-%E5%90%91%E9%87%8F%E5%8C%96%E4%B8%8E%E7%B4%A2%E5%BC%95%E6%9E%84%E5%BB%BA%E8%AF%A6%E8%A7%A3embedding%E5%90%91%E9%87%8F%E7%B4%A2%E5%BC%95%E6%B7%B7%E5%90%88%E7%B4%A2%E5%BC%95%E4%B8%8E%E5%B7%A5%E7%A8%8B%E8%90%BD%E5%9C%B0/'>
 <meta property='og:site_name' content='Agsol Blog'>
-<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='rag' /><meta property='article:published_time' content='2026-05-09T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-09T00:00:00&#43;00:00'/>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='rag' /><meta property='article:published_time' content='2026-05-05T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-05T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="RAG 向量化与索引构建详解：Embedding、向量索引、混合索引与工程落地">
 <meta name="twitter:description" content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把“向量化与索引构建”简单理解成：\n1 2 把 chunk 调 embedding 接口 然后写入向量数据库 这句话不算错，但太粗了。\n因为生产级 RAG 里，真正影响检索效果、成本、延迟和可维护性的，往往不是“有没有向量库”，而是：\nembedding 内容到底怎么组织 title、section_path、metadata 是否参与向量化 一个 chunk 对应几个索引记录 向量索引、倒排索引、metadata 索引怎么配合 增量更新时怎么避免脏数据和重复数据 模型升级后怎么重建索引 权限、版本、时间、业务范围怎么过滤 索引质量怎么评估和回滚 所以这篇文章只聚焦 RAG 完整流程中的这一段：\n1 2 3 4 5 6 flowchart TD A[&#34;文档解析&#34;] --&gt; B[&#34;文本切分&#34;] B --&gt; C[&#34;向量化与索引构建&#34;] C --&gt; D[&#34;召回&#34;] D --&gt; E[&#34;重排&#34;] E --&gt; F[&#34;生成&#34;] 也就是：\n知识已经被切成 chunk 之后，如何把它变成一个可检索、可过滤、可更新、可评估的索引系统。\n这篇会覆盖：\n向量化与索引构建在 RAG 里的位置 embedding 到底应该嵌入什么内容 embedding 模型怎么选 向量相似度怎么理解 向量索引的常见算法 HNSW（Hierarchical Navigable Small World，分层可导航小世界）、IVF（Inverted File Index，倒排文件索引）、PQ（Product Quantization，乘积量化）分别解决什么问题 向量库里一条记录应该长什么样 metadata 索引怎么设计 倒排索引和混合索引怎么构建 增量更新、删除、版本管理怎么做 索引构建质量怎么评估 工程上最常见的坑和调优建议 一、先理解向量化与索引构建的目标 1.1 它不是简单的数据写入 文本切分完成后，我们得到的是一批 chunk。\n">
     <link rel="shortcut icon" href="/favicon.ico" />
@@ -498,7 +498,7 @@
   <path d="M3 11h16" />
   <path d="M18 16.496v1.504l1 1" />
 </svg>
-                <time class="article-time--published">May 09, 2026</time>
+                <time class="article-time--published">May 05, 2026</time>
             </div>
         
 
@@ -4924,19 +4924,6 @@
             
                 
 <article class="">
-    <a href="/p/rag-%E4%B8%8A%E4%B8%8B%E6%96%87%E7%BB%84%E8%A3%85%E8%AF%A6%E8%A7%A3%E8%AF%81%E6%8D%AE%E9%80%89%E6%8B%A9token-%E9%A2%84%E7%AE%97prompt-%E6%9E%84%E9%80%A0%E4%B8%8E%E5%B7%A5%E7%A8%8B%E8%B0%83%E4%BC%98/">
-        
-        
-
-        <div class="article-details">
-            <h2 class="article-title">RAG 上下文组装详解：证据选择、Token 预算、Prompt 构造与工程调优</h2>
-        </div>
-    </a>
-</article>
-
-            
-                
-<article class="">
     <a href="/p/rag-%E7%9B%91%E6%8E%A7%E6%97%A5%E5%BF%97%E4%B8%8E%E8%AF%84%E4%BC%B0%E4%BD%93%E7%B3%BB%E8%AF%A6%E8%A7%A3%E9%93%BE%E8%B7%AF%E8%BF%BD%E8%B8%AA%E6%8C%87%E6%A0%87%E8%AE%BE%E8%AE%A1%E6%95%88%E6%9E%9C%E8%AF%84%E6%B5%8B%E4%B8%8E%E6%8C%81%E7%BB%AD%E4%BC%98%E5%8C%96/">
         
         
@@ -4963,12 +4950,12 @@
             
                 
 <article class="">
-    <a href="/p/rag-%E6%96%87%E6%9C%AC%E5%88%87%E5%88%86%E8%AF%A6%E8%A7%A3chunk-%E8%AE%BE%E8%AE%A1%E5%88%87%E5%88%86%E7%AD%96%E7%95%A5%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E5%B8%B8%E8%A7%81%E5%9D%91/">
+    <a href="/p/rag-%E5%8F%AC%E5%9B%9E%E8%AF%A6%E8%A7%A3%E6%A3%80%E7%B4%A2%E7%AD%96%E7%95%A5%E6%A0%B8%E5%BF%83%E7%AE%97%E6%B3%95%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E9%80%82%E7%94%A8%E5%9C%BA%E6%99%AF/">
         
         
 
         <div class="article-details">
-            <h2 class="article-title">RAG 文本切分详解：Chunk 设计、切分策略、工程实现与常见坑</h2>
+            <h2 class="article-title">RAG 召回详解：检索策略、核心算法、工程实现与适用场景</h2>
         </div>
     </a>
 </article>
@@ -4976,12 +4963,25 @@
             
                 
 <article class="">
-    <a href="/p/rag-%E6%96%87%E6%A1%A3%E8%A7%A3%E6%9E%90%E8%AF%A6%E8%A7%A3%E4%BB%8E%E5%8E%9F%E5%A7%8B%E6%96%87%E4%BB%B6%E5%88%B0%E5%8F%AF%E6%A3%80%E7%B4%A2%E7%9F%A5%E8%AF%86%E7%9A%84%E5%B7%A5%E7%A8%8B%E9%93%BE%E8%B7%AF/">
+    <a href="/p/rag-%E4%B8%8A%E4%B8%8B%E6%96%87%E7%BB%84%E8%A3%85%E8%AF%A6%E8%A7%A3%E8%AF%81%E6%8D%AE%E9%80%89%E6%8B%A9token-%E9%A2%84%E7%AE%97prompt-%E6%9E%84%E9%80%A0%E4%B8%8E%E5%B7%A5%E7%A8%8B%E8%B0%83%E4%BC%98/">
         
         
 
         <div class="article-details">
-            <h2 class="article-title">RAG 文档解析详解：从原始文件到可检索知识的工程链路</h2>
+            <h2 class="article-title">RAG 上下文组装详解：证据选择、Token 预算、Prompt 构造与工程调优</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/rag-%E6%96%87%E6%9C%AC%E5%88%87%E5%88%86%E8%AF%A6%E8%A7%A3chunk-%E8%AE%BE%E8%AE%A1%E5%88%87%E5%88%86%E7%AD%96%E7%95%A5%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E5%B8%B8%E8%A7%81%E5%9D%91/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">RAG 文本切分详解：Chunk 设计、切分策略、工程实现与常见坑</h2>
         </div>
     </a>
 </article>
