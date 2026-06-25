@@ -6,7 +6,17 @@
 
 <link rel='canonical' href='https://Agsol701.github.io/p/ai-agent-%E4%B8%8A%E4%B8%8B%E6%96%87%E5%B7%A5%E7%A8%8Bcontext-engineeringprompt-cachingtool-result-%E8%A3%81%E5%89%AA%E6%98%BE%E5%BC%8F%E5%B7%A5%E4%BD%9C%E8%AE%B0%E5%BF%86%E4%B8%8E%E5%85%B3%E7%B3%BB%E5%BB%BA%E6%A8%A1/'>
 
-<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="AI Agent 上下文工程（Context Engineering）：Prompt Caching、Tool Result 裁剪、显式工作记忆与关系建模">
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    document.querySelectorAll('code.language-mermaid').forEach(el => {
+        const pre = el.parentElement;
+        const div = document.createElement('div');
+        div.className = 'mermaid';
+        div.textContent = el.textContent;
+        pre.replaceWith(div);
+    });
+</script><meta property='og:title' content="AI Agent 上下文工程（Context Engineering）：Prompt Caching、Tool Result 裁剪、显式工作记忆与关系建模">
 <meta property='og:description' content="写在前面 写过 agent 的人都有这种感受：demo 跑得很顺，真实任务一上规模就开始失控。\n任务跑到第 20 轮 tool call，模型开始遗忘前面的关键决定； 日志里看到一次请求 80K 输入 token，一个简单任务花了几美元； 中途 context 被压缩，下一轮模型回到了&quot;它以为是起点&quot;的状态，把已经做过的事又做了一遍； sub-agent 返回了一段叙述性总结，主 agent 却不知道哪些文件改过、哪些字段还没填。\n这些问题的共性是：模型本身没坏，是 context 没管好。\n这篇文章聚焦在我之前几篇 agent 系列文章里覆盖较浅的几个盲区，把 context engineering 单独拿出来讲透：\nPrompt Caching —— Agent 成本的胜负手，不会用就是烧钱 Tool Result 裁剪策略 —— context 膨胀的头号元凶，工程上有大量技巧 显式工作记忆（Scratchpad / Todo） —— 跨轮信息保持的核心手段 Context 关系建模 —— 让模型知道&quot;这条 result 来自哪次调用、哪个文件、哪一行&quot; Context 预算管理与 Sub-agent 隔离 —— 在窗口有限下处理任意长度任务 本文不会再重复 token 窗口、压缩算法、memory 分层这些 agent-llm-basics.md 和 agent-memory.md 已经讲过的内容，而是把工程实践层面的&quot;硬骨头&quot;集中聚合。\n一、Context Engineering 是什么 1.1 从 Prompt Engineering 到 Context Engineering 早期我们叫它 Prompt Engineering：怎么写好一段提示词让模型给出想要的结果。\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/ai-agent-%E4%B8%8A%E4%B8%8B%E6%96%87%E5%B7%A5%E7%A8%8Bcontext-engineeringprompt-cachingtool-result-%E8%A3%81%E5%89%AA%E6%98%BE%E5%BC%8F%E5%B7%A5%E4%BD%9C%E8%AE%B0%E5%BF%86%E4%B8%8E%E5%85%B3%E7%B3%BB%E5%BB%BA%E6%A8%A1/'>
 <meta property='og:site_name' content='Agsol Blog'>

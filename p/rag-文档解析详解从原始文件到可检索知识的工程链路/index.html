@@ -6,7 +6,17 @@
 
 <link rel='canonical' href='https://Agsol701.github.io/p/rag-%E6%96%87%E6%A1%A3%E8%A7%A3%E6%9E%90%E8%AF%A6%E8%A7%A3%E4%BB%8E%E5%8E%9F%E5%A7%8B%E6%96%87%E4%BB%B6%E5%88%B0%E5%8F%AF%E6%A3%80%E7%B4%A2%E7%9F%A5%E8%AF%86%E7%9A%84%E5%B7%A5%E7%A8%8B%E9%93%BE%E8%B7%AF/'>
 
-<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="RAG 文档解析详解：从原始文件到可检索知识的工程链路">
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    document.querySelectorAll('code.language-mermaid').forEach(el => {
+        const pre = el.parentElement;
+        const div = document.createElement('div');
+        div.className = 'mermaid';
+        div.textContent = el.textContent;
+        pre.replaceWith(div);
+    });
+</script><meta property='og:title' content="RAG 文档解析详解：从原始文件到可检索知识的工程链路">
 <meta property='og:description' content="写在前面 很多人做 RAG（Retrieval-Augmented Generation，检索增强生成），会把重点放在：\nembedding 向量数据库 BM25（Best Matching 25） 重排（rerank） prompt 大模型生成 但在真实项目里，很多效果问题其实发生得更早：\n文档还没有进入索引之前，就已经被解析坏了。\n例如：\nPDF（Portable Document Format，便携式文档格式）双栏顺序错乱 表格表头丢失 页眉页脚混进正文 图片里的文字没有 OCR（Optical Character Recognition，光学字符识别） Markdown 标题层级丢失 Word 文档里的批注、脚注、目录处理不当 代码块被当成普通段落切碎 元数据没有保留下来 后面再好的召回和生成，也很难弥补这些问题。\n所以这篇文章专门讲 RAG 里的文档解析：\n如何把 PDF、Word、HTML（HyperText Markup Language，超文本标记语言）、Markdown、图片、表格、代码等原始资料，转换成结构清晰、可切分、可索引、可评估的知识表示。\n这篇会覆盖：\n文档解析在 RAG 中的位置 文档解析到底要产出什么 不同文件格式怎么处理 PDF 解析的常见难点 表格、图片、OCR、代码怎么解析 清洗、去噪和结构恢复 元数据怎么设计 解析结果怎么进入 chunk 和索引 解析质量怎么评估 生产级文档解析链路怎么设计 一、文档解析在 RAG 中的位置 1.1 RAG 不是从 embedding 开始的 一个完整的 RAG 知识入库链路大概是：\n1 2 3 4 5 6 7 8 flowchart TD A[&#34;原始知识源&#34;] --&gt; B[&#34;文档采集&#34;] B --&gt; C[&#34;文档解析&#34;] C --&gt; D[&#34;清洗与结构化&#34;] D --&gt; E[&#34;文本切分&#34;] E --&gt; F[&#34;embedding&#34;] F --&gt; G[&#34;索引构建&#34;] G --&gt; H[&#34;检索与生成&#34;] 很多教程会从“切 chunk + embedding”开始讲，但这默认了一个前提：\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/rag-%E6%96%87%E6%A1%A3%E8%A7%A3%E6%9E%90%E8%AF%A6%E8%A7%A3%E4%BB%8E%E5%8E%9F%E5%A7%8B%E6%96%87%E4%BB%B6%E5%88%B0%E5%8F%AF%E6%A3%80%E7%B4%A2%E7%9F%A5%E8%AF%86%E7%9A%84%E5%B7%A5%E7%A8%8B%E9%93%BE%E8%B7%AF/'>
 <meta property='og:site_name' content='Agsol Blog'>

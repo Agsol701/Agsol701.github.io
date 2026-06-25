@@ -6,7 +6,17 @@
 
 <link rel='canonical' href='https://Agsol701.github.io/p/rag-%E6%96%87%E6%9C%AC%E5%88%87%E5%88%86%E8%AF%A6%E8%A7%A3chunk-%E8%AE%BE%E8%AE%A1%E5%88%87%E5%88%86%E7%AD%96%E7%95%A5%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E5%B8%B8%E8%A7%81%E5%9D%91/'>
 
-<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="RAG 文本切分详解：Chunk 设计、切分策略、工程实现与常见坑">
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    document.querySelectorAll('code.language-mermaid').forEach(el => {
+        const pre = el.parentElement;
+        const div = document.createElement('div');
+        div.className = 'mermaid';
+        div.textContent = el.textContent;
+        pre.replaceWith(div);
+    });
+</script><meta property='og:title' content="RAG 文本切分详解：Chunk 设计、切分策略、工程实现与常见坑">
 <meta property='og:description' content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把注意力放在：\nembedding 模型 向量数据库 BM25（Best Matching 25） 重排（rerank） prompt 大模型生成 但如果把一条失败样本拆开看，经常会发现问题更早就发生了：\n文档在切分阶段就已经被切坏了。\n例如：\n标题和正文被拆开 表格表头和数据行分离 一个完整规则被切成两半 多个无关主题被塞进同一个 chunk 代码函数被截断 FAQ（Frequently Asked Questions，常见问题）的问题和答案不在同一个片段里 条款的例外条件被切到下一个 chunk 这类问题后面很难补救。\n因为 RAG 的核心链路通常是：\n1 2 3 4 5 6 7 8 flowchart TD A[&#34;原始文档&#34;] --&gt; B[&#34;文档解析&#34;] B --&gt; C[&#34;文本切分&#34;] C --&gt; D[&#34;embedding 与索引&#34;] D --&gt; E[&#34;召回&#34;] E --&gt; F[&#34;重排&#34;] F --&gt; G[&#34;上下文组装&#34;] G --&gt; H[&#34;大模型生成&#34;] 切分决定的是：\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/rag-%E6%96%87%E6%9C%AC%E5%88%87%E5%88%86%E8%AF%A6%E8%A7%A3chunk-%E8%AE%BE%E8%AE%A1%E5%88%87%E5%88%86%E7%AD%96%E7%95%A5%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E5%B8%B8%E8%A7%81%E5%9D%91/'>
 <meta property='og:site_name' content='Agsol Blog'>

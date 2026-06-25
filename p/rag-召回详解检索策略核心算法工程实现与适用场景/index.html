@@ -6,7 +6,17 @@
 
 <link rel='canonical' href='https://Agsol701.github.io/p/rag-%E5%8F%AC%E5%9B%9E%E8%AF%A6%E8%A7%A3%E6%A3%80%E7%B4%A2%E7%AD%96%E7%95%A5%E6%A0%B8%E5%BF%83%E7%AE%97%E6%B3%95%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E9%80%82%E7%94%A8%E5%9C%BA%E6%99%AF/'>
 
-<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="RAG 召回详解：检索策略、核心算法、工程实现与适用场景">
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    document.querySelectorAll('code.language-mermaid').forEach(el => {
+        const pre = el.parentElement;
+        const div = document.createElement('div');
+        div.className = 'mermaid';
+        div.textContent = el.textContent;
+        pre.replaceWith(div);
+    });
+</script><meta property='og:title' content="RAG 召回详解：检索策略、核心算法、工程实现与适用场景">
 <meta property='og:description' content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把注意力放在大模型、prompt、向量数据库上。\n但真正决定效果上限的，往往是召回。\n因为 RAG 的基本链路是：\n1 2 3 4 flowchart TD A[&#34;用户问题&#34;] --&gt; B[&#34;检索外部知识&#34;] B --&gt; C[&#34;把检索结果放进上下文&#34;] C --&gt; D[&#34;让大模型生成答案&#34;] 如果召回阶段没有把正确证据找出来，后面的模型再强，也很难凭空答对。\n所以这篇文章只聚焦一个问题：\nRAG 里到底有哪些召回策略，它们背后的算法是什么，工程上怎么实现，分别适合什么场景？\n这篇会覆盖：\n召回在 RAG 链路里的位置 BM25（Best Matching 25）关键词召回 向量语义召回 混合召回 多路召回 查询改写与查询扩展 metadata filter Parent-Child Retrieval（父子检索） Summary Index（摘要索引） Graph Retrieval（图检索） rerank 和召回的关系 召回评估与调优 一、先理解召回的目标 1.1 召回不是最终排序 在 RAG 里，召回的职责不是直接选出最终答案，而是：\n从大量知识片段中，找出一批“可能相关”的候选证据。\n它和排序的职责不同。\n召回关注：\n正确证据有没有进入候选集 候选集覆盖是否足够 是否漏掉关键文档 是否覆盖不同表达方式 排序关注：\n哪些候选更相关 正确候选是否排在前面 噪声是否被压下去 最终放进 prompt 的内容是否干净 所以召回阶段更重视 Recall，排序阶段更重视 Precision。\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/rag-%E5%8F%AC%E5%9B%9E%E8%AF%A6%E8%A7%A3%E6%A3%80%E7%B4%A2%E7%AD%96%E7%95%A5%E6%A0%B8%E5%BF%83%E7%AE%97%E6%B3%95%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E9%80%82%E7%94%A8%E5%9C%BA%E6%99%AF/'>
 <meta property='og:site_name' content='Agsol Blog'>

@@ -6,7 +6,17 @@
 
 <link rel='canonical' href='https://Agsol701.github.io/p/gunicorn-vs-uwsgi-%E5%AE%8C%E5%85%A8%E5%AF%B9%E6%AF%94%E6%8C%87%E5%8D%97%E5%9F%BA%E6%9C%AC%E4%BD%BF%E7%94%A8%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%AF%B9%E6%AF%94%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
 
-<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="Gunicorn vs uWSGI 完全对比指南：基本使用、底层原理、对比与高频面试题">
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    document.querySelectorAll('code.language-mermaid').forEach(el => {
+        const pre = el.parentElement;
+        const div = document.createElement('div');
+        div.className = 'mermaid';
+        div.textContent = el.textContent;
+        pre.replaceWith(div);
+    });
+</script><meta property='og:title' content="Gunicorn vs uWSGI 完全对比指南：基本使用、底层原理、对比与高频面试题">
 <meta property='og:description' content="写在前面 在 Python Web 服务部署的话题里，Gunicorn 和 uWSGI 是绕不开的两个关键词。它们都是 WSGI 服务器，承担着相同的角色：把 HTTP 请求翻译成 Python 应用能理解的 WSGI 调用。但它们在实现语言、设计哲学、配置复杂度、社区现状上差异巨大。\n写过 Flask、Django 应用的开发者大多接触过其中一个，但很多人停留在&quot;gunicorn -w 4 app:app 跑起来&quot;或&quot;复制一份 uwsgi.ini 改改&quot;的层面，碰到下面这些问题就开始打问号：\nGunicorn 和 uWSGI 到底什么关系？为什么有人用前者、有人用后者？ 为什么 worker 数量推荐 2 × CPU + 1？两者的 worker 模型有什么区别？ sync / gthread / gevent 这些 worker class 到底差在哪？ uWSGI 的 emperor 模式、cheaper、master/worker 是什么？ 为什么所有官方文档都强调&quot;必须放在 nginx 后面&quot;？ --preload 加不加，到底有什么差别？lazy-apps 又是什么？ 服务死锁了，应该 kill 主进程发什么信号？ 2026 年了，新项目还该选 uWSGI 吗？ 这篇文章按&quot;基础概念、Gunicorn 篇、uWSGI 篇、深度对比、选型决策、生产部署、高频面试题&quot;的结构整理两个服务器的核心知识，所有事实分别对齐 Gunicorn 官方文档 与 uWSGI 官方文档，适合作为日常查阅和面试复习材料。\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/gunicorn-vs-uwsgi-%E5%AE%8C%E5%85%A8%E5%AF%B9%E6%AF%94%E6%8C%87%E5%8D%97%E5%9F%BA%E6%9C%AC%E4%BD%BF%E7%94%A8%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%AF%B9%E6%AF%94%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
 <meta property='og:site_name' content='Agsol Blog'>

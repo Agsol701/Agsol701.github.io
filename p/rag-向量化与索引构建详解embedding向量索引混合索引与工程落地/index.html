@@ -6,7 +6,17 @@
 
 <link rel='canonical' href='https://Agsol701.github.io/p/rag-%E5%90%91%E9%87%8F%E5%8C%96%E4%B8%8E%E7%B4%A2%E5%BC%95%E6%9E%84%E5%BB%BA%E8%AF%A6%E8%A7%A3embedding%E5%90%91%E9%87%8F%E7%B4%A2%E5%BC%95%E6%B7%B7%E5%90%88%E7%B4%A2%E5%BC%95%E4%B8%8E%E5%B7%A5%E7%A8%8B%E8%90%BD%E5%9C%B0/'>
 
-<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="RAG 向量化与索引构建详解：Embedding、向量索引、混合索引与工程落地">
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    document.querySelectorAll('code.language-mermaid').forEach(el => {
+        const pre = el.parentElement;
+        const div = document.createElement('div');
+        div.className = 'mermaid';
+        div.textContent = el.textContent;
+        pre.replaceWith(div);
+    });
+</script><meta property='og:title' content="RAG 向量化与索引构建详解：Embedding、向量索引、混合索引与工程落地">
 <meta property='og:description' content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把“向量化与索引构建”简单理解成：\n1 2 把 chunk 调 embedding 接口 然后写入向量数据库 这句话不算错，但太粗了。\n因为生产级 RAG 里，真正影响检索效果、成本、延迟和可维护性的，往往不是“有没有向量库”，而是：\nembedding 内容到底怎么组织 title、section_path、metadata 是否参与向量化 一个 chunk 对应几个索引记录 向量索引、倒排索引、metadata 索引怎么配合 增量更新时怎么避免脏数据和重复数据 模型升级后怎么重建索引 权限、版本、时间、业务范围怎么过滤 索引质量怎么评估和回滚 所以这篇文章只聚焦 RAG 完整流程中的这一段：\n1 2 3 4 5 6 flowchart TD A[&#34;文档解析&#34;] --&gt; B[&#34;文本切分&#34;] B --&gt; C[&#34;向量化与索引构建&#34;] C --&gt; D[&#34;召回&#34;] D --&gt; E[&#34;重排&#34;] E --&gt; F[&#34;生成&#34;] 也就是：\n知识已经被切成 chunk 之后，如何把它变成一个可检索、可过滤、可更新、可评估的索引系统。\n这篇会覆盖：\n向量化与索引构建在 RAG 里的位置 embedding 到底应该嵌入什么内容 embedding 模型怎么选 向量相似度怎么理解 向量索引的常见算法 HNSW（Hierarchical Navigable Small World，分层可导航小世界）、IVF（Inverted File Index，倒排文件索引）、PQ（Product Quantization，乘积量化）分别解决什么问题 向量库里一条记录应该长什么样 metadata 索引怎么设计 倒排索引和混合索引怎么构建 增量更新、删除、版本管理怎么做 索引构建质量怎么评估 工程上最常见的坑和调优建议 一、先理解向量化与索引构建的目标 1.1 它不是简单的数据写入 文本切分完成后，我们得到的是一批 chunk。\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/rag-%E5%90%91%E9%87%8F%E5%8C%96%E4%B8%8E%E7%B4%A2%E5%BC%95%E6%9E%84%E5%BB%BA%E8%AF%A6%E8%A7%A3embedding%E5%90%91%E9%87%8F%E7%B4%A2%E5%BC%95%E6%B7%B7%E5%90%88%E7%B4%A2%E5%BC%95%E4%B8%8E%E5%B7%A5%E7%A8%8B%E8%90%BD%E5%9C%B0/'>
 <meta property='og:site_name' content='Agsol Blog'>

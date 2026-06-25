@@ -6,7 +6,17 @@
 
 <link rel='canonical' href='https://Agsol701.github.io/p/eventlet-vs-gevent-%E5%9C%A8-celery-%E4%B8%AD%E7%9A%84%E5%B7%AE%E5%BC%82%E5%88%86%E6%9E%90/'>
 
-<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="Eventlet vs Gevent 在 Celery 中的差异分析">
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    document.querySelectorAll('code.language-mermaid').forEach(el => {
+        const pre = el.parentElement;
+        const div = document.createElement('div');
+        div.className = 'mermaid';
+        div.textContent = el.textContent;
+        pre.replaceWith(div);
+    });
+</script><meta property='og:title' content="Eventlet vs Gevent 在 Celery 中的差异分析">
 <meta property='og:description' content="Eventlet vs Gevent 在 Celery 中的差异分析 问题现象 在使用 Celery 的 green pool（协程并发池）时，比较常见的一类现象是：\n使用 eventlet 时，worker 进程看起来是正常的 进程没有退出，心跳有时也还在 但是消费者就是“不再消费”或者消费明显卡住 将启动参数从 eventlet 改成 gevent 后，现象消失 这个问题很容易让人误以为是 Celery 的 consumer 逻辑有 bug，但从源码链路来看，更多时候问题并不在 Celery 的“消费逻辑本身”，而是在 green pool 的运行时、monkey patch 时机、事件循环实现、以及第三方库兼容性 上。\n先说结论 先给结论，再展开源码：\neventlet 和 gevent 在 Celery 里都属于 green pool，本质都是单进程内跑大量 greenlet Celery 对两者的封装其实很薄，主要差异不在 Celery 自己，而在 eventlet / gevent 运行时 eventlet 对 monkey patch 的时机更敏感，兼容性问题也更多 gevent 的底层事件循环更成熟，默认运行表现通常更稳定 “进程正常但不消费”这类现象，通常意味着 worker 没挂，但某个关键 I/O 或 hub 调度被阻塞了 如果切到 gevent 后恢复正常，通常说明问题更接近于 eventlet 的运行时行为，而不是任务代码或 broker 协议本身 Celery Pool 类型概览 Celery 支持多种并发池（Pool）实现，通过 -P 参数指定：\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/eventlet-vs-gevent-%E5%9C%A8-celery-%E4%B8%AD%E7%9A%84%E5%B7%AE%E5%BC%82%E5%88%86%E6%9E%90/'>
 <meta property='og:site_name' content='Agsol Blog'>

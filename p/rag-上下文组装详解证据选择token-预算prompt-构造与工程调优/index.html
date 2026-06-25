@@ -6,7 +6,17 @@
 
 <link rel='canonical' href='https://Agsol701.github.io/p/rag-%E4%B8%8A%E4%B8%8B%E6%96%87%E7%BB%84%E8%A3%85%E8%AF%A6%E8%A7%A3%E8%AF%81%E6%8D%AE%E9%80%89%E6%8B%A9token-%E9%A2%84%E7%AE%97prompt-%E6%9E%84%E9%80%A0%E4%B8%8E%E5%B7%A5%E7%A8%8B%E8%B0%83%E4%BC%98/'>
 
-<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="RAG 上下文组装详解：证据选择、Token 预算、Prompt 构造与工程调优">
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    document.querySelectorAll('code.language-mermaid').forEach(el => {
+        const pre = el.parentElement;
+        const div = document.createElement('div');
+        div.className = 'mermaid';
+        div.textContent = el.textContent;
+        pre.replaceWith(div);
+    });
+</script><meta property='og:title' content="RAG 上下文组装详解：证据选择、Token 预算、Prompt 构造与工程调优">
 <meta property='og:description' content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把链路简化成：\n1 2 3 flowchart TD A[&#34;检索 top-k&#34;] --&gt; B[&#34;把结果拼进 prompt&#34;] B --&gt; C[&#34;让大模型回答&#34;] 这个流程可以跑通 demo，但到了真实业务里，很快会遇到一类问题：\n正确证据已经被召回，也排在前面了，但最终答案仍然不稳定。\n原因往往出在“上下文组装”。\n在完整 RAG 链路里，上下文组装位于重排之后、生成之前：\n1 2 3 4 5 6 7 8 9 flowchart TD A[&#34;原始文档&#34;] --&gt; B[&#34;文档解析&#34;] B --&gt; C[&#34;文本切分&#34;] C --&gt; D[&#34;embedding 与索引&#34;] D --&gt; E[&#34;查询理解&#34;] E --&gt; F[&#34;召回&#34;] F --&gt; G[&#34;重排&#34;] G --&gt; H[&#34;上下文组装&#34;] H --&gt; I[&#34;大模型生成&#34;] 召回解决的是：\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/rag-%E4%B8%8A%E4%B8%8B%E6%96%87%E7%BB%84%E8%A3%85%E8%AF%A6%E8%A7%A3%E8%AF%81%E6%8D%AE%E9%80%89%E6%8B%A9token-%E9%A2%84%E7%AE%97prompt-%E6%9E%84%E9%80%A0%E4%B8%8E%E5%B7%A5%E7%A8%8B%E8%B0%83%E4%BC%98/'>
 <meta property='og:site_name' content='Agsol Blog'>
