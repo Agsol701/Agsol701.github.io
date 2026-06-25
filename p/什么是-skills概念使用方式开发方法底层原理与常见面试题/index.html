@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 最近在使用 Claude Code、Cursor、Ducc 这类命令行 / IDE 研发 Agent 时，&ldquo;Skills&quot;这个词出现得越来越频繁。\n很多人第一次接触 Skills，会把它和：\nPrompt 模板 System Prompt MCP（Model Context Protocol） Tools / Function Calling Agent / Subagent Slash Command Plugin 混为一谈。\n但 Skills 实际上是一个有明确边界的概念。\n如果用一句话先做总定义：\nSkills 是一种按需加载、可被模型自主发现并使用的&quot;任务方法包&rdquo;，它把&quot;做某一类任务的方法、流程、约束、参考资料&quot;封装成一组文件，让 Agent 在合适的时机自动取用。\n它解决的核心问题是：\n怎么把&quot;经验和方法&quot;喂给模型，而不是每次都靠用户在 prompt 里反复说 怎么避免一次性把所有方法塞进 system prompt，把上下文撑爆 怎么让&quot;团队最佳实践&quot;和&quot;工具能力&quot;一起被 Agent 复用 下面分十一个部分，把 Skills 从概念到落地讲清楚。本文使用 Claude Code 的 Skills 实现作为例子，因为它是目前 Skills 形态最完整、最具代表性的实现。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、SOP、MCP、IDE、CLI、YAML、MD、DSL、SDK、SP（System Prompt）。\n目录 Skills 是什么 Skills 解决了什么问题 Skills 的基本结构 Skills 怎么使用 Skills 怎么开发 Skills 的底层原理 Skills 与 MCP、Tools、Subagent 的区别 Skills 的最佳实践 Skills 常见高频面试题 附录：进一步阅读 1. Skills 是什么 1.1 一句话定义 Skills 是 Agent 用的&quot;按需加载的方法书&quot;。\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 最近在使用 Claude Code、Cursor、Ducc 这类命令行 / IDE 研发 Agent 时，&ldquo;Skills&quot;这个词出现得越来越频繁。\n很多人第一次接触 Skills，会把它和：\nPrompt 模板 System Prompt MCP（Model Context Protocol） Tools / Function Calling Agent / Subagent Slash Command Plugin 混为一谈。\n但 Skills 实际上是一个有明确边界的概念。\n如果用一句话先做总定义：\nSkills 是一种按需加载、可被模型自主发现并使用的&quot;任务方法包&rdquo;，它把&quot;做某一类任务的方法、流程、约束、参考资料&quot;封装成一组文件，让 Agent 在合适的时机自动取用。\n它解决的核心问题是：\n怎么把&quot;经验和方法&quot;喂给模型，而不是每次都靠用户在 prompt 里反复说 怎么避免一次性把所有方法塞进 system prompt，把上下文撑爆 怎么让&quot;团队最佳实践&quot;和&quot;工具能力&quot;一起被 Agent 复用 下面分十个部分，把 Skills 从概念到落地讲清楚。本文使用 Claude Code 的 Skills 实现作为例子，因为它是目前 Skills 形态最完整、最具代表性的实现。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、SOP、MCP、IDE、CLI、YAML、MD、DSL、SDK、SP（System Prompt）。\n目录 Skills 是什么 Skills 解决了什么问题 Skills 的基本结构 Skills 怎么使用 Skills 怎么开发 Skills 的底层原理 Skills 与 MCP、Tools、Subagent 的区别 Skills 的最佳实践 Skills 常见高频面试题 附录：进一步阅读 1. Skills 是什么 1.1 一句话定义 Skills 是 Agent 用的&quot;按需加载的方法书&quot;。\n">
 <title>什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/%E4%BB%80%E4%B9%88%E6%98%AF-skills%E6%A6%82%E5%BF%B5%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F%E5%BC%80%E5%8F%91%E6%96%B9%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><meta property='og:title' content="什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题">
-<meta property='og:description' content="写在前面 最近在使用 Claude Code、Cursor、Ducc 这类命令行 / IDE 研发 Agent 时，&ldquo;Skills&quot;这个词出现得越来越频繁。\n很多人第一次接触 Skills，会把它和：\nPrompt 模板 System Prompt MCP（Model Context Protocol） Tools / Function Calling Agent / Subagent Slash Command Plugin 混为一谈。\n但 Skills 实际上是一个有明确边界的概念。\n如果用一句话先做总定义：\nSkills 是一种按需加载、可被模型自主发现并使用的&quot;任务方法包&rdquo;，它把&quot;做某一类任务的方法、流程、约束、参考资料&quot;封装成一组文件，让 Agent 在合适的时机自动取用。\n它解决的核心问题是：\n怎么把&quot;经验和方法&quot;喂给模型，而不是每次都靠用户在 prompt 里反复说 怎么避免一次性把所有方法塞进 system prompt，把上下文撑爆 怎么让&quot;团队最佳实践&quot;和&quot;工具能力&quot;一起被 Agent 复用 下面分十一个部分，把 Skills 从概念到落地讲清楚。本文使用 Claude Code 的 Skills 实现作为例子，因为它是目前 Skills 形态最完整、最具代表性的实现。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、SOP、MCP、IDE、CLI、YAML、MD、DSL、SDK、SP（System Prompt）。\n目录 Skills 是什么 Skills 解决了什么问题 Skills 的基本结构 Skills 怎么使用 Skills 怎么开发 Skills 的底层原理 Skills 与 MCP、Tools、Subagent 的区别 Skills 的最佳实践 Skills 常见高频面试题 附录：进一步阅读 1. Skills 是什么 1.1 一句话定义 Skills 是 Agent 用的&quot;按需加载的方法书&quot;。\n">
+<meta property='og:description' content="写在前面 最近在使用 Claude Code、Cursor、Ducc 这类命令行 / IDE 研发 Agent 时，&ldquo;Skills&quot;这个词出现得越来越频繁。\n很多人第一次接触 Skills，会把它和：\nPrompt 模板 System Prompt MCP（Model Context Protocol） Tools / Function Calling Agent / Subagent Slash Command Plugin 混为一谈。\n但 Skills 实际上是一个有明确边界的概念。\n如果用一句话先做总定义：\nSkills 是一种按需加载、可被模型自主发现并使用的&quot;任务方法包&rdquo;，它把&quot;做某一类任务的方法、流程、约束、参考资料&quot;封装成一组文件，让 Agent 在合适的时机自动取用。\n它解决的核心问题是：\n怎么把&quot;经验和方法&quot;喂给模型，而不是每次都靠用户在 prompt 里反复说 怎么避免一次性把所有方法塞进 system prompt，把上下文撑爆 怎么让&quot;团队最佳实践&quot;和&quot;工具能力&quot;一起被 Agent 复用 下面分十个部分，把 Skills 从概念到落地讲清楚。本文使用 Claude Code 的 Skills 实现作为例子，因为它是目前 Skills 形态最完整、最具代表性的实现。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、SOP、MCP、IDE、CLI、YAML、MD、DSL、SDK、SP（System Prompt）。\n目录 Skills 是什么 Skills 解决了什么问题 Skills 的基本结构 Skills 怎么使用 Skills 怎么开发 Skills 的底层原理 Skills 与 MCP、Tools、Subagent 的区别 Skills 的最佳实践 Skills 常见高频面试题 附录：进一步阅读 1. Skills 是什么 1.1 一句话定义 Skills 是 Agent 用的&quot;按需加载的方法书&quot;。\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/%E4%BB%80%E4%B9%88%E6%98%AF-skills%E6%A6%82%E5%BF%B5%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F%E5%BC%80%E5%8F%91%E6%96%B9%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='skills' /><meta property='article:tag' content='agent' /><meta property='article:published_time' content='2026-06-11T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-06-11T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题">
-<meta name="twitter:description" content="写在前面 最近在使用 Claude Code、Cursor、Ducc 这类命令行 / IDE 研发 Agent 时，&ldquo;Skills&quot;这个词出现得越来越频繁。\n很多人第一次接触 Skills，会把它和：\nPrompt 模板 System Prompt MCP（Model Context Protocol） Tools / Function Calling Agent / Subagent Slash Command Plugin 混为一谈。\n但 Skills 实际上是一个有明确边界的概念。\n如果用一句话先做总定义：\nSkills 是一种按需加载、可被模型自主发现并使用的&quot;任务方法包&rdquo;，它把&quot;做某一类任务的方法、流程、约束、参考资料&quot;封装成一组文件，让 Agent 在合适的时机自动取用。\n它解决的核心问题是：\n怎么把&quot;经验和方法&quot;喂给模型，而不是每次都靠用户在 prompt 里反复说 怎么避免一次性把所有方法塞进 system prompt，把上下文撑爆 怎么让&quot;团队最佳实践&quot;和&quot;工具能力&quot;一起被 Agent 复用 下面分十一个部分，把 Skills 从概念到落地讲清楚。本文使用 Claude Code 的 Skills 实现作为例子，因为它是目前 Skills 形态最完整、最具代表性的实现。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、SOP、MCP、IDE、CLI、YAML、MD、DSL、SDK、SP（System Prompt）。\n目录 Skills 是什么 Skills 解决了什么问题 Skills 的基本结构 Skills 怎么使用 Skills 怎么开发 Skills 的底层原理 Skills 与 MCP、Tools、Subagent 的区别 Skills 的最佳实践 Skills 常见高频面试题 附录：进一步阅读 1. Skills 是什么 1.1 一句话定义 Skills 是 Agent 用的&quot;按需加载的方法书&quot;。\n">
+<meta name="twitter:description" content="写在前面 最近在使用 Claude Code、Cursor、Ducc 这类命令行 / IDE 研发 Agent 时，&ldquo;Skills&quot;这个词出现得越来越频繁。\n很多人第一次接触 Skills，会把它和：\nPrompt 模板 System Prompt MCP（Model Context Protocol） Tools / Function Calling Agent / Subagent Slash Command Plugin 混为一谈。\n但 Skills 实际上是一个有明确边界的概念。\n如果用一句话先做总定义：\nSkills 是一种按需加载、可被模型自主发现并使用的&quot;任务方法包&rdquo;，它把&quot;做某一类任务的方法、流程、约束、参考资料&quot;封装成一组文件，让 Agent 在合适的时机自动取用。\n它解决的核心问题是：\n怎么把&quot;经验和方法&quot;喂给模型，而不是每次都靠用户在 prompt 里反复说 怎么避免一次性把所有方法塞进 system prompt，把上下文撑爆 怎么让&quot;团队最佳实践&quot;和&quot;工具能力&quot;一起被 Agent 复用 下面分十个部分，把 Skills 从概念到落地讲清楚。本文使用 Claude Code 的 Skills 实现作为例子，因为它是目前 Skills 形态最完整、最具代表性的实现。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、SOP、MCP、IDE、CLI、YAML、MD、DSL、SDK、SP（System Prompt）。\n目录 Skills 是什么 Skills 解决了什么问题 Skills 的基本结构 Skills 怎么使用 Skills 怎么开发 Skills 的底层原理 Skills 与 MCP、Tools、Subagent 的区别 Skills 的最佳实践 Skills 常见高频面试题 附录：进一步阅读 1. Skills 是什么 1.1 一句话定义 Skills 是 Agent 用的&quot;按需加载的方法书&quot;。\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -316,8 +316,10 @@
             <li><a href="#624-实际的工程权衡">6.2.4 实际的工程权衡</a></li>
             <li><a href="#624a-skills-30100分类分组--按类别动态挂载">6.2.4a Skills 30–100：分类分组 + 按类别动态挂载</a></li>
             <li><a href="#624b-skills-100前置-embedding-检索--动态注入">6.2.4b Skills 100+：前置 embedding 检索 + 动态注入</a></li>
-            <li><a href="#625-一个关键澄清多轮循环中挑选的表述">6.2.5 一个关键澄清：&ldquo;多轮循环中挑选&quot;的表述</a></li>
-            <li><a href="#626-一句话记住">6.2.6 一句话记住</a></li>
+            <li><a href="#625-同样的问题在-tool-calling-里也存在">6.2.5 同样的问题在 Tool Calling 里也存在</a></li>
+            <li><a href="#626-渐进式披露是-react-循环里的一个子行为">6.2.6 渐进式披露是 ReAct 循环里的一个子行为</a></li>
+            <li><a href="#627-一个关键澄清多轮循环中挑选的表述">6.2.7 一个关键澄清：&ldquo;多轮循环中挑选&quot;的表述</a></li>
+            <li><a href="#628-一句话记住">6.2.8 一句话记住</a></li>
           </ul>
         </li>
         <li><a href="#63-skills-与-system-prompt-的关系">6.3 Skills 与 system prompt 的关系</a></li>
@@ -459,7 +461,7 @@
 <li>怎么避免一次性把所有方法塞进 system prompt，把上下文撑爆</li>
 <li>怎么让&quot;团队最佳实践&quot;和&quot;工具能力&quot;一起被 Agent 复用</li>
 </ul>
-<p>下面分十一个部分，把 Skills 从概念到落地讲清楚。本文使用 Claude Code 的 Skills 实现作为例子，因为它是目前 Skills 形态最完整、最具代表性的实现。</p>
+<p>下面分十个部分，把 Skills 从概念到落地讲清楚。本文使用 Claude Code 的 Skills 实现作为例子，因为它是目前 Skills 形态最完整、最具代表性的实现。</p>
 <blockquote>
 <p>文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、SOP、MCP、IDE、CLI、YAML、MD、DSL、SDK、SP（System Prompt）。</p></blockquote>
 <h2 id="目录">目录
@@ -2586,14 +2588,82 @@ Claude Code 支持在 frontmatter 里加 <code>disable-model-invocation: true</c
   </tbody>
 </table></div>
 <p><strong>适合场景</strong>：Skills 数量确实超过 100 且有明显的长尾分布（大部分 Skills 只在特定垂类被使用），或者上下文窗口成本极其敏感的场景。如果 100 个 Skills 的 description 都很常用，全量写入仍然更可靠。</p>
-<h4 id="625-一个关键澄清多轮循环中挑选的表述">6.2.5 一个关键澄清：&ldquo;多轮循环中挑选&quot;的表述
+<h4 id="625-同样的问题在-tool-calling-里也存在">6.2.5 同样的问题在 Tool Calling 里也存在
+</h4><p>Skills 的渐进式披露解决的是一个更普遍的问题：<strong>工具太多时如何控制上下文体积和选择准确率</strong>。Tool calling 里同样会遇到这个问题。</p>
+<p>每次 API 调用传入的 tool 数据结构包含 <code>name + description + parameters schema</code>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;name&#34;</span><span class="p">:</span> <span class="s2">&#34;search_web&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;description&#34;</span><span class="p">:</span> <span class="s2">&#34;Search the web for current information&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;input_schema&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;type&#34;</span><span class="p">:</span> <span class="s2">&#34;object&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;properties&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;query&#34;</span><span class="p">:</span> <span class="p">{</span><span class="nt">&#34;type&#34;</span><span class="p">:</span> <span class="s2">&#34;string&#34;</span><span class="p">},</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;max_results&#34;</span><span class="p">:</span> <span class="p">{</span><span class="nt">&#34;type&#34;</span><span class="p">:</span> <span class="s2">&#34;integer&#34;</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">},</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;required&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;query&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>与 Skills metadata（只有 name + description，~100 tokens）相比，每个 tool schema 还包含 parameters 定义，单条更重，100 个 tool 可能占 10K–30K tokens。OpenAI 建议单次调用不超过 128 个 functions，超过后模型选择准确率明显下降。</p>
+<p><strong>应对策略与 Skills 规模方案完全对应</strong>：</p>
+<ul>
+<li>tool &lt; 30：全量传入</li>
+<li>tool 30–100：按子任务分组，每次只传该任务相关的 tool subset</li>
+<li>tool 100+：前置分类器/embedding 检索，动态选 Top-K 注入</li>
+</ul>
+<p>Skills 的渐进式披露机制，本质上就是把 tool 的&quot;完整 schema&quot;延迟到真正需要时才加载，只让 metadata（name + description）常驻——这是对 tool calling 上下文膨胀问题的一种工程封装。</p>
+<p><strong>ReAct vs Plan &amp; Execute 在 tool 多时的差异</strong></p>
+<p>两种 Agent 范式给模型传的 tool 数据格式相同，区别在调用节奏：</p>
+<ul>
+<li><strong>ReAct</strong>：每一步（Thought → Action → Observation）都是一次完整 API 调用，每次都携带<strong>全量</strong> tool 列表，tool 多时每轮重复消耗这部分 tokens。</li>
+<li><strong>Plan &amp; Execute</strong>：Plan 阶段只让模型做推理分解，可以不传或少传 tools；Execute 阶段每个子任务单独调用，<strong>只传该子任务需要的 tools</strong>，而不是全量。</li>
+</ul>
+<p>所以 Plan &amp; Execute 天然更适合 tool 数量多的场景——execute 阶段按子任务做 tool 裁剪，每次注入的列表更短，选择更准确。</p>
+<h4 id="626-渐进式披露是-react-循环里的一个子行为">6.2.6 渐进式披露是 ReAct 循环里的一个子行为
+</h4><p>渐进式披露不是独立的 Agent 范式，而是<strong>ReAct 循环里的一个子行为</strong>。</p>
+<p>模型在 ReAct 的 Thought 阶段判断需要某个 Skill，然后在 Action 阶段用 bash 读取 SKILL.md——&ldquo;读文件&quot;本身就是一次 tool call，文件内容作为 Observation 返回，模型再基于这份内容决定下一步：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">Thought: 这个任务需要 code-review skill
+</span></span><span class="line"><span class="cl">Action: bash(&#34;cat .claude/skills/code-review/SKILL.md&#34;)
+</span></span><span class="line"><span class="cl">Observation: [SKILL.md 完整内容]
+</span></span><span class="line"><span class="cl">Thought: 按照 skill 指引，我应该先检查...
+</span></span><span class="line"><span class="cl">Action: [真正执行任务的工具调用]
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>换句话说：渐进式披露 = 把&quot;获取完整工具说明&quot;本身也作为 ReAct 循环里的一个 Action，而不是把所有说明预先塞进 system prompt。它是在 ReAct 框架内做的上下文管理优化，而不是一种新的 Agent 模式。</p>
+<h4 id="627-一个关键澄清多轮循环中挑选的表述">6.2.7 一个关键澄清：&ldquo;多轮循环中挑选&quot;的表述
 </h4><p>严格来说，Skill 的选择发生在<strong>每一轮独立决策</strong>，而非&quot;跨多轮演进&rdquo;：</p>
 <ul>
-<li>第 1 轮用户说&quot;查天气&quot; → 模型扫描列表，选 <code>get_weather</code></li>
+<li>第 1 轮用户说&quot;查天气&rdquo; → 模型扫描列表，选 <code>get_weather</code></li>
 <li>第 2 轮用户说&quot;翻译文章&quot; → 模型<strong>重新</strong>扫描列表，选 <code>translate</code>，不受上一轮影响</li>
 </ul>
 <p>所以它是&quot;每轮静态全量扫描&quot;，不是&quot;多轮动态演进&quot;。这个表述是准确的。</p>
-<h4 id="626-一句话记住">6.2.6 一句话记住
+<h4 id="628-一句话记住">6.2.8 一句话记住
 </h4><blockquote>
 <p><strong>全量写入不是反模式，它是在工具数量合理（&lt; 50）时成本最低、可靠性最高的方案。只有当工具规模真正爆炸（100+）时，才值得引入前置 Router 的额外复杂度。</strong></p></blockquote>
 <hr>

@@ -36,7 +36,7 @@
 &lt;li&gt;怎么避免一次性把所有方法塞进 system prompt，把上下文撑爆&lt;/li&gt;
 &lt;li&gt;怎么让&amp;quot;团队最佳实践&amp;quot;和&amp;quot;工具能力&amp;quot;一起被 Agent 复用&lt;/li&gt;
 &lt;/ul&gt;
-&lt;p&gt;下面分十一个部分，把 Skills 从概念到落地讲清楚。本文使用 Claude Code 的 Skills 实现作为例子，因为它是目前 Skills 形态最完整、最具代表性的实现。&lt;/p&gt;
+&lt;p&gt;下面分十个部分，把 Skills 从概念到落地讲清楚。本文使用 Claude Code 的 Skills 实现作为例子，因为它是目前 Skills 形态最完整、最具代表性的实现。&lt;/p&gt;
 &lt;blockquote&gt;
 &lt;p&gt;文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、SOP、MCP、IDE、CLI、YAML、MD、DSL、SDK、SP（System Prompt）。&lt;/p&gt;&lt;/blockquote&gt;
 &lt;h2 id=&#34;目录&#34;&gt;目录
@@ -2163,14 +2163,82 @@ Claude Code 支持在 frontmatter 里加 &lt;code&gt;disable-model-invocation: t
   &lt;/tbody&gt;
 &lt;/table&gt;
 &lt;p&gt;&lt;strong&gt;适合场景&lt;/strong&gt;：Skills 数量确实超过 100 且有明显的长尾分布（大部分 Skills 只在特定垂类被使用），或者上下文窗口成本极其敏感的场景。如果 100 个 Skills 的 description 都很常用，全量写入仍然更可靠。&lt;/p&gt;
-&lt;h4 id=&#34;625-一个关键澄清多轮循环中挑选的表述&#34;&gt;6.2.5 一个关键澄清：&amp;ldquo;多轮循环中挑选&amp;quot;的表述
+&lt;h4 id=&#34;625-同样的问题在-tool-calling-里也存在&#34;&gt;6.2.5 同样的问题在 Tool Calling 里也存在
+&lt;/h4&gt;&lt;p&gt;Skills 的渐进式披露解决的是一个更普遍的问题：&lt;strong&gt;工具太多时如何控制上下文体积和选择准确率&lt;/strong&gt;。Tool calling 里同样会遇到这个问题。&lt;/p&gt;
+&lt;p&gt;每次 API 调用传入的 tool 数据结构包含 &lt;code&gt;name + description + parameters schema&lt;/code&gt;：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;name&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;search_web&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;description&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;Search the web for current information&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;input_schema&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;nt&#34;&gt;&amp;#34;type&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;object&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;nt&#34;&gt;&amp;#34;properties&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      &lt;span class=&#34;nt&#34;&gt;&amp;#34;query&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;&lt;span class=&#34;nt&#34;&gt;&amp;#34;type&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;string&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;},&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      &lt;span class=&#34;nt&#34;&gt;&amp;#34;max_results&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;&lt;span class=&#34;nt&#34;&gt;&amp;#34;type&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;integer&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;p&#34;&gt;},&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;nt&#34;&gt;&amp;#34;required&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;query&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;]&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;与 Skills metadata（只有 name + description，~100 tokens）相比，每个 tool schema 还包含 parameters 定义，单条更重，100 个 tool 可能占 10K–30K tokens。OpenAI 建议单次调用不超过 128 个 functions，超过后模型选择准确率明显下降。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;应对策略与 Skills 规模方案完全对应&lt;/strong&gt;：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;tool &amp;lt; 30：全量传入&lt;/li&gt;
+&lt;li&gt;tool 30–100：按子任务分组，每次只传该任务相关的 tool subset&lt;/li&gt;
+&lt;li&gt;tool 100+：前置分类器/embedding 检索，动态选 Top-K 注入&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Skills 的渐进式披露机制，本质上就是把 tool 的&amp;quot;完整 schema&amp;quot;延迟到真正需要时才加载，只让 metadata（name + description）常驻——这是对 tool calling 上下文膨胀问题的一种工程封装。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;ReAct vs Plan &amp;amp; Execute 在 tool 多时的差异&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;两种 Agent 范式给模型传的 tool 数据格式相同，区别在调用节奏：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;ReAct&lt;/strong&gt;：每一步（Thought → Action → Observation）都是一次完整 API 调用，每次都携带&lt;strong&gt;全量&lt;/strong&gt; tool 列表，tool 多时每轮重复消耗这部分 tokens。&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Plan &amp;amp; Execute&lt;/strong&gt;：Plan 阶段只让模型做推理分解，可以不传或少传 tools；Execute 阶段每个子任务单独调用，&lt;strong&gt;只传该子任务需要的 tools&lt;/strong&gt;，而不是全量。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以 Plan &amp;amp; Execute 天然更适合 tool 数量多的场景——execute 阶段按子任务做 tool 裁剪，每次注入的列表更短，选择更准确。&lt;/p&gt;
+&lt;h4 id=&#34;626-渐进式披露是-react-循环里的一个子行为&#34;&gt;6.2.6 渐进式披露是 ReAct 循环里的一个子行为
+&lt;/h4&gt;&lt;p&gt;渐进式披露不是独立的 Agent 范式，而是&lt;strong&gt;ReAct 循环里的一个子行为&lt;/strong&gt;。&lt;/p&gt;
+&lt;p&gt;模型在 ReAct 的 Thought 阶段判断需要某个 Skill，然后在 Action 阶段用 bash 读取 SKILL.md——&amp;ldquo;读文件&amp;quot;本身就是一次 tool call，文件内容作为 Observation 返回，模型再基于这份内容决定下一步：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-fallback&#34; data-lang=&#34;fallback&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Thought: 这个任务需要 code-review skill
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Action: bash(&amp;#34;cat .claude/skills/code-review/SKILL.md&amp;#34;)
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Observation: [SKILL.md 完整内容]
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Thought: 按照 skill 指引，我应该先检查...
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Action: [真正执行任务的工具调用]
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;换句话说：渐进式披露 = 把&amp;quot;获取完整工具说明&amp;quot;本身也作为 ReAct 循环里的一个 Action，而不是把所有说明预先塞进 system prompt。它是在 ReAct 框架内做的上下文管理优化，而不是一种新的 Agent 模式。&lt;/p&gt;
+&lt;h4 id=&#34;627-一个关键澄清多轮循环中挑选的表述&#34;&gt;6.2.7 一个关键澄清：&amp;ldquo;多轮循环中挑选&amp;quot;的表述
 &lt;/h4&gt;&lt;p&gt;严格来说，Skill 的选择发生在&lt;strong&gt;每一轮独立决策&lt;/strong&gt;，而非&amp;quot;跨多轮演进&amp;rdquo;：&lt;/p&gt;
 &lt;ul&gt;
-&lt;li&gt;第 1 轮用户说&amp;quot;查天气&amp;quot; → 模型扫描列表，选 &lt;code&gt;get_weather&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;第 1 轮用户说&amp;quot;查天气&amp;rdquo; → 模型扫描列表，选 &lt;code&gt;get_weather&lt;/code&gt;&lt;/li&gt;
 &lt;li&gt;第 2 轮用户说&amp;quot;翻译文章&amp;quot; → 模型&lt;strong&gt;重新&lt;/strong&gt;扫描列表，选 &lt;code&gt;translate&lt;/code&gt;，不受上一轮影响&lt;/li&gt;
 &lt;/ul&gt;
 &lt;p&gt;所以它是&amp;quot;每轮静态全量扫描&amp;quot;，不是&amp;quot;多轮动态演进&amp;quot;。这个表述是准确的。&lt;/p&gt;
-&lt;h4 id=&#34;626-一句话记住&#34;&gt;6.2.6 一句话记住
+&lt;h4 id=&#34;628-一句话记住&#34;&gt;6.2.8 一句话记住
 &lt;/h4&gt;&lt;blockquote&gt;
 &lt;p&gt;&lt;strong&gt;全量写入不是反模式，它是在工具数量合理（&amp;lt; 50）时成本最低、可靠性最高的方案。只有当工具规模真正爆炸（100+）时，才值得引入前置 Router 的额外复杂度。&lt;/strong&gt;&lt;/p&gt;&lt;/blockquote&gt;
 &lt;hr&gt;
