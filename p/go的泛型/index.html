@@ -8,13 +8,22 @@
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="go的泛型">
 <meta property='og:description' content="泛型 Go 1.18版本增加了对泛型的支持，泛型也是自 Go 语言开源以来所做的最大改变。\n什么是泛型 泛型允许程序员在强类型程序设计语言中编写代码时使用一些以后才指定的类型，在实例化时作为参数指明这些类型。ーー换句话说，在编写某些代码或数据结构时先不提供值的类型，而是之后再提供。\n泛型是一种独立于所使用的特定类型的编写代码的方法。使用泛型可以编写出适用于一组类型中的任何一种的函数和类型。\n为什么需要泛型 假设我们需要实现一个反转切片的函数——reverse。 可是这个函数只能接收[]int类型的参数，如果我们想支持[]float64类型的参数，我们就需要再定义一个reverseFloat64Slice函数。\n如果要想支持[]string类型切片就要定义reverseStringSlice函数，如果想支持[]xxx就需要定义一个reverseXxxSlice...\n一遍一遍地编写相同的功能是低效的，实际上这个反转切片的函数并不需要知道切片中元素的类型，但为了适用不同的类型我们把一段代码重复了很多遍。\nGo1.18之前我们可以尝试使用反射去解决上述问题，但是使用反射在运行期间获取变量类型会降低代码的执行效率并且失去编译期的类型检查，同时大量的反射代码也会让程序变得晦涩难懂。\n类似这样的场景就非常适合使用泛型。从Go1.18开始，使用泛型就能够编写出适用所有元素类型的“普适版”reverse函数。\n1 2 3 4 5 6 7 8 func reverseWithGenerics[T any](s []T) []T{ l := len(s) r := make([]T, l) for index,elem := range s{ r[l-index-1] = elem } return r } 泛型语法 泛型为Go语言添加了三个新的重要特性:\n函数和类型的类型参数。 将接口类型定义为类型集，包括没有方法的类型。 类型推断，它允许在调用函数时在许多情况下省略类型参数。 类型参数 类型实参和类型形参 已知：函数定义时可以指定形参，函数调用时需要传入实参。 现在，Go语言中的函数和类型支持添加类型参数。类型参数列表看起来像普通的参数列表，只不过它使用方括号（[]）而不是圆括号（()）。\n实例化 借助泛型，我们可以声明一个适用于一组类型的min函数。\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 package main import ( &#34;fmt&#34; &#34;strings&#34; ) func min[T int | float64](a, b T) T { if a &lt;= b { return a } else { return b } } func main() { fmt.Println(strings.Repeat(&#34;&gt;&#34;, 20)) mInt := min[int] mFloat64 := min[float64] fmt.Println(&#34;m_int:&#34;, mInt(1, 2)) fmt.Println(&#34;m_float64&#34;, mFloat64(1.1, 2.2)) } &gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt; m_int: 1 m_float64 1.1 向 min 函数提供类型参数(在本例中为int和float64)称为实例化（ instantiation ）。\n类型实例化分两步进行：\n">
@@ -482,28 +491,12 @@ Go1.18之前我们可以尝试使用反射去解决上述问题，但是使用�
 </div>
 </div><h5 id="comparable">comparable
 </h5><p>Go 泛型中，你可以写带类型参数的函数，比如：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="k">func</span> <span class="n">Equal</span><span class="p">[</span><span class="n">T</span> <span class="n">any</span><span class="p">](</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="n">T</span><span class="p">)</span> <span class="ne">bool</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">a</span> <span class="o">==</span> <span class="n">b</span>
-</span></span><span class="line"><span class="cl"><span class="p">}</span>
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>但是编译器会报错 ❌：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">invalid operation: a == b (operator == not defined on T)
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>因为不是所有类型都能用 <code>==</code> 比较，例如：</p>
+<pre tabindex="0"><code>func Equal[T any](a, b T) bool {
+    return a == b
+}
+</code></pre><p>但是编译器会报错 ❌：</p>
+<pre tabindex="0"><code>invalid operation: a == b (operator == not defined on T)
+</code></pre><p>因为不是所有类型都能用 <code>==</code> 比较，例如：</p>
 <ul>
 <li>切片（<code>[]int</code>）</li>
 <li>映射（<code>map[string]int</code>）</li>
@@ -513,19 +506,10 @@ Go1.18之前我们可以尝试使用反射去解决上述问题，但是使用�
 <p><code>comparable</code> 是一种 <strong>类型约束（constraint）</strong>，
 表示类型参数 <code>T</code> 必须是“可以比较的类型”。
 👉 正确写法：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="k">func</span> <span class="n">Equal</span><span class="p">[</span><span class="n">T</span> <span class="n">comparable</span><span class="p">](</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="n">T</span><span class="p">)</span> <span class="ne">bool</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">a</span> <span class="o">==</span> <span class="n">b</span>
-</span></span><span class="line"><span class="cl"><span class="p">}</span>
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>这样编译器就允许你使用 <code>==</code> 和 <code>!=</code>。</p>
+<pre tabindex="0"><code>func Equal[T comparable](a, b T) bool {
+    return a == b
+}
+</code></pre><p>这样编译器就允许你使用 <code>==</code> 和 <code>!=</code>。</p>
 <h6 id="可以直接放在-map-的-key-里或支持--的类型都属于可比较类型">可以直接放在 <code>map</code> 的 key 里或支持 <code>==</code> 的类型，都属于可比较类型。
 </h6><div class="table-wrapper"><table>
   <thead>

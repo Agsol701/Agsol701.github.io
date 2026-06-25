@@ -8,13 +8,22 @@
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="pydanic配合json序列化">
 <meta property='og:description' content="本文先系统讲解 Pydantic 的核心用法，再深入分析在涉及 Pydantic 对象的 json.dumps 场景中，如何通过自定义 JSONEncoder 解决序列化失败问题。\n一、Pydantic 用法系统讲解 1. Pydantic 是什么 Pydantic 是 Python 中最流行的数据验证与序列化库，核心特性：\n基于 Python 类型注解（type hints）声明数据模型 运行时自动完成类型校验、类型强转、字段约束 提供 JSON / dict 双向转换能力 是 FastAPI、LangChain、OpenAI SDK 等主流框架的事实标准 当前主流版本为 Pydantic v2（基于 Rust 实现，性能比 v1 提升 5~50 倍） 本文均以 Pydantic v2 为准，并在差异点上对比 v1。\n2. 基本模型定义 1 2 3 4 5 6 7 8 9 10 11 12 from pydantic import BaseModel from typing import Optional, List from datetime import datetime class User(BaseModel): &#34;&#34;&#34; 用户模型 &#34;&#34;&#34; id: int name: str email: Optional[str] = None tags: List[str] = [] created_at: datetime 特性：\n">
@@ -435,25 +444,13 @@
 </h3><p>Pydantic v2 默认运行在 <strong>lax mode（宽松模式）</strong> 下，整体逻辑可以总结为一句话：</p>
 <blockquote>
 <p><strong>先尝试把输入强转成声明的类型，能转就用转换后的值，转不过去就抛 <code>ValidationError</code>。</strong></p></blockquote>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart LR
-</span></span><span class="line"><span class="cl">    A[输入值] --&gt; B{类型匹配?}
-</span></span><span class="line"><span class="cl">    B -- 是 --&gt; E[直接使用]
-</span></span><span class="line"><span class="cl">    B -- 否 --&gt; C{能强转?}
-</span></span><span class="line"><span class="cl">    C -- 能 --&gt; D[转换后使用]
-</span></span><span class="line"><span class="cl">    C -- 不能 --&gt; F[ValidationError]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>具体表现（以 <code>id: int</code> 为例）：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    A[输入值] --&gt; B{类型匹配?}
+    B -- 是 --&gt; E[直接使用]
+    B -- 否 --&gt; C{能强转?}
+    C -- 能 --&gt; D[转换后使用]
+    C -- 不能 --&gt; F[ValidationError]
+</code></pre><p>具体表现（以 <code>id: int</code> 为例）：</p>
 <div class="table-wrapper"><table>
   <thead>
       <tr>
@@ -1034,23 +1031,12 @@
 </table></div>
 <h4 id="425-执行顺序">4.2.5 执行顺序
 </h4><p>校验器按以下顺序执行：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart LR
-</span></span><span class="line"><span class="cl">    A[原始输入] --&gt; B[model_validator&lt;br/&gt;mode=before]
-</span></span><span class="line"><span class="cl">    B --&gt; C[field_validator&lt;br/&gt;各字段校验]
-</span></span><span class="line"><span class="cl">    C --&gt; D[model_validator&lt;br/&gt;mode=after]
-</span></span><span class="line"><span class="cl">    D --&gt; E[模型实例]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>多个同 mode 的校验器，按定义顺序执行。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    A[原始输入] --&gt; B[model_validator&lt;br/&gt;mode=before]
+    B --&gt; C[field_validator&lt;br/&gt;各字段校验]
+    C --&gt; D[model_validator&lt;br/&gt;mode=after]
+    D --&gt; E[模型实例]
+</code></pre><p>多个同 mode 的校验器，按定义顺序执行。</p>
 <h4 id="426-v1--v2-迁移">4.2.6 v1 → v2 迁移
 </h4><p>v1 的 <code>@root_validator(pre=True/False)</code> 在 v2 中对应 <code>@model_validator(mode=&quot;before&quot;/&quot;after&quot;)</code>，签名也变了：</p>
 <ul>
@@ -1272,70 +1258,32 @@
 <p>为解决该问题，引入了一个 <strong>自定义 JSONEncoder（CustomEncoder）</strong>，用于在序列化过程中对“问题对象”进行兜底处理。</p>
 <hr>
 <h2 id="二customencoder-定义">二、CustomEncoder 定义
-</h2><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">class CustomEncoder(json.JSONEncoder):
-</span></span><span class="line"><span class="cl">    &#34;&#34;&#34;
-</span></span><span class="line"><span class="cl">    直接dump pydantic 对象存在问题，这里加一个 hack
-</span></span><span class="line"><span class="cl">    &#34;&#34;&#34;
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">    def default(self, obj):
-</span></span><span class="line"><span class="cl">        &#34;&#34;&#34;json dump default&#34;&#34;&#34;
-</span></span><span class="line"><span class="cl">        if obj.__class__.__name__ == &#34;SerializationIterator&#34;:
-</span></span><span class="line"><span class="cl">            return None
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">        if obj.__class__.__name__ == &#34;CaseInsensitiveDict&#34;:
-</span></span><span class="line"><span class="cl">            return dict(obj)
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">        if isinstance(obj, StreamingValue):
-</span></span><span class="line"><span class="cl">            return &#34;&#34;
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">        return super().default(obj)
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>该类的核心在于 <strong>重写 <strong><code>JSONEncoder.default()</code></strong> 方法</strong>。</p>
+</h2><pre tabindex="0"><code>class CustomEncoder(json.JSONEncoder):
+    &#34;&#34;&#34;
+    直接dump pydantic 对象存在问题，这里加一个 hack
+    &#34;&#34;&#34;
+
+    def default(self, obj):
+        &#34;&#34;&#34;json dump default&#34;&#34;&#34;
+        if obj.__class__.__name__ == &#34;SerializationIterator&#34;:
+            return None
+
+        if obj.__class__.__name__ == &#34;CaseInsensitiveDict&#34;:
+            return dict(obj)
+
+        if isinstance(obj, StreamingValue):
+            return &#34;&#34;
+
+        return super().default(obj)
+</code></pre><p>该类的核心在于 <strong>重写 <strong><code>JSONEncoder.default()</code></strong> 方法</strong>。</p>
 <h2 id="三jsondumps-clscustomencoder-的工作机制">三、json.dumps(&hellip;, cls=CustomEncoder) 的工作机制
 </h2><h3 id="1-本质行为">1. 本质行为
 </h3><p>当调用：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">json.dumps(last_item, cls=CustomEncoder)
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>内部逻辑等价于（简化后）：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">encoder = CustomEncoder()
-</span></span><span class="line"><span class="cl">encoder.encode(last_item)
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h3 id="2-json-原生支持的类型">2. JSON 原生支持的类型
+<pre tabindex="0"><code>json.dumps(last_item, cls=CustomEncoder)
+</code></pre><p>内部逻辑等价于（简化后）：</p>
+<pre tabindex="0"><code>encoder = CustomEncoder()
+encoder.encode(last_item)
+</code></pre><h3 id="2-json-原生支持的类型">2. JSON 原生支持的类型
 </h3><p>以下类型在序列化时**不会调用 **<code>default()</code>：</p>
 <ul>
 <li><code>dict</code></li>
@@ -1356,15 +1304,8 @@
 <hr>
 <h2 id="四customencoderdefault-的处理逻辑详解">四、CustomEncoder.default 的处理逻辑详解
 </h2><h3 id="1-serializationiteratorpydantic-内部对象">1️⃣ SerializationIterator（Pydantic 内部对象）
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">if obj.__class__.__name__ == &#34;SerializationIterator&#34;:    returnNone
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>常见来源：</strong></p>
+</h3><pre tabindex="0"><code>if obj.__class__.__name__ == &#34;SerializationIterator&#34;:    returnNone
+</code></pre><p><strong>常见来源：</strong></p>
 <ul>
 <li>Pydantic v2</li>
 <li>FastAPI Response</li>
@@ -1377,15 +1318,8 @@
 </ul>
 <hr>
 <h3 id="2-caseinsensitivedicthttp-header">2️⃣ CaseInsensitiveDict（HTTP Header）
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">if obj.__class__.__name__ == &#34;CaseInsensitiveDict&#34;:    returndict(obj)
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>常见来源：</strong></p>
+</h3><pre tabindex="0"><code>if obj.__class__.__name__ == &#34;CaseInsensitiveDict&#34;:    returndict(obj)
+</code></pre><p><strong>常见来源：</strong></p>
 <ul>
 <li><code>requests.Response.headers</code></li>
 <li>HTTP 请求 / 响应头</li>
@@ -1397,15 +1331,8 @@
 </ul>
 <hr>
 <h3 id="3-streamingvalue流式对象">3️⃣ StreamingValue（流式对象）
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">ifisinstance(obj, StreamingValue):    return&#34;&#34;
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>常见来源：</strong></p>
+</h3><pre tabindex="0"><code>ifisinstance(obj, StreamingValue):    return&#34;&#34;
+</code></pre><p><strong>常见来源：</strong></p>
 <ul>
 <li>LLM streaming</li>
 <li>SSE / chunked response</li>
@@ -1418,15 +1345,8 @@
 </ul>
 <hr>
 <h3 id="4-兜底失败保持严格">4️⃣ 兜底失败（保持严格）
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">returnsuper().default(obj)
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>行为：</strong></p>
+</h3><pre tabindex="0"><code>returnsuper().default(obj)
+</code></pre><p><strong>行为：</strong></p>
 <ul>
 <li>抛出 <code>TypeError: not JSON serializable</code></li>
 </ul>
@@ -1438,61 +1358,27 @@
 <hr>
 <h2 id="五完整递归与-default-触发流程图">五、完整递归与 default() 触发流程图
 </h2><h3 id="1-整体入口">1. 整体入口
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">    A[&#34;json.dumps(last_item, cls=CustomEncoder)&#34;] --&gt; B[&#34;CustomEncoder.encode()&#34;]
-</span></span><span class="line"><span class="cl">    B --&gt; C[深度递归遍历对象树]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><hr>
+</h3><pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[&#34;json.dumps(last_item, cls=CustomEncoder)&#34;] --&gt; B[&#34;CustomEncoder.encode()&#34;]
+    B --&gt; C[深度递归遍历对象树]
+</code></pre><hr>
 <h3 id="2-每个节点的判断逻辑">2. 每个节点的判断逻辑
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">    A[当前对象 obj] --&gt; B{obj 是否 JSON 原生类型?}
-</span></span><span class="line"><span class="cl">    B -- 是 --&gt; C[直接序列化]
-</span></span><span class="line"><span class="cl">    B -- 否 --&gt; D[&#34;调用 default(obj)&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><hr>
+</h3><pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[当前对象 obj] --&gt; B{obj 是否 JSON 原生类型?}
+    B -- 是 --&gt; C[直接序列化]
+    B -- 否 --&gt; D[&#34;调用 default(obj)&#34;]
+</code></pre><hr>
 <h3 id="3-customencoderdefault-内部决策流程">3. CustomEncoder.default 内部决策流程
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span><span class="lnt">9
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">    A[&#34;CustomEncoder.default(obj)&#34;] --&gt; B{SerializationIterator?}
-</span></span><span class="line"><span class="cl">    B -- Yes --&gt; B1[&#34;return None → JSON: null&#34;]
-</span></span><span class="line"><span class="cl">    B -- No --&gt; C{CaseInsensitiveDict?}
-</span></span><span class="line"><span class="cl">    C -- Yes --&gt; C1[&#34;return dict(obj)&#34;]
-</span></span><span class="line"><span class="cl">    C -- No --&gt; D{StreamingValue?}
-</span></span><span class="line"><span class="cl">    D -- Yes --&gt; D1[&#34;return &#39;&#39;&#34;]
-</span></span><span class="line"><span class="cl">    D -- No --&gt; E[&#34;super().default(obj)&#34;]
-</span></span><span class="line"><span class="cl">    E --&gt; F[TypeError]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><hr>
+</h3><pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[&#34;CustomEncoder.default(obj)&#34;] --&gt; B{SerializationIterator?}
+    B -- Yes --&gt; B1[&#34;return None → JSON: null&#34;]
+    B -- No --&gt; C{CaseInsensitiveDict?}
+    C -- Yes --&gt; C1[&#34;return dict(obj)&#34;]
+    C -- No --&gt; D{StreamingValue?}
+    D -- Yes --&gt; D1[&#34;return &#39;&#39;&#34;]
+    D -- No --&gt; E[&#34;super().default(obj)&#34;]
+    E --&gt; F[TypeError]
+</code></pre><hr>
 <h2 id="六结合真实数据结构的递归示例">六、结合真实数据结构的递归示例
 </h2><p>假设输入对象：</p>
 <div class="highlight"><div class="chroma">
@@ -1512,41 +1398,19 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h3 id="实际递归路径">实际递归路径
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">    A[&#34;last_item (dict)&#34;] --&gt; B[headers]
-</span></span><span class="line"><span class="cl">    A --&gt; C[stream]
-</span></span><span class="line"><span class="cl">    A --&gt; D[data]
-</span></span><span class="line"><span class="cl">    B --&gt; B1[&#34;CaseInsensitiveDict&lt;br/&gt;default() → dict(obj)&#34;]
-</span></span><span class="line"><span class="cl">    C --&gt; C1[&#34;StreamingValue&lt;br/&gt;default() → &#39;&#39;&#34;]
-</span></span><span class="line"><span class="cl">    D --&gt; D1[PydanticModel]
-</span></span><span class="line"><span class="cl">    D1 --&gt; D2[&#34;SerializationIterator&lt;br/&gt;default() → None&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><hr>
+</h3><pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[&#34;last_item (dict)&#34;] --&gt; B[headers]
+    A --&gt; C[stream]
+    A --&gt; D[data]
+    B --&gt; B1[&#34;CaseInsensitiveDict&lt;br/&gt;default() → dict(obj)&#34;]
+    C --&gt; C1[&#34;StreamingValue&lt;br/&gt;default() → &#39;&#39;&#34;]
+    D --&gt; D1[PydanticModel]
+    D1 --&gt; D2[&#34;SerializationIterator&lt;br/&gt;default() → None&#34;]
+</code></pre><hr>
 <h2 id="七最终-json-结果形态示意">七、最终 JSON 结果形态（示意）
-</h2><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">{&#34;headers&#34;:{&#34;content-type&#34;:&#34;application/json&#34;},&#34;stream&#34;:&#34;&#34;,&#34;data&#34;:{&#34;some_field&#34;:null}}
-</span></span></code></pre></td></tr></table>
-</div>
-</div><hr>
+</h2><pre tabindex="0"><code>
+{&#34;headers&#34;:{&#34;content-type&#34;:&#34;application/json&#34;},&#34;stream&#34;:&#34;&#34;,&#34;data&#34;:{&#34;some_field&#34;:null}}
+</code></pre><hr>
 <h2 id="八工程视角总结一句话">八、工程视角总结（一句话）
 </h2><blockquote>
 <p><strong>CustomEncoder 是一个“best-effort JSON 序列化适配器”，通过在递归过程中拦截不可序列化对象，将其压平为安全的 JSON 原生值，从而保证 <strong><code>json.dumps</code></strong> 在复杂对象场景下不崩溃。</strong></p></blockquote>

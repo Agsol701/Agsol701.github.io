@@ -8,13 +8,22 @@
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="AI Agent Tool Calling 详解">
 <meta property='og:description' content="写在前面 Tool Calling 是 Agent 从&quot;会说话&quot;变成&quot;能做事&quot;的关键。没有工具，模型只能生成文本；有了工具，Agent 才能查询数据库、检索知识库、调用业务系统。\n本文以 Tool Calling 机制为主线，结合 LangChain 1.0+ 源码进行工程实践分析，帮助你理解从工具定义到执行闭环的完整链路。\n一、Tool Calling 核心概念 1.1 基本定义 模型根据当前任务，选择一个工具，并生成该工具需要的结构化参数，由程序执行工具后再把结果返回给模型。\n核心要点：\n模型负责决策：选择哪个工具、生成什么参数 程序负责执行：校验参数、调用工具、返回结果 模型不直接执行任何操作：它只输出结构化的&quot;调用意图&quot; 1.2 两种实现范式 范式指的是模型如何传递工具调用意图——Large Language Model（LLM，大语言模型）如何告诉程序&quot;我要调用哪个工具&quot;。\n范式 代表 本质 优缺点 Prompt-based 早期 LangChain Agent 模型输出文本，程序解析文本 兼容任何模型，但格式不稳定，容易解析失败 Native Function Calling OpenAI/Claude/Gemini Application Programming Interface（API，应用程序编程接口） 模型输出结构化数据，程序直接读取 格式稳定、可并行调用多工具，是当前主流方案 注意：这里说的是通信机制，不是思维框架。 ReAct（Reasoning + Acting）是一种思维框架——让模型交替&quot;思考→行动→观察&quot;循环推理。 ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling 实现，两者不是同一维度：\n1 2 3 ReAct（思维框架：Thought → Action → Observation 循环） ├── 早期实现：Prompt-based（输出文本，正则解析） └── 现代实现：Native Function Calling（输出结构化 tool_calls） Prompt-based：靠&quot;约定格式&quot; 在 Prompt 里告诉模型&quot;请按这个格式输出&quot;，模型输出普通文本，程序用正则解析：\n">
@@ -509,41 +518,21 @@ ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling �
 <h1 id="二完整流程与数据流">二、完整流程与数据流
 </h1><h2 id="21-一次-tool-calling-的完整时序">2.1 一次 Tool Calling 的完整时序
 </h2><p>以用户问&quot;北京今天天气怎么样？&ldquo;为例：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">sequenceDiagram</span>
-</span></span><span class="line"><span class="cl">    <span class="n">participant</span> <span class="n">U</span> <span class="n">as</span> <span class="err">用户</span>
-</span></span><span class="line"><span class="cl">    <span class="n">participant</span> <span class="n">A</span> <span class="n">as</span> <span class="n">Agent</span> <span class="n">Runtime</span><span class="err">（程序层）</span>
-</span></span><span class="line"><span class="cl">    <span class="n">participant</span> <span class="n">L</span> <span class="n">as</span> <span class="n">LLM</span><span class="err">（大模型）</span>
-</span></span><span class="line"><span class="cl">    <span class="n">participant</span> <span class="n">T</span> <span class="n">as</span> <span class="n">Tool</span><span class="err">（外部</span> <span class="n">API</span><span class="err">）</span>
-</span></span><span class="line"><span class="cl">    <span class="n">U</span><span class="o">-&gt;&gt;</span><span class="n">A</span><span class="p">:</span> <span class="err">北京今天天气？</span>
-</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="o">-&gt;&gt;</span><span class="n">L</span><span class="p">:</span> <span class="err">发送请求（</span><span class="n">System</span> <span class="n">Prompt</span> <span class="o">+</span> <span class="err">工具列表</span> <span class="o">+</span> <span class="err">用户消息）</span>
-</span></span><span class="line"><span class="cl">    <span class="n">L</span><span class="o">--&gt;&gt;</span><span class="n">A</span><span class="p">:</span> <span class="n">AIMessage</span><span class="p">(</span><span class="n">tool_calls</span><span class="p">:</span> <span class="n">get_weather</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="o">-&gt;&gt;</span><span class="n">A</span><span class="p">:</span> <span class="err">校验参数</span> <span class="n">city</span><span class="p">:</span> <span class="n">string</span>
-</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="o">-&gt;&gt;</span><span class="n">T</span><span class="p">:</span> <span class="n">get_weather</span><span class="p">(</span><span class="n">city</span><span class="o">=</span><span class="s2">&#34;北京&#34;</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="n">T</span><span class="o">--&gt;&gt;</span><span class="n">A</span><span class="p">:</span> <span class="p">{</span><span class="n">temp</span><span class="p">:</span> <span class="mi">28</span><span class="p">,</span> <span class="n">condition</span><span class="p">:</span> <span class="s2">&#34;晴&#34;</span><span class="p">}</span>
-</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="o">-&gt;&gt;</span><span class="n">L</span><span class="p">:</span> <span class="n">ToolMessage</span><span class="p">(</span><span class="n">content</span><span class="p">,</span> <span class="n">tool_call_id</span><span class="o">=</span><span class="s2">&#34;call_001&#34;</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="n">L</span><span class="o">--&gt;&gt;</span><span class="n">A</span><span class="p">:</span> <span class="err">北京今天晴朗，</span><span class="mi">28</span><span class="err">°</span><span class="n">C</span>
-</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="o">--&gt;&gt;</span><span class="n">U</span><span class="p">:</span> <span class="err">北京今天晴朗，</span><span class="mi">28</span><span class="err">°</span><span class="n">C</span>
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>逐步拆解：</strong></p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">sequenceDiagram
+    participant U as 用户
+    participant A as Agent Runtime（程序层）
+    participant L as LLM（大模型）
+    participant T as Tool（外部 API）
+    U-&gt;&gt;A: 北京今天天气？
+    A-&gt;&gt;L: 发送请求（System Prompt + 工具列表 + 用户消息）
+    L--&gt;&gt;A: AIMessage(tool_calls: get_weather)
+    A-&gt;&gt;A: 校验参数 city: string
+    A-&gt;&gt;T: get_weather(city=&#34;北京&#34;)
+    T--&gt;&gt;A: {temp: 28, condition: &#34;晴&#34;}
+    A-&gt;&gt;L: ToolMessage(content, tool_call_id=&#34;call_001&#34;)
+    L--&gt;&gt;A: 北京今天晴朗，28°C
+    A--&gt;&gt;U: 北京今天晴朗，28°C
+</code></pre><p><strong>逐步拆解：</strong></p>
 <div class="table-wrapper"><table>
   <thead>
       <tr>
@@ -655,29 +644,15 @@ ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling �
   </tbody>
 </table></div>
 <h2 id="23-消息流转全景图">2.3 消息流转全景图
-</h2><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">sequenceDiagram</span>
-</span></span><span class="line"><span class="cl">    <span class="n">participant</span> <span class="n">M</span> <span class="n">as</span> <span class="n">messages</span>
-</span></span><span class="line"><span class="cl">    <span class="n">participant</span> <span class="n">L</span> <span class="n">as</span> <span class="n">LLM</span>
-</span></span><span class="line"><span class="cl">    <span class="n">M</span><span class="o">-&gt;&gt;</span><span class="n">L</span><span class="p">:</span> <span class="n">Round</span> <span class="mi">1</span><span class="p">:</span> <span class="n">SystemMessage</span> <span class="o">+</span> <span class="n">HumanMessage</span>
-</span></span><span class="line"><span class="cl">    <span class="n">L</span><span class="o">--&gt;&gt;</span><span class="n">M</span><span class="p">:</span> <span class="n">AIMessage</span><span class="p">(</span><span class="n">tool_calls</span><span class="p">:</span> <span class="n">get_weather</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="n">M</span><span class="o">-&gt;&gt;</span><span class="n">M</span><span class="p">:</span> <span class="err">执行工具并追加</span> <span class="n">ToolMessage</span>
-</span></span><span class="line"><span class="cl">    <span class="n">M</span><span class="o">-&gt;&gt;</span><span class="n">L</span><span class="p">:</span> <span class="n">Round</span> <span class="mi">2</span><span class="p">:</span> <span class="n">ToolMessage</span><span class="p">(</span><span class="n">content</span><span class="p">,</span> <span class="n">tool_call_id</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="n">L</span><span class="o">--&gt;&gt;</span><span class="n">M</span><span class="p">:</span> <span class="n">AIMessage</span><span class="p">(</span><span class="err">最终回答</span><span class="p">)</span>
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h1 id="三工具定义与-schema-设计">三、工具定义与 Schema 设计
+</h2><pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">sequenceDiagram
+    participant M as messages
+    participant L as LLM
+    M-&gt;&gt;L: Round 1: SystemMessage + HumanMessage
+    L--&gt;&gt;M: AIMessage(tool_calls: get_weather)
+    M-&gt;&gt;M: 执行工具并追加 ToolMessage
+    M-&gt;&gt;L: Round 2: ToolMessage(content, tool_call_id)
+    L--&gt;&gt;M: AIMessage(最终回答)
+</code></pre><h1 id="三工具定义与-schema-设计">三、工具定义与 Schema 设计
 </h1><h2 id="31-工具定义包含什么">3.1 工具定义包含什么
 </h2><div class="table-wrapper"><table>
   <thead>
@@ -814,53 +789,27 @@ ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling �
 </ol>
 <h2 id="35-langchain-源码工具定义的工程实现">3.5 LangChain 源码：工具定义的工程实现
 </h2><h3 id="工具类继承体系">工具类继承体系
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">classDiagram</span>
-</span></span><span class="line"><span class="cl">    <span class="n">RunnableSerializable</span> <span class="o">&lt;|--</span> <span class="n">BaseTool</span>
-</span></span><span class="line"><span class="cl">    <span class="n">BaseTool</span> <span class="o">&lt;|--</span> <span class="n">StructuredTool</span>
-</span></span><span class="line"><span class="cl">    <span class="n">BaseTool</span> <span class="o">&lt;|--</span> <span class="n">Tool</span>
-</span></span><span class="line"><span class="cl">    <span class="n">StructuredTool</span> <span class="o">..&gt;</span> <span class="n">tool_decorator</span> <span class="p">:</span> <span class="err">由</span> <span class="err">@</span><span class="k">tool</span> <span class="err">创建</span>
-</span></span><span class="line"><span class="cl">    <span class="n">StructuredTool</span> <span class="o">..&gt;</span> <span class="n">from_function</span> <span class="p">:</span> <span class="err">由</span> <span class="n">from_function</span> <span class="err">创建</span>
-</span></span><span class="line"><span class="cl">    <span class="k">class</span> <span class="n">RunnableSerializable</span><span class="p">{</span>
-</span></span><span class="line"><span class="cl">        <span class="n">LCEL</span> <span class="err">基础接口</span>
-</span></span><span class="line"><span class="cl">    <span class="p">}</span>
-</span></span><span class="line"><span class="cl">    <span class="k">class</span> <span class="n">BaseTool</span><span class="p">{</span>
-</span></span><span class="line"><span class="cl">        <span class="err">抽象基类</span>
-</span></span><span class="line"><span class="cl">    <span class="p">}</span>
-</span></span><span class="line"><span class="cl">    <span class="k">class</span> <span class="n">StructuredTool</span><span class="p">{</span>
-</span></span><span class="line"><span class="cl">        <span class="err">函数包装</span>
-</span></span><span class="line"><span class="cl">        <span class="err">支持复杂参数</span>
-</span></span><span class="line"><span class="cl">    <span class="p">}</span>
-</span></span><span class="line"><span class="cl">    <span class="k">class</span> <span class="n">Tool</span><span class="p">{</span>
-</span></span><span class="line"><span class="cl">        <span class="err">简单工具</span>
-</span></span><span class="line"><span class="cl">        <span class="err">单字符串输入</span>
-</span></span><span class="line"><span class="cl">    <span class="p">}</span>
-</span></span></code></pre></td></tr></table>
-</div>
-</div><blockquote>
+</h3><pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">classDiagram
+    RunnableSerializable &lt;|-- BaseTool
+    BaseTool &lt;|-- StructuredTool
+    BaseTool &lt;|-- Tool
+    StructuredTool ..&gt; tool_decorator : 由 @tool 创建
+    StructuredTool ..&gt; from_function : 由 from_function 创建
+    class RunnableSerializable{
+        LCEL 基础接口
+    }
+    class BaseTool{
+        抽象基类
+    }
+    class StructuredTool{
+        函数包装
+        支持复杂参数
+    }
+    class Tool{
+        简单工具
+        单字符串输入
+    }
+</code></pre><blockquote>
 <p>源码位置：<code>langchain-core/langchain_core/tools/base.py</code></p></blockquote>
 <h3 id="basetool-核心结构">BaseTool 核心结构
 </h3><div class="highlight"><div class="chroma">
@@ -920,31 +869,16 @@ ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling �
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>装饰器内部流程：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span><span class="lnt">9
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">flowchart</span> <span class="n">TD</span>
-</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="p">[</span><span class="n">inspect</span> <span class="err">函数签名</span><span class="p">]</span> <span class="o">--&gt;</span> <span class="n">B</span><span class="p">[</span><span class="err">获取参数名、类型注解、默认值</span><span class="p">]</span>
-</span></span><span class="line"><span class="cl">    <span class="n">B</span> <span class="o">--&gt;</span> <span class="n">C</span><span class="p">[</span><span class="n">create_schema_from_function</span><span class="p">]</span>
-</span></span><span class="line"><span class="cl">    <span class="n">C</span> <span class="o">--&gt;</span> <span class="n">D</span><span class="p">[</span><span class="err">动态创建</span> <span class="n">Pydantic</span> <span class="n">Model</span><span class="p">]</span>
-</span></span><span class="line"><span class="cl">    <span class="n">D</span> <span class="o">--&gt;</span> <span class="n">E</span><span class="p">[</span><span class="err">创建</span> <span class="n">StructuredTool</span> <span class="err">实例</span><span class="p">]</span>
-</span></span><span class="line"><span class="cl">    <span class="n">E</span> <span class="o">--&gt;</span> <span class="n">F</span><span class="p">[</span><span class="n">name</span> <span class="o">=</span> <span class="n">search_docs</span><span class="p">]</span>
-</span></span><span class="line"><span class="cl">    <span class="n">E</span> <span class="o">--&gt;</span> <span class="n">G</span><span class="p">[</span><span class="n">description</span> <span class="o">=</span> <span class="n">docstring</span><span class="p">]</span>
-</span></span><span class="line"><span class="cl">    <span class="n">E</span> <span class="o">--&gt;</span> <span class="n">H</span><span class="p">[</span><span class="k">func</span> <span class="o">=</span> <span class="err">原函数</span><span class="p">]</span>
-</span></span><span class="line"><span class="cl">    <span class="n">E</span> <span class="o">--&gt;</span> <span class="n">I</span><span class="p">[</span><span class="n">args_schema</span> <span class="o">=</span> <span class="err">动态</span> <span class="n">Model</span><span class="p">]</span>
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h3 id="schema-转换convert_to_openai_tool">Schema 转换：convert_to_openai_tool()
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[inspect 函数签名] --&gt; B[获取参数名、类型注解、默认值]
+    B --&gt; C[create_schema_from_function]
+    C --&gt; D[动态创建 Pydantic Model]
+    D --&gt; E[创建 StructuredTool 实例]
+    E --&gt; F[name = search_docs]
+    E --&gt; G[description = docstring]
+    E --&gt; H[func = 原函数]
+    E --&gt; I[args_schema = 动态 Model]
+</code></pre><h3 id="schema-转换convert_to_openai_tool">Schema 转换：convert_to_openai_tool()
 </h3><p>工具定义最终需要转换为 LLM API 能理解的格式：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
@@ -1029,25 +963,13 @@ ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling �
 <li>越权访问（传入他人 ID）</li>
 </ul>
 <h2 id="42-多层校验策略">4.2 多层校验策略
-</h2><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">    A[Layer 1: JSON Schema 格式校验\n类型 / 必填 / 枚举 / 长度]
-</span></span><span class="line"><span class="cl">    B[Layer 2: 业务逻辑校验\n金额范围 / 日期合理性 / ID 存在性]
-</span></span><span class="line"><span class="cl">    C[Layer 3: 安全校验\n权限检查 / 注入检测 / 敏感操作拦截]
-</span></span><span class="line"><span class="cl">    D[Layer 4: 上下文校验\n参数与对话上下文是否一致 / 是否越权]
-</span></span><span class="line"><span class="cl">    A --&gt; B --&gt; C --&gt; D
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h2 id="43-校验失败的处理策略">4.3 校验失败的处理策略
+</h2><pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[Layer 1: JSON Schema 格式校验\n类型 / 必填 / 枚举 / 长度]
+    B[Layer 2: 业务逻辑校验\n金额范围 / 日期合理性 / ID 存在性]
+    C[Layer 3: 安全校验\n权限检查 / 注入检测 / 敏感操作拦截]
+    D[Layer 4: 上下文校验\n参数与对话上下文是否一致 / 是否越权]
+    A --&gt; B --&gt; C --&gt; D
+</code></pre><h2 id="43-校验失败的处理策略">4.3 校验失败的处理策略
 </h2><div class="table-wrapper"><table>
   <thead>
       <tr>
@@ -1080,23 +1002,12 @@ ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling �
   </tbody>
 </table></div>
 <h2 id="44-langchain-源码参数校验流程">4.4 LangChain 源码：参数校验流程
-</h2><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart LR
-</span></span><span class="line"><span class="cl">    A[原始 ToolCall\n{name, args}] --&gt; B{args_schema 校验\nPydantic Model}
-</span></span><span class="line"><span class="cl">    B -- 通过 --&gt; C[_run 执行]
-</span></span><span class="line"><span class="cl">    B -- 校验失败 --&gt; D[ValidationError]
-</span></span><span class="line"><span class="cl">    D --&gt; E[handle_validation_error]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><div class="highlight"><div class="chroma">
+</h2><pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    A[原始 ToolCall\n{name, args}] --&gt; B{args_schema 校验\nPydantic Model}
+    B -- 通过 --&gt; C[_run 执行]
+    B -- 校验失败 --&gt; D[ValidationError]
+    D --&gt; E[handle_validation_error]
+</code></pre><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
 </span><span class="lnt"> 2
@@ -1192,23 +1103,12 @@ ReAct 早期用 Prompt-based 实现，现在主流用 Native Function Calling �
 </div><h1 id="五agent-执行循环">五、Agent 执行循环
 </h1><h2 id="51-循环机制">5.1 循环机制
 </h2><p>Agent 的核心是一个&quot;LLM 决策 → 工具执行 → 结果回填&quot;的循环，直到 LLM 认为信息充足为止。</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">flowchart</span> <span class="n">TD</span>
-</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="p">[</span><span class="n">Agent</span> <span class="o">/</span> <span class="n">LLM</span><span class="p">]</span> <span class="o">--&gt;</span> <span class="n">B</span><span class="p">{</span><span class="n">has</span> <span class="n">tool_calls</span><span class="err">?</span><span class="p">}</span>
-</span></span><span class="line"><span class="cl">    <span class="n">B</span> <span class="o">--</span> <span class="n">Yes</span> <span class="o">--&gt;</span> <span class="n">C</span><span class="p">[</span><span class="n">Tools</span> <span class="n">execute</span><span class="p">]</span>
-</span></span><span class="line"><span class="cl">    <span class="n">C</span> <span class="o">--</span> <span class="n">ToolMessage</span> <span class="o">--&gt;</span> <span class="n">A</span>
-</span></span><span class="line"><span class="cl">    <span class="n">B</span> <span class="o">--</span> <span class="n">No</span> <span class="o">--&gt;</span> <span class="n">D</span><span class="p">[</span><span class="n">END</span><span class="p">]</span>
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h2 id="52-终止条件">5.2 终止条件
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[Agent / LLM] --&gt; B{has tool_calls?}
+    B -- Yes --&gt; C[Tools execute]
+    C -- ToolMessage --&gt; A
+    B -- No --&gt; D[END]
+</code></pre><h2 id="52-终止条件">5.2 终止条件
 </h2><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1

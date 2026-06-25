@@ -8,13 +8,22 @@
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="AI Agent 上下文工程（Context Engineering）：Prompt Caching、Tool Result 裁剪、显式工作记忆与关系建模">
 <meta property='og:description' content="写在前面 写过 agent 的人都有这种感受：demo 跑得很顺，真实任务一上规模就开始失控。\n任务跑到第 20 轮 tool call，模型开始遗忘前面的关键决定； 日志里看到一次请求 80K 输入 token，一个简单任务花了几美元； 中途 context 被压缩，下一轮模型回到了&quot;它以为是起点&quot;的状态，把已经做过的事又做了一遍； sub-agent 返回了一段叙述性总结，主 agent 却不知道哪些文件改过、哪些字段还没填。\n这些问题的共性是：模型本身没坏，是 context 没管好。\n这篇文章聚焦在我之前几篇 agent 系列文章里覆盖较浅的几个盲区，把 context engineering 单独拿出来讲透：\nPrompt Caching —— Agent 成本的胜负手，不会用就是烧钱 Tool Result 裁剪策略 —— context 膨胀的头号元凶，工程上有大量技巧 显式工作记忆（Scratchpad / Todo） —— 跨轮信息保持的核心手段 Context 关系建模 —— 让模型知道&quot;这条 result 来自哪次调用、哪个文件、哪一行&quot; Context 预算管理与 Sub-agent 隔离 —— 在窗口有限下处理任意长度任务 本文不会再重复 token 窗口、压缩算法、memory 分层这些 agent-llm-basics.md 和 agent-memory.md 已经讲过的内容，而是把工程实践层面的&quot;硬骨头&quot;集中聚合。\n一、Context Engineering 是什么 1.1 从 Prompt Engineering 到 Context Engineering 早期我们叫它 Prompt Engineering：怎么写好一段提示词让模型给出想要的结果。\n">
@@ -815,51 +824,26 @@ sub-agent 返回了一段叙述性总结，主 agent 却不知道哪些文件改
 </div><p>这里最重要的不是某一个 prompt 技巧，而是把&quot;事实、目标、状态、证据、验证&quot;拆开管理。</p>
 <p>这就是 Context Engineering 和普通 Prompt Engineering 的区别：Prompt Engineering 主要控制模型怎么说，Context Engineering 负责控制模型每一轮<strong>看见什么、相信什么、记住什么、忽略什么</strong>。</p>
 <h2 id="14-context-engineering-的四个维度">1.4 Context Engineering 的四个维度
-</h2><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">    A[Context Engineering]
-</span></span><span class="line"><span class="cl">    A --&gt; B[成本维度]
-</span></span><span class="line"><span class="cl">    B --&gt; B1[Prompt Cache]
-</span></span><span class="line"><span class="cl">    B --&gt; B2[前缀稳定性]
-</span></span><span class="line"><span class="cl">    B --&gt; B3[增量请求]
-</span></span><span class="line"><span class="cl">    A --&gt; C[质量维度]
-</span></span><span class="line"><span class="cl">    C --&gt; C1[Tool Result 裁剪]
-</span></span><span class="line"><span class="cl">    C --&gt; C2[摘要落盘]
-</span></span><span class="line"><span class="cl">    C --&gt; C3[信噪比]
-</span></span><span class="line"><span class="cl">    A --&gt; D[容量维度]
-</span></span><span class="line"><span class="cl">    D --&gt; D1[Sub-agent 隔离]
-</span></span><span class="line"><span class="cl">    D --&gt; D2[压缩策略]
-</span></span><span class="line"><span class="cl">    D --&gt; D3[预算告警]
-</span></span><span class="line"><span class="cl">    A --&gt; E[关系维度]
-</span></span><span class="line"><span class="cl">    E --&gt; E1[引用]
-</span></span><span class="line"><span class="cl">    E --&gt; E2[ID 配对]
-</span></span><span class="line"><span class="cl">    E --&gt; E3[状态]
-</span></span><span class="line"><span class="cl">    E --&gt; E4[schema]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>后面四章按这四个维度展开。</p>
+</h2><pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[Context Engineering]
+    A --&gt; B[成本维度]
+    B --&gt; B1[Prompt Cache]
+    B --&gt; B2[前缀稳定性]
+    B --&gt; B3[增量请求]
+    A --&gt; C[质量维度]
+    C --&gt; C1[Tool Result 裁剪]
+    C --&gt; C2[摘要落盘]
+    C --&gt; C3[信噪比]
+    A --&gt; D[容量维度]
+    D --&gt; D1[Sub-agent 隔离]
+    D --&gt; D2[压缩策略]
+    D --&gt; D3[预算告警]
+    A --&gt; E[关系维度]
+    E --&gt; E1[引用]
+    E --&gt; E2[ID 配对]
+    E --&gt; E3[状态]
+    E --&gt; E4[schema]
+</code></pre><p>后面四章按这四个维度展开。</p>
 <hr>
 <h1 id="二prompt-cachingagent-成本的胜负手">二、Prompt Caching：Agent 成本的胜负手
 </h1><h2 id="21-为什么-agent-场景下-cache-是刚需">2.1 为什么 Agent 场景下 cache 是刚需
@@ -1039,21 +1023,11 @@ sub-agent 返回了一段叙述性总结，主 agent 却不知道哪些文件改
 <h3 id="铁律-3历史拼接顺序固定">铁律 3：历史拼接顺序固定
 </h3><p>不要在中途插入新 system message，不要重排历史。一旦顺序变，从插入点往后的 cache 全部失效。</p>
 <h3 id="铁律-4变化的内容放到尾部">铁律 4：变化的内容放到尾部
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">flowchart</span> <span class="n">TD</span>
-</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="p">[</span><span class="err">稳定层</span><span class="p">:</span> <span class="n">system</span> <span class="o">+</span> <span class="n">tools</span><span class="o">&lt;</span><span class="n">br</span><span class="o">/&gt;</span><span class="n">cache</span> <span class="err">命中率</span> <span class="mi">99</span><span class="o">%</span><span class="p">]</span> <span class="o">--&gt;</span> <span class="n">B</span><span class="p">[</span><span class="err">半稳定层</span><span class="p">:</span> <span class="err">长期</span> <span class="n">memory</span> <span class="o">+</span> <span class="err">历史摘要</span><span class="o">&lt;</span><span class="n">br</span><span class="o">/&gt;</span><span class="n">cache</span> <span class="err">命中率</span> <span class="mi">80</span><span class="o">%</span><span class="p">]</span>
-</span></span><span class="line"><span class="cl">    <span class="n">B</span> <span class="o">--&gt;</span> <span class="n">C</span><span class="p">[</span><span class="err">活跃层</span><span class="p">:</span> <span class="err">最近</span> <span class="n">N</span> <span class="err">轮对话</span><span class="o">&lt;</span><span class="n">br</span><span class="o">/&gt;</span><span class="n">cache</span> <span class="err">命中率</span> <span class="mi">50</span><span class="o">%</span><span class="p">]</span>
-</span></span><span class="line"><span class="cl">    <span class="n">C</span> <span class="o">--&gt;</span> <span class="n">D</span><span class="p">[</span><span class="err">当前轮</span><span class="p">:</span> <span class="err">本次</span> <span class="n">user</span> <span class="err">输入</span><span class="o">&lt;</span><span class="n">br</span><span class="o">/&gt;</span><span class="err">永远不命中</span><span class="p">]</span>
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>设计 context 时，按&quot;稳定性&quot;从前到后排，是 cache 友好的核心原则。</p>
+</h3><pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[稳定层: system + tools&lt;br/&gt;cache 命中率 99%] --&gt; B[半稳定层: 长期 memory + 历史摘要&lt;br/&gt;cache 命中率 80%]
+    B --&gt; C[活跃层: 最近 N 轮对话&lt;br/&gt;cache 命中率 50%]
+    C --&gt; D[当前轮: 本次 user 输入&lt;br/&gt;永远不命中]
+</code></pre><p>设计 context 时，按&quot;稳定性&quot;从前到后排，是 cache 友好的核心原则。</p>
 <h3 id="铁律-5cache-写入也要省着用">铁律 5：cache 写入也要省着用
 </h3><p>5 分钟 cache 的写入是 1.25x 价格。如果一个 cache 断点只用一次就过期，那是亏的。</p>
 <p>经验阈值：<strong>预计这个前缀会被复用 3 次以上，才值得加 cache_control</strong>。</p>
@@ -1095,27 +1069,14 @@ sub-agent 返回了一段叙述性总结，主 agent 却不知道哪些文件改
 <h1 id="三tool-result-裁剪context-膨胀的头号元凶">三、Tool Result 裁剪：Context 膨胀的头号元凶
 </h1><h2 id="31-问题的严重性">3.1 问题的严重性
 </h2><p>实测一个简单 agent 任务，分析每一轮 context 的构成：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">pie title Context token 构成
-</span></span><span class="line"><span class="cl">    &#34;System prompt: 2K tokens&#34; : 1
-</span></span><span class="line"><span class="cl">    &#34;Tool 定义: 8K tokens&#34; : 4
-</span></span><span class="line"><span class="cl">    &#34;Memory: 3K tokens&#34; : 1.5
-</span></span><span class="line"><span class="cl">    &#34;用户输入累计: 5K tokens&#34; : 2.5
-</span></span><span class="line"><span class="cl">    &#34;模型输出累计: 12K tokens&#34; : 6
-</span></span><span class="line"><span class="cl">    &#34;Tool result 累计: 170K tokens&#34; : 85
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>Tool result 占了 context 的 85%</strong>。读一个大文件、跑一次构建、curl 一个网页，单次输出就可能有几万 token。如果不做裁剪，几轮就把窗口填满。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">pie title Context token 构成
+    &#34;System prompt: 2K tokens&#34; : 1
+    &#34;Tool 定义: 8K tokens&#34; : 4
+    &#34;Memory: 3K tokens&#34; : 1.5
+    &#34;用户输入累计: 5K tokens&#34; : 2.5
+    &#34;模型输出累计: 12K tokens&#34; : 6
+    &#34;Tool result 累计: 170K tokens&#34; : 85
+</code></pre><p><strong>Tool result 占了 context 的 85%</strong>。读一个大文件、跑一次构建、curl 一个网页，单次输出就可能有几万 token。如果不做裁剪，几轮就把窗口填满。</p>
 <h2 id="32-裁剪策略总览">3.2 裁剪策略总览
 </h2><div class="table-wrapper"><table>
   <thead>
@@ -1343,23 +1304,12 @@ sub-agent 返回了一段叙述性总结，主 agent 却不知道哪些文件改
 <h2 id="42-scratchpad-的本质">4.2 Scratchpad 的本质
 </h2><p>Scratchpad 不是新概念，本质是<strong>让 agent 自己维护一份给自己看的笔记</strong>。</p>
 <p>类比：人类做复杂任务时会拿张纸，写下：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">- 目标: 把所有 deprecated API 替换
-</span></span><span class="line"><span class="cl">- 已完成: auth.py, user.py
-</span></span><span class="line"><span class="cl">- 跳过: db.py（兼容性风险，下周再说）
-</span></span><span class="line"><span class="cl">- 进行中: order.py（卡在第 230 行的循环引用）
-</span></span><span class="line"><span class="cl">- 待办: 14 个文件
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>Agent 的 scratchpad 就是程序化版本。</p>
+<pre tabindex="0"><code>- 目标: 把所有 deprecated API 替换
+- 已完成: auth.py, user.py
+- 跳过: db.py（兼容性风险，下周再说）
+- 进行中: order.py（卡在第 230 行的循环引用）
+- 待办: 14 个文件
+</code></pre><p>Agent 的 scratchpad 就是程序化版本。</p>
 <h2 id="43-实现方式一todo-工具">4.3 实现方式一：Todo 工具
 </h2><p>最直接的方式是给 agent 一个 todo 工具集：</p>
 <div class="highlight"><div class="chroma">
@@ -2032,91 +1982,46 @@ execution 阶段（具体改某个文件）→ 只注入当前 task</p>
 <hr>
 <h1 id="七context-engineering-的整体架构">七、Context Engineering 的整体架构
 </h1><p>把前面六章的内容拼起来，一个完整的 context engineering 架构如下：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span><span class="lnt">26
-</span><span class="lnt">27
-</span><span class="lnt">28
-</span><span class="lnt">29
-</span><span class="lnt">30
-</span><span class="lnt">31
-</span><span class="lnt">32
-</span><span class="lnt">33
-</span><span class="lnt">34
-</span><span class="lnt">35
-</span><span class="lnt">36
-</span><span class="lnt">37
-</span><span class="lnt">38
-</span><span class="lnt">39
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">graph TB
-</span></span><span class="line"><span class="cl">    User[用户输入] --&gt; Orchestrator[主 Agent 协调器]
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">    Orchestrator --&gt; Budget{Context 预算检查}
-</span></span><span class="line"><span class="cl">    Budget --&gt;|&lt; 60%| Build
-</span></span><span class="line"><span class="cl">    Budget --&gt;|60-75%| Warn[警告]
-</span></span><span class="line"><span class="cl">    Budget --&gt;|75-90%| Compact[触发压缩]
-</span></span><span class="line"><span class="cl">    Budget --&gt;|&gt; 90%| Sub[强制 Sub-agent]
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">    Warn --&gt; Build
-</span></span><span class="line"><span class="cl">    Compact --&gt; Build
-</span></span><span class="line"><span class="cl">    Sub --&gt; SubAgent[Sub-agent 隔离执行]
-</span></span><span class="line"><span class="cl">    SubAgent --&gt; StructResult[结构化结果]
-</span></span><span class="line"><span class="cl">    StructResult --&gt; Build
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">    Build[Context 组装] --&gt; Layers[分层结构]
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">    Layers --&gt; L1[L1: System + Tools&lt;br/&gt;cache_control 1&lt;br/&gt;命中率 99%]
-</span></span><span class="line"><span class="cl">    Layers --&gt; L2[L2: Memory + 历史摘要&lt;br/&gt;cache_control 2&lt;br/&gt;命中率 80%]
-</span></span><span class="line"><span class="cl">    Layers --&gt; L3[L3: 工作记忆 Scratchpad&lt;br/&gt;cache_control 3&lt;br/&gt;命中率 50%]
-</span></span><span class="line"><span class="cl">    Layers --&gt; L4[L4: 最近 N 轮 + 当前输入&lt;br/&gt;不缓存]
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">    L1 --&gt; ModelCall[模型调用]
-</span></span><span class="line"><span class="cl">    L2 --&gt; ModelCall
-</span></span><span class="line"><span class="cl">    L3 --&gt; ModelCall
-</span></span><span class="line"><span class="cl">    L4 --&gt; ModelCall
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">    ModelCall --&gt; ToolUse{Tool Use?}
-</span></span><span class="line"><span class="cl">    ToolUse --&gt;|是| Execute[执行 Tool]
-</span></span><span class="line"><span class="cl">    ToolUse --&gt;|否| Output[最终输出]
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">    Execute --&gt; Trim[Tool Result 裁剪]
-</span></span><span class="line"><span class="cl">    Trim --&gt; T1[分页 / 截断]
-</span></span><span class="line"><span class="cl">    Trim --&gt; T2[摘要 / 落盘]
-</span></span><span class="line"><span class="cl">    Trim --&gt; T3[结构化提取]
-</span></span><span class="line"><span class="cl">    T1 --&gt; Append[追加到 context]
-</span></span><span class="line"><span class="cl">    T2 --&gt; Append
-</span></span><span class="line"><span class="cl">    T3 --&gt; Append
-</span></span><span class="line"><span class="cl">    Append --&gt; Budget
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h2 id="71-一个完整-agent-的-context-流转">7.1 一个完整 Agent 的 Context 流转
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">graph TB
+    User[用户输入] --&gt; Orchestrator[主 Agent 协调器]
+
+    Orchestrator --&gt; Budget{Context 预算检查}
+    Budget --&gt;|&lt; 60%| Build
+    Budget --&gt;|60-75%| Warn[警告]
+    Budget --&gt;|75-90%| Compact[触发压缩]
+    Budget --&gt;|&gt; 90%| Sub[强制 Sub-agent]
+
+    Warn --&gt; Build
+    Compact --&gt; Build
+    Sub --&gt; SubAgent[Sub-agent 隔离执行]
+    SubAgent --&gt; StructResult[结构化结果]
+    StructResult --&gt; Build
+
+    Build[Context 组装] --&gt; Layers[分层结构]
+
+    Layers --&gt; L1[L1: System + Tools&lt;br/&gt;cache_control 1&lt;br/&gt;命中率 99%]
+    Layers --&gt; L2[L2: Memory + 历史摘要&lt;br/&gt;cache_control 2&lt;br/&gt;命中率 80%]
+    Layers --&gt; L3[L3: 工作记忆 Scratchpad&lt;br/&gt;cache_control 3&lt;br/&gt;命中率 50%]
+    Layers --&gt; L4[L4: 最近 N 轮 + 当前输入&lt;br/&gt;不缓存]
+
+    L1 --&gt; ModelCall[模型调用]
+    L2 --&gt; ModelCall
+    L3 --&gt; ModelCall
+    L4 --&gt; ModelCall
+
+    ModelCall --&gt; ToolUse{Tool Use?}
+    ToolUse --&gt;|是| Execute[执行 Tool]
+    ToolUse --&gt;|否| Output[最终输出]
+
+    Execute --&gt; Trim[Tool Result 裁剪]
+    Trim --&gt; T1[分页 / 截断]
+    Trim --&gt; T2[摘要 / 落盘]
+    Trim --&gt; T3[结构化提取]
+    T1 --&gt; Append[追加到 context]
+    T2 --&gt; Append
+    T3 --&gt; Append
+    Append --&gt; Budget
+</code></pre><h2 id="71-一个完整-agent-的-context-流转">7.1 一个完整 Agent 的 Context 流转
 </h2><p>来看一段真实的 agent 执行流程，每一步标注 context 操作：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">

@@ -8,13 +8,22 @@
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="Redis 学习指南：数据结构、底层原理、分布式与高频面试题">
 <meta property='og:description' content="写在前面 Redis 是后端系统里最常见的中间件之一，既可以做缓存，也经常用于计数器、排行榜、分布式锁、限流、消息队列等场景。\n这篇文章按“基础数据结构、底层实现、分布式能力、性能优化、脑裂问题、面试题”的顺序整理 Redis 的核心知识点，适合作为系统复习和面试准备材料。\n目录 基础数据结构 底层实现原理 分布式 分布式锁 优化 脑裂问题 面试题 1. 基础数据结构 Redis 提供了 5 种基础数据结构，还有 3 种特殊数据结构。\n1.1 String（字符串） 常用命令：\n1 2 3 4 5 6 7 8 SET key value # 设置值 GET key # 获取值 MSET key1 value1 key2 value2 # 批量设置 MGET key1 key2 # 批量获取 INCR key # 原子递增 DECR key # 原子递减 SETNX key value # 分布式锁基础 SETEX key seconds value # 设置值并过期 应用场景：\n">
@@ -934,23 +943,12 @@
 <li>所有 Redis 数据结构：key 本身也是 SDS</li>
 <li>Hash / List / Set / ZSet：内部元素、字段名等字符串内容也可能使用 SDS 表示</li>
 </ul>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">struct sdshdr {
-</span></span><span class="line"><span class="cl">    int len;        // 已使用长度
-</span></span><span class="line"><span class="cl">    int free;       // 剩余长度
-</span></span><span class="line"><span class="cl">    char buf[];    // 字节数组
-</span></span><span class="line"><span class="cl">};
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>优点：</strong></p>
+<pre tabindex="0"><code>struct sdshdr {
+    int len;        // 已使用长度
+    int free;       // 剩余长度
+    char buf[];    // 字节数组
+};
+</code></pre><p><strong>优点：</strong></p>
 <ul>
 <li>O(1) 获取长度</li>
 <li>防止缓冲区溢出</li>
@@ -964,29 +962,15 @@
 <li>List：早期版本在列表元素较多或不适合压缩编码时使用双向链表</li>
 <li>Redis 服务内部：也会用于保存客户端、慢查询日志等内部链表结构</li>
 </ul>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">typedef struct list {
-</span></span><span class="line"><span class="cl">    listNode *head;
-</span></span><span class="line"><span class="cl">    listNode *tail;
-</span></span><span class="line"><span class="cl">    unsigned long len;
-</span></span><span class="line"><span class="cl">    void *(*dup)(void *ptr);
-</span></span><span class="line"><span class="cl">    void (*free)(void *ptr);
-</span></span><span class="line"><span class="cl">    int (*match)(void *ptr, void *key);
-</span></span><span class="line"><span class="cl">} list;
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>特点：</strong></p>
+<pre tabindex="0"><code>typedef struct list {
+    listNode *head;
+    listNode *tail;
+    unsigned long len;
+    void *(*dup)(void *ptr);
+    void (*free)(void *ptr);
+    int (*match)(void *ptr, void *key);
+} list;
+</code></pre><p><strong>特点：</strong></p>
 <ul>
 <li>双向链表</li>
 <li>头尾操作 O(1)</li>
@@ -1037,25 +1021,13 @@
 <li>List：Redis 3.2+ 的默认底层实现</li>
 <li>List：逻辑上仍是链表，链表节点内部用压缩列表保存多个元素</li>
 </ul>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">typedef struct quicklist {
-</span></span><span class="line"><span class="cl">    quicklistNode *head;
-</span></span><span class="line"><span class="cl">    quicklistNode *tail;
-</span></span><span class="line"><span class="cl">    unsigned long len;
-</span></span><span class="line"><span class="cl">    ...
-</span></span><span class="line"><span class="cl">} quicklist;
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>特点：</strong></p>
+<pre tabindex="0"><code>typedef struct quicklist {
+    quicklistNode *head;
+    quicklistNode *tail;
+    unsigned long len;
+    ...
+} quicklist;
+</code></pre><p><strong>特点：</strong></p>
 <ul>
 <li>每个节点是 ZipList</li>
 <li>兼顾插入性能和内存</li>
@@ -1070,27 +1042,14 @@
 <li>ZSet：元素较多或较大时，使用 Dict 保存 member 到 score 的映射</li>
 <li>Redis 全局键空间：key 到 redisObject 的映射也由 Dict 实现</li>
 </ul>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">typedef struct dict {
-</span></span><span class="line"><span class="cl">    dictType *type;
-</span></span><span class="line"><span class="cl">    dictEntry **table;
-</span></span><span class="line"><span class="cl">    unsigned long size;
-</span></span><span class="line"><span class="cl">    unsigned long used;
-</span></span><span class="line"><span class="cl">    ...
-</span></span><span class="line"><span class="cl">} dict;
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>特点：</strong></p>
+<pre tabindex="0"><code>typedef struct dict {
+    dictType *type;
+    dictEntry **table;
+    unsigned long size;
+    unsigned long used;
+    ...
+} dict;
+</code></pre><p><strong>特点：</strong></p>
 <ul>
 <li>哈希表实现</li>
 <li>渐进式 rehash</li>
@@ -1110,19 +1069,10 @@
 <li>插入/删除 O(logN)</li>
 <li>比平衡树实现简单</li>
 </ul>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">Level 3:  ---&gt; A -------------------------&gt; Z
-</span></span><span class="line"><span class="cl">Level 2:  ---&gt; A -----&gt; C -----&gt; D -----&gt; Z
-</span></span><span class="line"><span class="cl">Level 1:  ---&gt; A -&gt; B -&gt; C -&gt; D -&gt; E -&gt; F -&gt; Z
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h4 id="217-intset整数集合">2.1.7 IntSet（整数集合）
+<pre tabindex="0"><code>Level 3:  ---&gt; A -------------------------&gt; Z
+Level 2:  ---&gt; A -----&gt; C -----&gt; D -----&gt; Z
+Level 1:  ---&gt; A -&gt; B -&gt; C -&gt; D -&gt; E -&gt; F -&gt; Z
+</code></pre><h4 id="217-intset整数集合">2.1.7 IntSet（整数集合）
 </h4><p>Set 的底层实现之一（元素都是整数时）。</p>
 <p><strong>对应上层结构：</strong></p>
 <ul>
@@ -1165,47 +1115,24 @@
 <li>定期删除兜底清理那些永远不会被访问的过期 key，防止内存无限膨胀</li>
 </ul>
 <h4 id="222-淘汰策略">2.2.2 淘汰策略
-</h4><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl"># —— LRU 系列：看「最后一次访问时间」，淘汰最久没被访问的 key ——
-</span></span><span class="line"><span class="cl">volatile-lru    # 仅在设置了过期时间的 key 中，淘汰最久没被访问的
-</span></span><span class="line"><span class="cl">allkeys-lru     # 在所有 key 中，淘汰最久没被访问的
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"># —— LFU 系列：看「历史访问次数」，淘汰被访问次数最少的 key ——
-</span></span><span class="line"><span class="cl">volatile-lfu    # 仅在设置了过期时间的 key 中，淘汰访问次数最少的
-</span></span><span class="line"><span class="cl">allkeys-lfu     # 在所有 key 中，淘汰访问次数最少的
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"># —— TTL：按剩余存活时间排序 ——
-</span></span><span class="line"><span class="cl">volatile-ttl    # 仅在设置了过期时间的 key 中，淘汰剩余存活时间最短的（快到期的先删）
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"># —— Random：随机挑选 ——
-</span></span><span class="line"><span class="cl">volatile-random # 仅在设置了过期时间的 key 中，随机淘汰一个
-</span></span><span class="line"><span class="cl">allkeys-random  # 在所有 key 中，随机淘汰一个
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"># —— 不淘汰 ——
-</span></span><span class="line"><span class="cl">noeviction      # 内存满后拒绝写入，返回错误（默认策略，读操作不受影响）
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>按&quot;淘汰范围&quot;分类：</strong></p>
+</h4><pre tabindex="0"><code># —— LRU 系列：看「最后一次访问时间」，淘汰最久没被访问的 key ——
+volatile-lru    # 仅在设置了过期时间的 key 中，淘汰最久没被访问的
+allkeys-lru     # 在所有 key 中，淘汰最久没被访问的
+
+# —— LFU 系列：看「历史访问次数」，淘汰被访问次数最少的 key ——
+volatile-lfu    # 仅在设置了过期时间的 key 中，淘汰访问次数最少的
+allkeys-lfu     # 在所有 key 中，淘汰访问次数最少的
+
+# —— TTL：按剩余存活时间排序 ——
+volatile-ttl    # 仅在设置了过期时间的 key 中，淘汰剩余存活时间最短的（快到期的先删）
+
+# —— Random：随机挑选 ——
+volatile-random # 仅在设置了过期时间的 key 中，随机淘汰一个
+allkeys-random  # 在所有 key 中，随机淘汰一个
+
+# —— 不淘汰 ——
+noeviction      # 内存满后拒绝写入，返回错误（默认策略，读操作不受影响）
+</code></pre><p><strong>按&quot;淘汰范围&quot;分类：</strong></p>
 <div class="table-wrapper"><table>
   <thead>
       <tr>
@@ -1413,87 +1340,44 @@
 <li>兼顾恢复速度和数据安全</li>
 </ul>
 <h3 id="24-事件循环io-模型">2.4 事件循环（I/O 模型）
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span><span class="lnt">26
-</span><span class="lnt">27
-</span><span class="lnt">28
-</span><span class="lnt">29
-</span><span class="lnt">30
-</span><span class="lnt">31
-</span><span class="lnt">32
-</span><span class="lnt">33
-</span><span class="lnt">34
-</span><span class="lnt">35
-</span><span class="lnt">36
-</span><span class="lnt">37
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────┐
-</span></span><span class="line"><span class="cl">│    I/O 多路复用          │
-</span></span><span class="line"><span class="cl">│  (select/epoll/kqueue)  │
-</span></span><span class="line"><span class="cl">└──────────┬──────────────┘
-</span></span><span class="line"><span class="cl">           │
-</span></span><span class="line"><span class="cl">           ▼
-</span></span><span class="line"><span class="cl">┌─────────────────────────┐
-</span></span><span class="line"><span class="cl">│    事件处理器             │
-</span></span><span class="line"><span class="cl">│  (File Event Handler)   │
-</span></span><span class="line"><span class="cl">└──────────┬──────────────┘
-</span></span><span class="line"><span class="cl">           │
-</span></span><span class="line"><span class="cl">    ┌──────┴──────┐
-</span></span><span class="line"><span class="cl">    ▼             ▼
-</span></span><span class="line"><span class="cl">┌───────┐    ┌───────┐
-</span></span><span class="line"><span class="cl">│ Accept│    │  Read │
-</span></span><span class="line"><span class="cl">│Handler│    │Handler│
-</span></span><span class="line"><span class="cl">└───┬───┘    └───┬───┘
-</span></span><span class="line"><span class="cl">    │             │
-</span></span><span class="line"><span class="cl">    └─────┬───────┘
-</span></span><span class="line"><span class="cl">          ▼
-</span></span><span class="line"><span class="cl">┌─────────────────────────┐
-</span></span><span class="line"><span class="cl">│    命令执行器           │
-</span></span><span class="line"><span class="cl">│  (Command Dispatcher)   │
-</span></span><span class="line"><span class="cl">└──────────┬──────────────┘
-</span></span><span class="line"><span class="cl">           │
-</span></span><span class="line"><span class="cl">           ▼
-</span></span><span class="line"><span class="cl">┌─────────────────────────┐
-</span></span><span class="line"><span class="cl">│    命令处理器           │
-</span></span><span class="line"><span class="cl">│  (Command Processor)    │
-</span></span><span class="line"><span class="cl">└──────────┬──────────────┘
-</span></span><span class="line"><span class="cl">           │
-</span></span><span class="line"><span class="cl">    ┌──────┴──────┐
-</span></span><span class="line"><span class="cl">    ▼             ▼
-</span></span><span class="line"><span class="cl">┌───────┐    ┌───────┐
-</span></span><span class="line"><span class="cl">│Write  │    │ Close │
-</span></span><span class="line"><span class="cl">│Handler│    │Handler│
-</span></span><span class="line"><span class="cl">└───────┘    └───────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>单线程模型：</strong></p>
+</h3><pre tabindex="0"><code>┌─────────────────────────┐
+│    I/O 多路复用          │
+│  (select/epoll/kqueue)  │
+└──────────┬──────────────┘
+           │
+           ▼
+┌─────────────────────────┐
+│    事件处理器             │
+│  (File Event Handler)   │
+└──────────┬──────────────┘
+           │
+    ┌──────┴──────┐
+    ▼             ▼
+┌───────┐    ┌───────┐
+│ Accept│    │  Read │
+│Handler│    │Handler│
+└───┬───┘    └───┬───┘
+    │             │
+    └─────┬───────┘
+          ▼
+┌─────────────────────────┐
+│    命令执行器           │
+│  (Command Dispatcher)   │
+└──────────┬──────────────┘
+           │
+           ▼
+┌─────────────────────────┐
+│    命令处理器           │
+│  (Command Processor)    │
+└──────────┬──────────────┘
+           │
+    ┌──────┴──────┐
+    ▼             ▼
+┌───────┐    ┌───────┐
+│Write  │    │ Close │
+│Handler│    │Handler│
+└───────┘    └───────┘
+</code></pre><p><strong>单线程模型：</strong></p>
 <ul>
 <li>所有命令顺序执行</li>
 <li>无锁竞争</li>
@@ -1501,41 +1385,21 @@
 </ul>
 <p><strong>注意：</strong> Redis 6.0+ 支持多线程 I/O</p>
 <h3 id="25-redis-60-多线程">2.5 Redis 6.0 多线程
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│            主线程 (Main Thread)         │
-</span></span><span class="line"><span class="cl">│  ┌──────┐  ┌──────┐  ┌──────┐          │
-</span></span><span class="line"><span class="cl">│  │ IO 1 │  │ IO 2 │  │ IO 3 │  ...     │
-</span></span><span class="line"><span class="cl">│  └──┬───┘  └───┬──┘  └──┬───┘          │
-</span></span><span class="line"><span class="cl">│     └───────——─┼────────┘              │
-</span></span><span class="line"><span class="cl">│                ▼                       │
-</span></span><span class="line"><span class="cl">│       ┌────────────┐                   │
-</span></span><span class="line"><span class="cl">│       │ 命令执行    │  (单线程)           │
-</span></span><span class="line"><span class="cl">│       └────────────┘                   │
-</span></span><span class="line"><span class="cl">└────────────────────────────────────────┘
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">io-threads 4    # 4个I/O线程
-</span></span><span class="line"><span class="cl">io-threads-do-reading yes  # 读取也用多线程
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>特点：</strong></p>
+</h3><pre tabindex="0"><code>┌────────────────────────────────────────┐
+│            主线程 (Main Thread)         │
+│  ┌──────┐  ┌──────┐  ┌──────┐          │
+│  │ IO 1 │  │ IO 2 │  │ IO 3 │  ...     │
+│  └──┬───┘  └───┬──┘  └──┬───┘          │
+│     └───────——─┼────────┘              │
+│                ▼                       │
+│       ┌────────────┐                   │
+│       │ 命令执行    │  (单线程)           │
+│       └────────────┘                   │
+└────────────────────────────────────────┘
+
+io-threads 4    # 4个I/O线程
+io-threads-do-reading yes  # 读取也用多线程
+</code></pre><p><strong>特点：</strong></p>
 <ul>
 <li>I/O 多线程，命令执行单线程</li>
 <li>提升网络 I/O 性能</li>
@@ -1545,19 +1409,10 @@
 <h2 id="3-分布式">3. 分布式
 </h2><h3 id="30-三种分布式模式概览">3.0 三种分布式模式概览
 </h3><p>Redis 的分布式方案是<strong>渐进式演进</strong>的，主从、哨兵、Cluster 不是并列关系，而是<strong>逐层叠加</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">单机 Redis ──加副本──→ 主从 ──加哨兵──→ 哨兵架构 ──加分片──→ Cluster
-</span></span><span class="line"><span class="cl">   |                    |                  |                    |
-</span></span><span class="line"><span class="cl"> 数据丢失            手动切换         自动故障转移         自动分片+故障转移
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h4 id="三者对比">三者对比
+<pre tabindex="0"><code>单机 Redis ──加副本──→ 主从 ──加哨兵──→ 哨兵架构 ──加分片──→ Cluster
+   |                    |                  |                    |
+ 数据丢失            手动切换         自动故障转移         自动分片+故障转移
+</code></pre><h4 id="三者对比">三者对比
 </h4><div class="table-wrapper"><table>
   <thead>
       <tr>
@@ -1691,35 +1546,18 @@
 </table></div>
 <h3 id="31-主从复制replication">3.1 主从复制（Replication）
 </h3><h4 id="311-原理">3.1.1 原理
-</h4><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────┐         同步          ┌─────────┐
-</span></span><span class="line"><span class="cl">│ Master  │ ◄──────────────────► │ Slave 1 │
-</span></span><span class="line"><span class="cl">│ 6379    │                      │ 6380    │
-</span></span><span class="line"><span class="cl">└─────────┘                      └─────────┘
-</span></span><span class="line"><span class="cl">       │
-</span></span><span class="line"><span class="cl">       │ 同步
-</span></span><span class="line"><span class="cl">       ▼
-</span></span><span class="line"><span class="cl">┌─────────┐
-</span></span><span class="line"><span class="cl">│ Slave 2 │
-</span></span><span class="line"><span class="cl">│ 6381    │
-</span></span><span class="line"><span class="cl">└─────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>复制流程：</strong></p>
+</h4><pre tabindex="0"><code>┌─────────┐         同步          ┌─────────┐
+│ Master  │ ◄──────────────────► │ Slave 1 │
+│ 6379    │                      │ 6380    │
+└─────────┘                      └─────────┘
+       │
+       │ 同步
+       ▼
+┌─────────┐
+│ Slave 2 │
+│ 6381    │
+└─────────┘
+</code></pre><p><strong>复制流程：</strong></p>
 <ol>
 <li>Slave 连接 Master，发送 SYNC</li>
 <li>Master 执行 BGSAVE，生成 RDB</li>
@@ -1809,58 +1647,27 @@
 </h4><blockquote>
 <p><strong>哨兵 = 主从复制 + 自动故障转移</strong></p></blockquote>
 <p>哨兵不是替代主从，而是<strong>架在主从之上的监控层</strong>。它本身是一个<strong>独立的 Redis 进程</strong>（不存数据），专门负责监控主从节点状态、在 Master 故障时自动选举新的 Master。</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">角色分工：
-</span></span><span class="line"><span class="cl">- Redis Master / Slave  → 数据节点（存数据）
-</span></span><span class="line"><span class="cl">- Sentinel              → 控制节点（不存数据，只监控和决策）
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h4 id="322-原理">3.2.2 原理
-</h4><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│              客户端                      │
-</span></span><span class="line"><span class="cl">└─────────────────┬───────────────────────┘
-</span></span><span class="line"><span class="cl">                  │
-</span></span><span class="line"><span class="cl">┌─────────────────▼───────────────────────┐
-</span></span><span class="line"><span class="cl">│          Sentinel 集群 (3节点)           │
-</span></span><span class="line"><span class="cl">│   ┌─────────┐  ┌─────────┐  ┌─────────┐  │
-</span></span><span class="line"><span class="cl">│   │ Sentinel│  │ Sentinel│  │ Sentinel│  │
-</span></span><span class="line"><span class="cl">│   │  26379  │  │ 26380   │  │ 26381   │  │
-</span></span><span class="line"><span class="cl">│   └────┬────┘  └────┬────┘  └────┬────┘  │
-</span></span><span class="line"><span class="cl">└────────┼───────────┼───────────┼────────┘
-</span></span><span class="line"><span class="cl">         │           │           │
-</span></span><span class="line"><span class="cl">         ▼           ▼           ▼
-</span></span><span class="line"><span class="cl">    ┌─────────┐  ┌─────────┐  ┌─────────┐
-</span></span><span class="line"><span class="cl">    │ Master  │  │ Slave 1 │  │ Slave 2 │
-</span></span><span class="line"><span class="cl">    └─────────┘  └─────────┘  └─────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>Sentinel 功能：</strong></p>
+<pre tabindex="0"><code>角色分工：
+- Redis Master / Slave  → 数据节点（存数据）
+- Sentinel              → 控制节点（不存数据，只监控和决策）
+</code></pre><h4 id="322-原理">3.2.2 原理
+</h4><pre tabindex="0"><code>┌─────────────────────────────────────────┐
+│              客户端                      │
+└─────────────────┬───────────────────────┘
+                  │
+┌─────────────────▼───────────────────────┐
+│          Sentinel 集群 (3节点)           │
+│   ┌─────────┐  ┌─────────┐  ┌─────────┐  │
+│   │ Sentinel│  │ Sentinel│  │ Sentinel│  │
+│   │  26379  │  │ 26380   │  │ 26381   │  │
+│   └────┬────┘  └────┬────┘  └────┬────┘  │
+└────────┼───────────┼───────────┼────────┘
+         │           │           │
+         ▼           ▼           ▼
+    ┌─────────┐  ┌─────────┐  ┌─────────┐
+    │ Master  │  │ Slave 1 │  │ Slave 2 │
+    └─────────┘  └─────────┘  └─────────┘
+</code></pre><p><strong>Sentinel 功能：</strong></p>
 <div class="table-wrapper"><table>
   <thead>
       <tr>
@@ -1888,51 +1695,26 @@
   </tbody>
 </table></div>
 <p><strong>故障转移流程（详细版）：</strong></p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">1. 多个 Sentinel 持续 ping Master
-</span></span><span class="line"><span class="cl">        ↓
-</span></span><span class="line"><span class="cl">2. 某个 Sentinel 发现 Master 没响应 → 标记为 SDOWN（主观下线）
-</span></span><span class="line"><span class="cl">        ↓
-</span></span><span class="line"><span class="cl">3. 该 Sentinel 询问其他 Sentinel：你们也觉得 Master 挂了吗？
-</span></span><span class="line"><span class="cl">        ↓
-</span></span><span class="line"><span class="cl">4. 多数 Sentinel 同意 → 标记为 ODOWN（客观下线）
-</span></span><span class="line"><span class="cl">        ↓
-</span></span><span class="line"><span class="cl">5. Sentinel 之间选举出一个 Leader（基于 Raft 算法）
-</span></span><span class="line"><span class="cl">        ↓
-</span></span><span class="line"><span class="cl">6. Leader 从 Slave 中选出最适合的（数据最新、优先级高的）
-</span></span><span class="line"><span class="cl">        ↓
-</span></span><span class="line"><span class="cl">7. 执行 SLAVEOF NO ONE，把它升级为新 Master
-</span></span><span class="line"><span class="cl">        ↓
-</span></span><span class="line"><span class="cl">8. 让其他 Slave 改为复制新 Master
-</span></span><span class="line"><span class="cl">        ↓
-</span></span><span class="line"><span class="cl">9. 通知客户端：Master 地址变了
-</span></span><span class="line"><span class="cl">        ↓
-</span></span><span class="line"><span class="cl">10. 老 Master 恢复后自动降级为 Slave
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>整个过程<strong>自动完成，无需人工介入</strong>，通常 10-30 秒内恢复。</p>
+<pre tabindex="0"><code>1. 多个 Sentinel 持续 ping Master
+        ↓
+2. 某个 Sentinel 发现 Master 没响应 → 标记为 SDOWN（主观下线）
+        ↓
+3. 该 Sentinel 询问其他 Sentinel：你们也觉得 Master 挂了吗？
+        ↓
+4. 多数 Sentinel 同意 → 标记为 ODOWN（客观下线）
+        ↓
+5. Sentinel 之间选举出一个 Leader（基于 Raft 算法）
+        ↓
+6. Leader 从 Slave 中选出最适合的（数据最新、优先级高的）
+        ↓
+7. 执行 SLAVEOF NO ONE，把它升级为新 Master
+        ↓
+8. 让其他 Slave 改为复制新 Master
+        ↓
+9. 通知客户端：Master 地址变了
+        ↓
+10. 老 Master 恢复后自动降级为 Slave
+</code></pre><p>整个过程<strong>自动完成，无需人工介入</strong>，通常 10-30 秒内恢复。</p>
 <h4 id="323-哨兵集群的高可用要求">3.2.3 哨兵集群的高可用要求
 </h4><p>⚠️ <strong>哨兵自身也必须做集群部署（至少 3 个）</strong>，原因：</p>
 <ol>
@@ -2004,29 +1786,15 @@
 </div>
 </div><h3 id="33-cluster-集群模式">3.3 Cluster 集群模式
 </h3><h4 id="331-原理">3.3.1 原理
-</h4><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">   物理机 A              物理机 B              物理机 C
-</span></span><span class="line"><span class="cl">┌────────────┐       ┌────────────┐       ┌────────────┐
-</span></span><span class="line"><span class="cl">│ Master1    │       │ Master2    │       │ Master3    │
-</span></span><span class="line"><span class="cl">│ (Slot 0-5) │       │(Slot 6-11) │       │(Slot12-16) │
-</span></span><span class="line"><span class="cl">│            │       │            │       │            │
-</span></span><span class="line"><span class="cl">│ Replica3   │       │ Replica1   │       │ Replica2   │
-</span></span><span class="line"><span class="cl">│ (M3 副本)  │       │ (M1 副本)  │       │ (M2 副本)  │
-</span></span><span class="line"><span class="cl">└────────────┘       └────────────┘       └────────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><blockquote>
+</h4><pre tabindex="0"><code>   物理机 A              物理机 B              物理机 C
+┌────────────┐       ┌────────────┐       ┌────────────┐
+│ Master1    │       │ Master2    │       │ Master3    │
+│ (Slot 0-5) │       │(Slot 6-11) │       │(Slot12-16) │
+│            │       │            │       │            │
+│ Replica3   │       │ Replica1   │       │ Replica2   │
+│ (M3 副本)  │       │ (M1 副本)  │       │ (M2 副本)  │
+└────────────┘       └────────────┘       └────────────┘
+</code></pre><blockquote>
 <p><strong>部署关键原则</strong>：Master 和它对应的 Replica <strong>必须分散到不同物理机</strong>。
 上图中每台机器都&quot;既有一个 Master，又有别的 Master 的 Replica&quot;，这种<strong>交叉部署</strong>保证：任意一台物理机宕机，对应的 Replica 都能在其他机器上接管，集群继续可用。</p>
 <p>反例：如果把 M1 和 R1 放在同一台机器，机器一挂主从同时消失，Slot 0-5 的数据就丢了 —— 集群高可用形同虚设。</p></blockquote>
@@ -2039,15 +1807,8 @@
 </ul>
 <h4 id="332-数据分布">3.3.2 数据分布
 </h4><p><strong>槽计算：</strong></p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">CRC16(key) % 16384
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>Python 客户端：</strong></p>
+<pre tabindex="0"><code>CRC16(key) % 16384
+</code></pre><p><strong>Python 客户端：</strong></p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -2095,45 +1856,23 @@
 </ul>
 <h3 id="34-缓存问题">3.4 缓存问题
 </h3><h4 id="341-缓存一致性">3.4.1 缓存一致性
-</h4><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│                  缓存更新策略                        │
-</span></span><span class="line"><span class="cl">│                                                      │
-</span></span><span class="line"><span class="cl">│  1. Cache Aside (旁路缓存) - 最常用                  │
-</span></span><span class="line"><span class="cl">│     读: Cache → Miss → DB → Write Cache            │
-</span></span><span class="line"><span class="cl">│     写: DB → Delete Cache                          │
-</span></span><span class="line"><span class="cl">│                                                      │
-</span></span><span class="line"><span class="cl">│  2. Read Through                                    │
-</span></span><span class="line"><span class="cl">│     读: Cache 自动加载（应用无感知）                  │
-</span></span><span class="line"><span class="cl">│                                                      │
-</span></span><span class="line"><span class="cl">│  3. Write Through                                   │
-</span></span><span class="line"><span class="cl">│     写: Cache 和 DB 同步写入                        │
-</span></span><span class="line"><span class="cl">│                                                      │
-</span></span><span class="line"><span class="cl">│  4. Write Behind                                    │
-</span></span><span class="line"><span class="cl">│     写: 异步批量写入 DB                              │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>Cache Aside 最佳实践：</strong></p>
+</h4><pre tabindex="0"><code>┌─────────────────────────────────────────────────────┐
+│                  缓存更新策略                        │
+│                                                      │
+│  1. Cache Aside (旁路缓存) - 最常用                  │
+│     读: Cache → Miss → DB → Write Cache            │
+│     写: DB → Delete Cache                          │
+│                                                      │
+│  2. Read Through                                    │
+│     读: Cache 自动加载（应用无感知）                  │
+│                                                      │
+│  3. Write Through                                   │
+│     写: Cache 和 DB 同步写入                        │
+│                                                      │
+│  4. Write Behind                                    │
+│     写: 异步批量写入 DB                              │
+└─────────────────────────────────────────────────────┘
+</code></pre><p><strong>Cache Aside 最佳实践：</strong></p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -2184,60 +1923,29 @@
 </div>
 </div><h4 id="342-缓存穿透">3.4.2 缓存穿透
 </h4><p><strong>问题：</strong> 查询不存在的数据，每次都打到 DB</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">正常请求:    请求 ──► 缓存(Hit) ──► 直接返回
-</span></span><span class="line"><span class="cl">缓存穿透:    请求 ──► 缓存(Miss) ──► 数据库(无数据) ──► 再次请求 ──► 再次打DB ──► 数据库压力剧增
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>解决方案：</strong></p>
+<pre tabindex="0"><code>正常请求:    请求 ──► 缓存(Hit) ──► 直接返回
+缓存穿透:    请求 ──► 缓存(Miss) ──► 数据库(无数据) ──► 再次请求 ──► 再次打DB ──► 数据库压力剧增
+</code></pre><p><strong>解决方案：</strong></p>
 <h5 id="方案一布隆过滤器bloom-filter">方案一：布隆过滤器（Bloom Filter）
 </h5><p><strong>原理</strong>：使用位数组 + 多个哈希函数，判断元素是否&quot;可能存在&quot;</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">原始数据: {1, 3, 5, 7, 9}
-</span></span><span class="line"><span class="cl">              │
-</span></span><span class="line"><span class="cl">              ▼
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│       布隆过滤器                 │
-</span></span><span class="line"><span class="cl">│  位置:  0 1 2 3 4 5 6 7 8 9    │
-</span></span><span class="line"><span class="cl">│  bit:   0 1 0 1 0 1 0 1 0 1    │
-</span></span><span class="line"><span class="cl">│                                 │
-</span></span><span class="line"><span class="cl">│  1 ──► hash1 ──► 位置1          │
-</span></span><span class="line"><span class="cl">│       hash2 ──► 位置3          │
-</span></span><span class="line"><span class="cl">│       hash3 ──► 位置5          │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────┘
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">查询 &#34;2&#34;:
-</span></span><span class="line"><span class="cl">  - 计算 hash 得到位置 1, 3, 5
-</span></span><span class="line"><span class="cl">  - 发现位置全是 1
-</span></span><span class="line"><span class="cl">  - 结论: &#34;可能存在&#34; (存在假阳性)
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>Python 实现</strong>：</p>
+<pre tabindex="0"><code>原始数据: {1, 3, 5, 7, 9}
+              │
+              ▼
+┌─────────────────────────────────┐
+│       布隆过滤器                 │
+│  位置:  0 1 2 3 4 5 6 7 8 9    │
+│  bit:   0 1 0 1 0 1 0 1 0 1    │
+│                                 │
+│  1 ──► hash1 ──► 位置1          │
+│       hash2 ──► 位置3          │
+│       hash3 ──► 位置5          │
+└─────────────────────────────────┘
+
+查询 &#34;2&#34;:
+  - 计算 hash 得到位置 1, 3, 5
+  - 发现位置全是 1
+  - 结论: &#34;可能存在&#34; (存在假阳性)
+</code></pre><p><strong>Python 实现</strong>：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -2315,49 +2023,25 @@
 <hr>
 <h5 id="方案二缓存空值">方案二：缓存空值
 </h5><p><strong>原理</strong>：将&quot;不存在&quot;的结果也缓存起来</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">请求 key=100
-</span></span><span class="line"><span class="cl">     │
-</span></span><span class="line"><span class="cl">     ▼
-</span></span><span class="line"><span class="cl">缓存 Miss
-</span></span><span class="line"><span class="cl">     │
-</span></span><span class="line"><span class="cl">     ▼
-</span></span><span class="line"><span class="cl">DB 查询 ──► 无数据
-</span></span><span class="line"><span class="cl">     │
-</span></span><span class="line"><span class="cl">     ▼
-</span></span><span class="line"><span class="cl">cache.set(&#39;user:100&#39;, &#39;&#39;, ex=60)  ◀── 关键！
-</span></span><span class="line"><span class="cl">     │
-</span></span><span class="line"><span class="cl">     ▼
-</span></span><span class="line"><span class="cl">返回 None
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">下次请求 key=100
-</span></span><span class="line"><span class="cl">     │
-</span></span><span class="line"><span class="cl">     ▼
-</span></span><span class="line"><span class="cl">缓存 Hit ──► &#39;&#39; ──► 返回 None (不再打 DB)
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>Python 实现</strong>：</p>
+<pre tabindex="0"><code>请求 key=100
+     │
+     ▼
+缓存 Miss
+     │
+     ▼
+DB 查询 ──► 无数据
+     │
+     ▼
+cache.set(&#39;user:100&#39;, &#39;&#39;, ex=60)  ◀── 关键！
+     │
+     ▼
+返回 None
+
+下次请求 key=100
+     │
+     ▼
+缓存 Hit ──► &#39;&#39; ──► 返回 None (不再打 DB)
+</code></pre><p><strong>Python 实现</strong>：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -2581,31 +2265,16 @@
 </h5><p><strong>Q: 布隆过滤器能删除数据吗？</strong></p>
 <p>不能。布隆过滤器不支持删除，因为删除可能影响其他元素（共享 bit 位）。解决方案：使用 Counting Bloom Filter 或定期重建。</p>
 <p><strong>Q: 如何选择布隆过滤器的参数？</strong></p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span><span class="lnt">9
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">n = 元素数量
-</span></span><span class="line"><span class="cl">p = 假阳性率
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">m = - (n * ln(p)) / (ln(2)^2)  # 所需 bit 数
-</span></span><span class="line"><span class="cl">k = (m / n) * ln(2)            # 哈希函数数量
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">例如：n=100000, p=0.01
-</span></span><span class="line"><span class="cl">m = -100000 * ln(0.01) / 0.48 ≈ 958506 bits ≈ 117 KB
-</span></span><span class="line"><span class="cl">k = 7
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>Q: 缓存空值的过期时间怎么设置？</strong></p>
+<pre tabindex="0"><code>n = 元素数量
+p = 假阳性率
+
+m = - (n * ln(p)) / (ln(2)^2)  # 所需 bit 数
+k = (m / n) * ln(2)            # 哈希函数数量
+
+例如：n=100000, p=0.01
+m = -100000 * ln(0.01) / 0.48 ≈ 958506 bits ≈ 117 KB
+k = 7
+</code></pre><p><strong>Q: 缓存空值的过期时间怎么设置？</strong></p>
 <ul>
 <li>不宜过长：数据恢复后等待时间长</li>
 <li>不宜过短：频繁穿透到数据库</li>
@@ -2906,39 +2575,20 @@
 <blockquote>
 <p>⚠️ 注意：RedLock 用的是<strong>多个独立的 Redis Master</strong>（比如 5 台没有主从关系的 Redis），不是 Redis Cluster。</p></blockquote>
 <h4 id="452-原理">4.5.2 原理
-</h4><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌──────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│          RedLock (向 N 个独立实例加锁)         │
-</span></span><span class="line"><span class="cl">│                                              │
-</span></span><span class="line"><span class="cl">│  1. 客户端记录当前时间 T1                     │
-</span></span><span class="line"><span class="cl">│  2. 用相同的 key 和随机 value，依次向          │
-</span></span><span class="line"><span class="cl">│     N 个 Redis 实例申请锁（带超时）            │
-</span></span><span class="line"><span class="cl">│  3. 计算总耗时 = T2 - T1                     │
-</span></span><span class="line"><span class="cl">│  4. 判断是否加锁成功：                        │
-</span></span><span class="line"><span class="cl">│     ① 成功获取锁的实例数 ≥ N/2 + 1（多数派）  │
-</span></span><span class="line"><span class="cl">│     ② 总耗时 &lt; 锁的过期时间                   │
-</span></span><span class="line"><span class="cl">│  5. 满足条件 → 加锁成功                       │
-</span></span><span class="line"><span class="cl">│     不满足 → 向所有节点发送解锁命令            │
-</span></span><span class="line"><span class="cl">└──────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h4 id="453-实现示例">4.5.3 实现示例
+</h4><pre tabindex="0"><code>┌──────────────────────────────────────────────┐
+│          RedLock (向 N 个独立实例加锁)         │
+│                                              │
+│  1. 客户端记录当前时间 T1                     │
+│  2. 用相同的 key 和随机 value，依次向          │
+│     N 个 Redis 实例申请锁（带超时）            │
+│  3. 计算总耗时 = T2 - T1                     │
+│  4. 判断是否加锁成功：                        │
+│     ① 成功获取锁的实例数 ≥ N/2 + 1（多数派）  │
+│     ② 总耗时 &lt; 锁的过期时间                   │
+│  5. 满足条件 → 加锁成功                       │
+│     不满足 → 向所有节点发送解锁命令            │
+└──────────────────────────────────────────────┘
+</code></pre><h4 id="453-实现示例">4.5.3 实现示例
 </h4><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -3182,132 +2832,62 @@
   </tbody>
 </table></div>
 <h5 id="为什么需要内存优化">为什么需要内存优化
-</h5><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">Redis 内存使用场景:
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│              Redis 进程                      │
-</span></span><span class="line"><span class="cl">│                                             │
-</span></span><span class="line"><span class="cl">│  ┌─────────────────────────────────────────┐ │
-</span></span><span class="line"><span class="cl">│  │  数据存储 (主要)                         │ │
-</span></span><span class="line"><span class="cl">│  │  - Key                                  │ │
-</span></span><span class="line"><span class="cl">│  │  - Value                                │ │
-</span></span><span class="line"><span class="cl">│  │  - 元数据 (过期时间、编码类型等)          │ │
-</span></span><span class="line"><span class="cl">│  └─────────────────────────────────────────┘ │
-</span></span><span class="line"><span class="cl">│                                             │
-</span></span><span class="line"><span class="cl">│  ┌─────────────────────────────────────────┐ │
-</span></span><span class="line"><span class="cl">│  │  运行时开销                              │ │
-</span></span><span class="line"><span class="cl">│  │  - 客户端缓冲                           │ │
-</span></span><span class="line"><span class="cl">│  │  - Lua 脚本                            │ │
-</span></span><span class="line"><span class="cl">│  │  - AOF 缓冲                            │ │
-</span></span><span class="line"><span class="cl">│  │  - 内存碎片                             │ │
-</span></span><span class="line"><span class="cl">│  └─────────────────────────────────────────┘ │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h4 id="512-大-key-处理">5.1.2 大 Key 处理
+</h5><pre tabindex="0"><code>Redis 内存使用场景:
+┌─────────────────────────────────────────────┐
+│              Redis 进程                      │
+│                                             │
+│  ┌─────────────────────────────────────────┐ │
+│  │  数据存储 (主要)                         │ │
+│  │  - Key                                  │ │
+│  │  - Value                                │ │
+│  │  - 元数据 (过期时间、编码类型等)          │ │
+│  └─────────────────────────────────────────┘ │
+│                                             │
+│  ┌─────────────────────────────────────────┐ │
+│  │  运行时开销                              │ │
+│  │  - 客户端缓冲                           │ │
+│  │  - Lua 脚本                            │ │
+│  │  - AOF 缓冲                            │ │
+│  │  - 内存碎片                             │ │
+│  └─────────────────────────────────────────┘ │
+└─────────────────────────────────────────────┘
+</code></pre><h4 id="512-大-key-处理">5.1.2 大 Key 处理
 </h4><h5 id="什么是大-key">什么是大 Key
-</h5><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">大 Key 定义:
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│  String 类型:       value &gt; 10MB                    │
-</span></span><span class="line"><span class="cl">│  Hash/List/Set:    元素 &gt; 10000 个                  │
-</span></span><span class="line"><span class="cl">│  ZSet:             元素 &gt; 10000 个                  │
-</span></span><span class="line"><span class="cl">│                                                     │
-</span></span><span class="line"><span class="cl">│  常见问题场景:                                       │
-</span></span><span class="line"><span class="cl">│  - 缓存了整个大对象（如整个用户画像）                  │
-</span></span><span class="line"><span class="cl">│  - 历史数据未清理                                    │
-</span></span><span class="line"><span class="cl">│  - 使用 List 做消息队列堆积                          │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h5 id="大-key-的危害">大 Key 的危害
-</h5><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│                    大 Key 危害                       │
-</span></span><span class="line"><span class="cl">├─────────────────────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│  1. 内存不均匀                                      │
-</span></span><span class="line"><span class="cl">│     单个 Key 占用内存过大                           │
-</span></span><span class="line"><span class="cl">│     导致内存分配碎片化                              │
-</span></span><span class="line"><span class="cl">│                                                     │
-</span></span><span class="line"><span class="cl">│  2. 阻塞风险                                        │
-</span></span><span class="line"><span class="cl">│     删除/过期 操作阻塞主线程                         │
-</span></span><span class="line"><span class="cl">│     (DEL 命令是同步的)                             │
-</span></span><span class="line"><span class="cl">│                                                     │
-</span></span><span class="line"><span class="cl">│  3. 网络带宽                                        │
-</span></span><span class="line"><span class="cl">│     读取/传输大 value 消耗带宽                       │
-</span></span><span class="line"><span class="cl">│                                                     │
-</span></span><span class="line"><span class="cl">│  4. 集群问题                                        │
-</span></span><span class="line"><span class="cl">│     倾斜到某个节点                                  │
-</span></span><span class="line"><span class="cl">│     导致集群不均衡                                  │
-</span></span><span class="line"><span class="cl">│                                                     │
-</span></span><span class="line"><span class="cl">│  5. 持久化影响                                     │
-</span></span><span class="line"><span class="cl">│     RDB/AOF 快照过大                                │
-</span></span><span class="line"><span class="cl">│     Fork 时间过长                                   │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h5 id="大-key-发现与诊断">大 Key 发现与诊断
+</h5><pre tabindex="0"><code>大 Key 定义:
+┌─────────────────────────────────────────────────────┐
+│  String 类型:       value &gt; 10MB                    │
+│  Hash/List/Set:    元素 &gt; 10000 个                  │
+│  ZSet:             元素 &gt; 10000 个                  │
+│                                                     │
+│  常见问题场景:                                       │
+│  - 缓存了整个大对象（如整个用户画像）                  │
+│  - 历史数据未清理                                    │
+│  - 使用 List 做消息队列堆积                          │
+└─────────────────────────────────────────────────────┘
+</code></pre><h5 id="大-key-的危害">大 Key 的危害
+</h5><pre tabindex="0"><code>┌─────────────────────────────────────────────────────┐
+│                    大 Key 危害                       │
+├─────────────────────────────────────────────────────┤
+│  1. 内存不均匀                                      │
+│     单个 Key 占用内存过大                           │
+│     导致内存分配碎片化                              │
+│                                                     │
+│  2. 阻塞风险                                        │
+│     删除/过期 操作阻塞主线程                         │
+│     (DEL 命令是同步的)                             │
+│                                                     │
+│  3. 网络带宽                                        │
+│     读取/传输大 value 消耗带宽                       │
+│                                                     │
+│  4. 集群问题                                        │
+│     倾斜到某个节点                                  │
+│     导致集群不均衡                                  │
+│                                                     │
+│  5. 持久化影响                                     │
+│     RDB/AOF 快照过大                                │
+│     Fork 时间过长                                   │
+└─────────────────────────────────────────────────────┘
+</code></pre><h5 id="大-key-发现与诊断">大 Key 发现与诊断
 </h5><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -4021,67 +3601,32 @@
 <h2 id="6-脑裂问题">6. 脑裂问题
 </h2><h3 id="61-什么是脑裂">6.1 什么是脑裂
 </h3><p><strong>脑裂（Split-Brain）</strong>：集群中多个节点同时认为自己是主节点，各自处理请求，导致数据不一致。</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│            正常情况                          │
-</span></span><span class="line"><span class="cl">│    Master ──复制──► Slave1 ──复制──► Slave2 │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────┘
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│            脑裂情况                          │
-</span></span><span class="line"><span class="cl">│    Master1 (声称)         Master2 (声称)     │
-</span></span><span class="line"><span class="cl">│       │                      │               │
-</span></span><span class="line"><span class="cl">│       ▼                      ▼               │
-</span></span><span class="line"><span class="cl">│    写数据 A               写数据 B           │
-</span></span><span class="line"><span class="cl">│       │                      │               │
-</span></span><span class="line"><span class="cl">│       ▼                      ▼               │
-</span></span><span class="line"><span class="cl">│    数据不一致！                             │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h3 id="62-redis-脑裂场景">6.2 Redis 脑裂场景
+<pre tabindex="0"><code>┌─────────────────────────────────────────────┐
+│            正常情况                          │
+│    Master ──复制──► Slave1 ──复制──► Slave2 │
+└─────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────┐
+│            脑裂情况                          │
+│    Master1 (声称)         Master2 (声称)     │
+│       │                      │               │
+│       ▼                      ▼               │
+│    写数据 A               写数据 B           │
+│       │                      │               │
+│       ▼                      ▼               │
+│    数据不一致！                             │
+└─────────────────────────────────────────────┘
+</code></pre><h3 id="62-redis-脑裂场景">6.2 Redis 脑裂场景
 </h3><h4 id="621-主从脑裂">6.2.1 主从脑裂
-</h4><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">网络分区
-</span></span><span class="line"><span class="cl">    Master ──────────┬─────────── Slave1
-</span></span><span class="line"><span class="cl">                     │
-</span></span><span class="line"><span class="cl">                     X (网络断开)
-</span></span><span class="line"><span class="cl">                     │
-</span></span><span class="line"><span class="cl">                     ▼
-</span></span><span class="line"><span class="cl">              只剩 Master
-</span></span><span class="line"><span class="cl">              (网络分区期间 Slave 仍可写入)
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>场景：</strong></p>
+</h4><pre tabindex="0"><code>网络分区
+    Master ──────────┬─────────── Slave1
+                     │
+                     X (网络断开)
+                     │
+                     ▼
+              只剩 Master
+              (网络分区期间 Slave 仍可写入)
+</code></pre><p><strong>场景：</strong></p>
 <ol>
 <li>网络抖动，Master 和 Slave 断开</li>
 <li>Sentinel 误判 Master 下线</li>
@@ -4118,21 +3663,11 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h4 id="632-cluster-投票机制">6.3.2 Cluster 投票机制
-</h4><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">1. 节点发现故障
-</span></span><span class="line"><span class="cl">2. 向其他节点发送 PFAIL
-</span></span><span class="line"><span class="cl">3. 收到 &gt; half 节点确认 → 标记为 FAIL
-</span></span><span class="line"><span class="cl">4. 执行故障转移
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h4 id="633-网络分区检测">6.3.3 网络分区检测
+</h4><pre tabindex="0"><code>1. 节点发现故障
+2. 向其他节点发送 PFAIL
+3. 收到 &gt; half 节点确认 → 标记为 FAIL
+4. 执行故障转移
+</code></pre><h4 id="633-网络分区检测">6.3.3 网络分区检测
 </h4><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
@@ -4442,47 +3977,24 @@
 <li><strong>延迟双删</strong>：写 DB → Delete Cache → 延迟再删一次</li>
 </ol>
 <h4 id="q15-如何设计-redis-架构">Q15: 如何设计 Redis 架构？
-</h4><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│              应用层                      │
-</span></span><span class="line"><span class="cl">└─────────────────┬───────────────────────┘
-</span></span><span class="line"><span class="cl">                  │
-</span></span><span class="line"><span class="cl">┌─────────────────▼───────────────────────┐
-</span></span><span class="line"><span class="cl">│          Nginx (负载均衡)               │
-</span></span><span class="line"><span class="cl">└─────────────────�───────────────────────┘
-</span></span><span class="line"><span class="cl">                  │
-</span></span><span class="line"><span class="cl">┌─────────────────▼───────────────────────┐
-</span></span><span class="line"><span class="cl">│         Redis Cluster (3主3从)           │
-</span></span><span class="line"><span class="cl">│  7001 7002 7003 7004 7005 7006          │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────┘
-</span></span><span class="line"><span class="cl">                  │
-</span></span><span class="line"><span class="cl">┌─────────────────▼───────────────────────┐
-</span></span><span class="line"><span class="cl">│           MySQL (主从)                    │
-</span></span><span class="line"><span class="cl">│  Master ──复制──► Slave                  │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h3 id="脑裂类">脑裂类
+</h4><pre tabindex="0"><code>┌─────────────────────────────────────────┐
+│              应用层                      │
+└─────────────────┬───────────────────────┘
+                  │
+┌─────────────────▼───────────────────────┐
+│          Nginx (负载均衡)               │
+└─────────────────�───────────────────────┘
+                  │
+┌─────────────────▼───────────────────────┐
+│         Redis Cluster (3主3从)           │
+│  7001 7002 7003 7004 7005 7006          │
+└─────────────────────────────────────────┘
+                  │
+┌─────────────────▼───────────────────────┐
+│           MySQL (主从)                    │
+│  Master ──复制──► Slave                  │
+└─────────────────────────────────────────┘
+</code></pre><h3 id="脑裂类">脑裂类
 </h3><h4 id="q16-什么是脑裂如何解决">Q16: 什么是脑裂？如何解决？
 </h4><p><strong>脑裂</strong>：集群中多个节点同时认为自己是主节点</p>
 <p><strong>解决方案</strong>：</p>

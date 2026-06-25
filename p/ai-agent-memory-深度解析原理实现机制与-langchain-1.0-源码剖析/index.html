@@ -1,28 +1,37 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 Agent 要完成连续任务，就需要记住上下文。\n但 Agent Memory 不等于把所有聊天记录都塞回模型，也不等于简单做一个 Retrieval-Augmented Generation（RAG，检索增强生成）知识库。\n本文将深入讲解 Agent Memory 的设计原理、底层机制、工程实现，并结合 LangChain 1.3+ / LangGraph 1.2+ 的源码进行分析，帮助你从理论到实践全面掌握 Agent 记忆系统。\n一、Memory 解决什么问题 1.1 为什么需要记忆 Large Language Model（LLM，大语言模型）本身是无状态的。每次请求都是独立的函数调用 f(prompt) -&gt; response，模型不记得上一次对话。\n没有记忆的 Agent 会遇到：\n忘记用户偏好（&ldquo;我上次说了用中文回复&rdquo;） 重复询问信息（&ldquo;你的邮箱是什么&quot;问了三遍） 不知道任务进展（多步骤任务断档重来） 无法利用历史经验（同类任务反复试错） 长对话上下文超限（token 溢出截断） 1.2 记忆的本质 从计算机科学角度，Agent Memory 本质是一个带有读写策略的状态管理系统：\n1 2 3 4 +------------------+ write +----------------+ | Agent 运行时 | ------------&gt; | Memory Store | | (当前对话/任务) | &lt;------------ | (持久化存储) | +------------------+ read +----------------+ 核心问题是：什么时候写、写什么、什么时候读、读什么、怎么淘汰过期信息。\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 Agent 要完成连续任务，就需要记住上下文。\n但 Agent Memory 不等于把所有聊天记录都塞回模型，也不等于简单做一个 Retrieval-Augmented Generation（RAG，检索增强生成）知识库。\n本文将深入讲解 Agent Memory 的设计原理、底层机制、工程实现，并结合 LangChain 1.3+ / LangGraph 1.2+ 的源码进行分析，帮助你从理论到实践全面掌握 Agent 记忆系统。\n一、Memory 解决什么问题 1.1 为什么需要记忆 Large Language Model（LLM，大语言模型）本身是无状态的。每次请求都是独立的函数调用 f(prompt) -&gt; response，模型不记得上一次对话。\n没有记忆的 Agent 会遇到：\n忘记用户偏好（&ldquo;我上次说了用中文回复&rdquo;） 重复询问信息（&ldquo;你的邮箱是什么&quot;问了三遍） 不知道任务进展（多步骤任务断档重来） 无法利用历史经验（同类任务反复试错） 长对话上下文超限（token 溢出截断） 1.2 记忆的本质 从计算机科学角度，Agent Memory 本质是一个带有读写策略的状态管理系统：\n+------------------+ write +----------------+ | Agent 运行时 | ------------&gt; | Memory Store | | (当前对话/任务) | &lt;------------ | (持久化存储) | +------------------+ read +----------------+ 核心问题是：什么时候写、写什么、什么时候读、读什么、怎么淘汰过期信息。\n1.3 记忆不是越多越好 错误记忆会导致错误决策。\n">
 <title>AI Agent Memory 深度解析：原理、实现机制与 LangChain 1.0&#43; 源码剖析</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/ai-agent-memory-%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%B8%8E-langchain-1.0-%E6%BA%90%E7%A0%81%E5%89%96%E6%9E%90/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="AI Agent Memory 深度解析：原理、实现机制与 LangChain 1.0+ 源码剖析">
-<meta property='og:description' content="写在前面 Agent 要完成连续任务，就需要记住上下文。\n但 Agent Memory 不等于把所有聊天记录都塞回模型，也不等于简单做一个 Retrieval-Augmented Generation（RAG，检索增强生成）知识库。\n本文将深入讲解 Agent Memory 的设计原理、底层机制、工程实现，并结合 LangChain 1.3+ / LangGraph 1.2+ 的源码进行分析，帮助你从理论到实践全面掌握 Agent 记忆系统。\n一、Memory 解决什么问题 1.1 为什么需要记忆 Large Language Model（LLM，大语言模型）本身是无状态的。每次请求都是独立的函数调用 f(prompt) -&gt; response，模型不记得上一次对话。\n没有记忆的 Agent 会遇到：\n忘记用户偏好（&ldquo;我上次说了用中文回复&rdquo;） 重复询问信息（&ldquo;你的邮箱是什么&quot;问了三遍） 不知道任务进展（多步骤任务断档重来） 无法利用历史经验（同类任务反复试错） 长对话上下文超限（token 溢出截断） 1.2 记忆的本质 从计算机科学角度，Agent Memory 本质是一个带有读写策略的状态管理系统：\n1 2 3 4 +------------------+ write +----------------+ | Agent 运行时 | ------------&gt; | Memory Store | | (当前对话/任务) | &lt;------------ | (持久化存储) | +------------------+ read +----------------+ 核心问题是：什么时候写、写什么、什么时候读、读什么、怎么淘汰过期信息。\n">
+<meta property='og:description' content="写在前面 Agent 要完成连续任务，就需要记住上下文。\n但 Agent Memory 不等于把所有聊天记录都塞回模型，也不等于简单做一个 Retrieval-Augmented Generation（RAG，检索增强生成）知识库。\n本文将深入讲解 Agent Memory 的设计原理、底层机制、工程实现，并结合 LangChain 1.3+ / LangGraph 1.2+ 的源码进行分析，帮助你从理论到实践全面掌握 Agent 记忆系统。\n一、Memory 解决什么问题 1.1 为什么需要记忆 Large Language Model（LLM，大语言模型）本身是无状态的。每次请求都是独立的函数调用 f(prompt) -&gt; response，模型不记得上一次对话。\n没有记忆的 Agent 会遇到：\n忘记用户偏好（&ldquo;我上次说了用中文回复&rdquo;） 重复询问信息（&ldquo;你的邮箱是什么&quot;问了三遍） 不知道任务进展（多步骤任务断档重来） 无法利用历史经验（同类任务反复试错） 长对话上下文超限（token 溢出截断） 1.2 记忆的本质 从计算机科学角度，Agent Memory 本质是一个带有读写策略的状态管理系统：\n+------------------+ write +----------------+ | Agent 运行时 | ------------&gt; | Memory Store | | (当前对话/任务) | &lt;------------ | (持久化存储) | +------------------+ read +----------------+ 核心问题是：什么时候写、写什么、什么时候读、读什么、怎么淘汰过期信息。\n1.3 记忆不是越多越好 错误记忆会导致错误决策。\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/ai-agent-memory-%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%B8%8E-langchain-1.0-%E6%BA%90%E7%A0%81%E5%89%96%E6%9E%90/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='memory' /><meta property='article:tag' content='langchain' /><meta property='article:tag' content='langgraph' /><meta property='article:published_time' content='2026-05-18T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-18T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="AI Agent Memory 深度解析：原理、实现机制与 LangChain 1.0+ 源码剖析">
-<meta name="twitter:description" content="写在前面 Agent 要完成连续任务，就需要记住上下文。\n但 Agent Memory 不等于把所有聊天记录都塞回模型，也不等于简单做一个 Retrieval-Augmented Generation（RAG，检索增强生成）知识库。\n本文将深入讲解 Agent Memory 的设计原理、底层机制、工程实现，并结合 LangChain 1.3+ / LangGraph 1.2+ 的源码进行分析，帮助你从理论到实践全面掌握 Agent 记忆系统。\n一、Memory 解决什么问题 1.1 为什么需要记忆 Large Language Model（LLM，大语言模型）本身是无状态的。每次请求都是独立的函数调用 f(prompt) -&gt; response，模型不记得上一次对话。\n没有记忆的 Agent 会遇到：\n忘记用户偏好（&ldquo;我上次说了用中文回复&rdquo;） 重复询问信息（&ldquo;你的邮箱是什么&quot;问了三遍） 不知道任务进展（多步骤任务断档重来） 无法利用历史经验（同类任务反复试错） 长对话上下文超限（token 溢出截断） 1.2 记忆的本质 从计算机科学角度，Agent Memory 本质是一个带有读写策略的状态管理系统：\n1 2 3 4 +------------------+ write +----------------+ | Agent 运行时 | ------------&gt; | Memory Store | | (当前对话/任务) | &lt;------------ | (持久化存储) | +------------------+ read +----------------+ 核心问题是：什么时候写、写什么、什么时候读、读什么、怎么淘汰过期信息。\n">
+<meta name="twitter:description" content="写在前面 Agent 要完成连续任务，就需要记住上下文。\n但 Agent Memory 不等于把所有聊天记录都塞回模型，也不等于简单做一个 Retrieval-Augmented Generation（RAG，检索增强生成）知识库。\n本文将深入讲解 Agent Memory 的设计原理、底层机制、工程实现，并结合 LangChain 1.3+ / LangGraph 1.2+ 的源码进行分析，帮助你从理论到实践全面掌握 Agent 记忆系统。\n一、Memory 解决什么问题 1.1 为什么需要记忆 Large Language Model（LLM，大语言模型）本身是无状态的。每次请求都是独立的函数调用 f(prompt) -&gt; response，模型不记得上一次对话。\n没有记忆的 Agent 会遇到：\n忘记用户偏好（&ldquo;我上次说了用中文回复&rdquo;） 重复询问信息（&ldquo;你的邮箱是什么&quot;问了三遍） 不知道任务进展（多步骤任务断档重来） 无法利用历史经验（同类任务反复试错） 长对话上下文超限（token 溢出截断） 1.2 记忆的本质 从计算机科学角度，Agent Memory 本质是一个带有读写策略的状态管理系统：\n+------------------+ write +----------------+ | Agent 运行时 | ------------&gt; | Memory Store | | (当前对话/任务) | &lt;------------ | (持久化存储) | +------------------+ read +----------------+ 核心问题是：什么时候写、写什么、什么时候读、读什么、怎么淘汰过期信息。\n1.3 记忆不是越多越好 错误记忆会导致错误决策。\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -454,68 +463,35 @@
 </ul>
 <h2 id="12-记忆的本质">1.2 记忆的本质
 </h2><p>从计算机科学角度，Agent Memory 本质是一个<strong>带有读写策略的状态管理系统</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">+------------------+     write      +----------------+
-</span></span><span class="line"><span class="cl">|   Agent 运行时   | ------------&gt; |  Memory Store  |
-</span></span><span class="line"><span class="cl">|  (当前对话/任务)  | &lt;------------ |  (持久化存储)   |
-</span></span><span class="line"><span class="cl">+------------------+     read       +----------------+
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>核心问题是：<strong>什么时候写、写什么、什么时候读、读什么、怎么淘汰过期信息</strong>。</p>
+<pre tabindex="0"><code>+------------------+     write      +----------------+
+|   Agent 运行时   | ------------&gt; |  Memory Store  |
+|  (当前对话/任务)  | &lt;------------ |  (持久化存储)   |
++------------------+     read       +----------------+
+</code></pre><p>核心问题是：<strong>什么时候写、写什么、什么时候读、读什么、怎么淘汰过期信息</strong>。</p>
 <h2 id="13-记忆不是越多越好">1.3 记忆不是越多越好
 </h2><p>错误记忆会导致错误决策。</p>
 <p>例如把用户一次临时需求记成长期偏好，后续回答就会被污染。Token 成本也是关键约束——每次 LLM 调用的上下文窗口是有限的，塞入过多记忆等于引入噪声。</p>
 <hr>
 <h1 id="二memory-的类型体系">二、Memory 的类型体系
 </h1><h2 id="21-类型总览">2.1 类型总览
-</h2><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">                    Agent Memory
-</span></span><span class="line"><span class="cl">                        |
-</span></span><span class="line"><span class="cl">        +---------------+---------------+
-</span></span><span class="line"><span class="cl">        |               |               |
-</span></span><span class="line"><span class="cl">   短期记忆         工作记忆          长期记忆
-</span></span><span class="line"><span class="cl"> Short-term       Working          Long-term
-</span></span><span class="line"><span class="cl">   Memory          Memory           Memory
-</span></span><span class="line"><span class="cl">        |               |               |
-</span></span><span class="line"><span class="cl">  当前会话消息     任务执行状态     跨会话持久信息
-</span></span><span class="line"><span class="cl">                                        |
-</span></span><span class="line"><span class="cl">                                +-------+-------+
-</span></span><span class="line"><span class="cl">                                |               |
-</span></span><span class="line"><span class="cl">                           语义记忆         情景记忆
-</span></span><span class="line"><span class="cl">                          Semantic        Episodic
-</span></span><span class="line"><span class="cl">                           Memory          Memory
-</span></span><span class="line"><span class="cl">                                |               |
-</span></span><span class="line"><span class="cl">                           知识/事实       具体经历/事件
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h2 id="22-short-term-memory短期记忆">2.2 Short-term Memory（短期记忆）
+</h2><pre tabindex="0"><code>                    Agent Memory
+                        |
+        +---------------+---------------+
+        |               |               |
+   短期记忆         工作记忆          长期记忆
+ Short-term       Working          Long-term
+   Memory          Memory           Memory
+        |               |               |
+  当前会话消息     任务执行状态     跨会话持久信息
+                                        |
+                                +-------+-------+
+                                |               |
+                           语义记忆         情景记忆
+                          Semantic        Episodic
+                           Memory          Memory
+                                |               |
+                           知识/事实       具体经历/事件
+</code></pre><h2 id="22-short-term-memory短期记忆">2.2 Short-term Memory（短期记忆）
 </h2><p><strong>定义</strong>：当前会话（conversation/thread）中的消息列表，随会话结束而丢弃。</p>
 <p><strong>底层机制</strong>：将 <code>List[BaseMessage]</code> 作为状态传递给 LLM。每次 LLM 调用时，短期记忆就是 prompt 中的 <code>messages</code> 数组。</p>
 <p><strong>关键特征</strong>：</p>
@@ -983,33 +959,17 @@
 <h1 id="三各类记忆的存储载体选型">三、各类记忆的存储载体选型
 </h1><p>不同类型的记忆对<strong>延迟、容量、持久性、检索方式</strong>的要求不同，因此适合不同的数据载体。</p>
 <h2 id="31-存储载体总览">3.1 存储载体总览
-</h2><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">+-------------+--------+--------+--------+--------+--------+--------+
-</span></span><span class="line"><span class="cl">|   记忆类型   |  内存   | Redis  |  SQLite | PostgreSQL |  ES   | 向量数据库（Vector DB）  |
-</span></span><span class="line"><span class="cl">+-------------+--------+--------+--------+--------+--------+--------+
-</span></span><span class="line"><span class="cl">| 短期记忆     |  ★★★  |  ★★   |   ★    |    ★     |       |        |
-</span></span><span class="line"><span class="cl">| 工作记忆     |  ★★★  |  ★★★  |   ★★   |    ★★    |       |        |
-</span></span><span class="line"><span class="cl">| 长期-用户偏好 |        |  ★★   |   ★★   |    ★★★   |       |        |
-</span></span><span class="line"><span class="cl">| 长期-情景记忆 |        |  ★    |   ★★   |    ★★★   |  ★★  |        |
-</span></span><span class="line"><span class="cl">| 语义记忆/RAG |        |       |        |   ★★(pgvector) | ★★ | ★★★  |
-</span></span><span class="line"><span class="cl">+-------------+--------+--------+--------+--------+--------+--------+
-</span></span><span class="line"><span class="cl">  ★★★ = 最佳选择   ★★ = 可用   ★ = 勉强可用   空 = 不适合
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h2 id="32-各存储载体特性对比">3.2 各存储载体特性对比
+</h2><pre tabindex="0"><code>+-------------+--------+--------+--------+--------+--------+--------+
+|   记忆类型   |  内存   | Redis  |  SQLite | PostgreSQL |  ES   | 向量数据库（Vector DB）  |
++-------------+--------+--------+--------+--------+--------+--------+
+| 短期记忆     |  ★★★  |  ★★   |   ★    |    ★     |       |        |
+| 工作记忆     |  ★★★  |  ★★★  |   ★★   |    ★★    |       |        |
+| 长期-用户偏好 |        |  ★★   |   ★★   |    ★★★   |       |        |
+| 长期-情景记忆 |        |  ★    |   ★★   |    ★★★   |  ★★  |        |
+| 语义记忆/RAG |        |       |        |   ★★(pgvector) | ★★ | ★★★  |
++-------------+--------+--------+--------+--------+--------+--------+
+  ★★★ = 最佳选择   ★★ = 可用   ★ = 勉强可用   空 = 不适合
+</code></pre><h2 id="32-各存储载体特性对比">3.2 各存储载体特性对比
 </h2><div class="table-wrapper"><table>
   <thead>
       <tr>
@@ -1408,200 +1368,94 @@
 </div>
 </div><h2 id="34-混合存储架构生产推荐">3.4 混合存储架构（生产推荐）
 </h2><p>实际生产环境通常采用<strong>多存储协作</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">+=====================================================+
-</span></span><span class="line"><span class="cl">|                  Agent 应用层                        |
-</span></span><span class="line"><span class="cl">+=====================================================+
-</span></span><span class="line"><span class="cl">         |              |              |            |
-</span></span><span class="line"><span class="cl">         v              v              v            v
-</span></span><span class="line"><span class="cl">+----------+   +----------+   +-----------+   +--------+
-</span></span><span class="line"><span class="cl">|  Redis   |   | PostgreSQL|   |  pgvector |   |   ES   |
-</span></span><span class="line"><span class="cl">|  热缓存   |   |  主存储   |   |  向量索引  |   | 全文索引 |
-</span></span><span class="line"><span class="cl">+----------+   +----------+   +-----------+   +--------+
-</span></span><span class="line"><span class="cl">     |              |               |              |
-</span></span><span class="line"><span class="cl">  短期记忆       长期记忆        语义记忆       情景记忆
-</span></span><span class="line"><span class="cl">  工作记忆       用户偏好        RAG知识库      事件检索
-</span></span><span class="line"><span class="cl">  会话状态       Checkpoint
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>数据流向</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">写入路径:
-</span></span><span class="line"><span class="cl">  新消息 --&gt; Redis (短期缓存)
-</span></span><span class="line"><span class="cl">                |
-</span></span><span class="line"><span class="cl">                +--&gt; PostgreSQL (持久化 Checkpoint)
-</span></span><span class="line"><span class="cl">                |
-</span></span><span class="line"><span class="cl">  值得记忆 --&gt; PostgreSQL + pgvector (长期记忆 + 向量索引)
-</span></span><span class="line"><span class="cl">                |
-</span></span><span class="line"><span class="cl">  事件日志 --&gt; Elasticsearch (情景记忆)
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">读取路径:
-</span></span><span class="line"><span class="cl">  当前会话 --&gt; Redis (命中) / PostgreSQL (未命中时回源)
-</span></span><span class="line"><span class="cl">  用户偏好 --&gt; Redis 缓存 --&gt; PostgreSQL
-</span></span><span class="line"><span class="cl">  语义搜索 --&gt; pgvector / 向量DB
-</span></span><span class="line"><span class="cl">  事件查询 --&gt; Elasticsearch
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h2 id="35-存储选型决策树">3.5 存储选型决策树
-</h2><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span><span class="lnt">26
-</span><span class="lnt">27
-</span><span class="lnt">28
-</span><span class="lnt">29
-</span><span class="lnt">30
-</span><span class="lnt">31
-</span><span class="lnt">32
-</span><span class="lnt">33
-</span><span class="lnt">34
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">需要存什么类型的记忆？
-</span></span><span class="line"><span class="cl">      |
-</span></span><span class="line"><span class="cl">      +-- 当前会话消息 (短期)
-</span></span><span class="line"><span class="cl">      |       |
-</span></span><span class="line"><span class="cl">      |       +-- 需要持久化？
-</span></span><span class="line"><span class="cl">      |               |-- 否 --&gt; 内存 (InMemorySaver)
-</span></span><span class="line"><span class="cl">      |               |-- 是 --&gt; 并发量高？
-</span></span><span class="line"><span class="cl">      |                           |-- 否 --&gt; SQLite
-</span></span><span class="line"><span class="cl">      |                           |-- 是 --&gt; Redis / PostgreSQL
-</span></span><span class="line"><span class="cl">      |
-</span></span><span class="line"><span class="cl">      +-- 任务执行状态 (工作)
-</span></span><span class="line"><span class="cl">      |       |
-</span></span><span class="line"><span class="cl">      |       +-- 任务时长？
-</span></span><span class="line"><span class="cl">      |               |-- &lt; 5分钟 --&gt; 内存
-</span></span><span class="line"><span class="cl">      |               |-- 5分钟~1天 --&gt; Redis (带 TTL)
-</span></span><span class="line"><span class="cl">      |               |-- &gt; 1天 --&gt; PostgreSQL
-</span></span><span class="line"><span class="cl">      |
-</span></span><span class="line"><span class="cl">      +-- 用户偏好/画像 (长期KV)
-</span></span><span class="line"><span class="cl">      |       |
-</span></span><span class="line"><span class="cl">      |       +-- PostgreSQL (首选，JSONB 存储)
-</span></span><span class="line"><span class="cl">      |       +-- 读多写少？加 Redis 缓存层
-</span></span><span class="line"><span class="cl">      |
-</span></span><span class="line"><span class="cl">      +-- 知识/文档 (语义)
-</span></span><span class="line"><span class="cl">      |       |
-</span></span><span class="line"><span class="cl">      |       +-- 数据量？
-</span></span><span class="line"><span class="cl">      |               |-- &lt; 100万条 --&gt; PostgreSQL + pgvector
-</span></span><span class="line"><span class="cl">      |               |-- &gt; 100万条 --&gt; Milvus / Qdrant / Pinecone
-</span></span><span class="line"><span class="cl">      |               |-- 需要混合检索 --&gt; ES + 向量插件
-</span></span><span class="line"><span class="cl">      |
-</span></span><span class="line"><span class="cl">      +-- 历史事件 (情景)
-</span></span><span class="line"><span class="cl">              |
-</span></span><span class="line"><span class="cl">              +-- 需要全文搜索？
-</span></span><span class="line"><span class="cl">                      |-- 否 --&gt; PostgreSQL (时间索引)
-</span></span><span class="line"><span class="cl">                      |-- 是 --&gt; Elasticsearch
-</span></span></code></pre></td></tr></table>
-</div>
-</div><hr>
+<pre tabindex="0"><code>+=====================================================+
+|                  Agent 应用层                        |
++=====================================================+
+         |              |              |            |
+         v              v              v            v
++----------+   +----------+   +-----------+   +--------+
+|  Redis   |   | PostgreSQL|   |  pgvector |   |   ES   |
+|  热缓存   |   |  主存储   |   |  向量索引  |   | 全文索引 |
++----------+   +----------+   +-----------+   +--------+
+     |              |               |              |
+  短期记忆       长期记忆        语义记忆       情景记忆
+  工作记忆       用户偏好        RAG知识库      事件检索
+  会话状态       Checkpoint
+</code></pre><p><strong>数据流向</strong>：</p>
+<pre tabindex="0"><code>写入路径:
+  新消息 --&gt; Redis (短期缓存)
+                |
+                +--&gt; PostgreSQL (持久化 Checkpoint)
+                |
+  值得记忆 --&gt; PostgreSQL + pgvector (长期记忆 + 向量索引)
+                |
+  事件日志 --&gt; Elasticsearch (情景记忆)
+
+读取路径:
+  当前会话 --&gt; Redis (命中) / PostgreSQL (未命中时回源)
+  用户偏好 --&gt; Redis 缓存 --&gt; PostgreSQL
+  语义搜索 --&gt; pgvector / 向量DB
+  事件查询 --&gt; Elasticsearch
+</code></pre><h2 id="35-存储选型决策树">3.5 存储选型决策树
+</h2><pre tabindex="0"><code>需要存什么类型的记忆？
+      |
+      +-- 当前会话消息 (短期)
+      |       |
+      |       +-- 需要持久化？
+      |               |-- 否 --&gt; 内存 (InMemorySaver)
+      |               |-- 是 --&gt; 并发量高？
+      |                           |-- 否 --&gt; SQLite
+      |                           |-- 是 --&gt; Redis / PostgreSQL
+      |
+      +-- 任务执行状态 (工作)
+      |       |
+      |       +-- 任务时长？
+      |               |-- &lt; 5分钟 --&gt; 内存
+      |               |-- 5分钟~1天 --&gt; Redis (带 TTL)
+      |               |-- &gt; 1天 --&gt; PostgreSQL
+      |
+      +-- 用户偏好/画像 (长期KV)
+      |       |
+      |       +-- PostgreSQL (首选，JSONB 存储)
+      |       +-- 读多写少？加 Redis 缓存层
+      |
+      +-- 知识/文档 (语义)
+      |       |
+      |       +-- 数据量？
+      |               |-- &lt; 100万条 --&gt; PostgreSQL + pgvector
+      |               |-- &gt; 100万条 --&gt; Milvus / Qdrant / Pinecone
+      |               |-- 需要混合检索 --&gt; ES + 向量插件
+      |
+      +-- 历史事件 (情景)
+              |
+              +-- 需要全文搜索？
+                      |-- 否 --&gt; PostgreSQL (时间索引)
+                      |-- 是 --&gt; Elasticsearch
+</code></pre><hr>
 <h1 id="四memory-的底层实现机制源码级">四、Memory 的底层实现机制（源码级）
 </h1><h2 id="41-整体架构">4.1 整体架构
-</h2><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">+===========================================================+
-</span></span><span class="line"><span class="cl">|                    Agent 应用层                             |
-</span></span><span class="line"><span class="cl">+===========================================================+
-</span></span><span class="line"><span class="cl">         |                    |                    |
-</span></span><span class="line"><span class="cl">         v                    v                    v
-</span></span><span class="line"><span class="cl">+----------------+  +------------------+  +----------------+
-</span></span><span class="line"><span class="cl">|  Checkpointer  |  |     Store        |  | ChatHistory    |
-</span></span><span class="line"><span class="cl">| (短期+工作记忆) |  | (长期记忆)        |  | (消息历史)      |
-</span></span><span class="line"><span class="cl">+----------------+  +------------------+  +----------------+
-</span></span><span class="line"><span class="cl">         |                    |                    |
-</span></span><span class="line"><span class="cl">         v                    v                    v
-</span></span><span class="line"><span class="cl">+----------------+  +------------------+  +----------------+
-</span></span><span class="line"><span class="cl">| InMemorySaver  |  |  InMemoryStore   |  | InMemoryChat   |
-</span></span><span class="line"><span class="cl">| PostgresSaver  |  |  PostgresStore   |  | RedisChatHist  |
-</span></span><span class="line"><span class="cl">| SQLiteSaver    |  |  (+ Vector idx)  |  | FileChatHist   |
-</span></span><span class="line"><span class="cl">+----------------+  +------------------+  +----------------+
-</span></span><span class="line"><span class="cl">         |                    |                    |
-</span></span><span class="line"><span class="cl">         +--------------------+--------------------+
-</span></span><span class="line"><span class="cl">                              |
-</span></span><span class="line"><span class="cl">                     底层存储引擎
-</span></span><span class="line"><span class="cl">              (PostgreSQL / Redis / SQLite / 文件)
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h2 id="42-checkpoint-机制详解短期记忆持久化">4.2 Checkpoint 机制详解（短期记忆持久化）
+</h2><pre tabindex="0"><code>+===========================================================+
+|                    Agent 应用层                             |
++===========================================================+
+         |                    |                    |
+         v                    v                    v
++----------------+  +------------------+  +----------------+
+|  Checkpointer  |  |     Store        |  | ChatHistory    |
+| (短期+工作记忆) |  | (长期记忆)        |  | (消息历史)      |
++----------------+  +------------------+  +----------------+
+         |                    |                    |
+         v                    v                    v
++----------------+  +------------------+  +----------------+
+| InMemorySaver  |  |  InMemoryStore   |  | InMemoryChat   |
+| PostgresSaver  |  |  PostgresStore   |  | RedisChatHist  |
+| SQLiteSaver    |  |  (+ Vector idx)  |  | FileChatHist   |
++----------------+  +------------------+  +----------------+
+         |                    |                    |
+         +--------------------+--------------------+
+                              |
+                     底层存储引擎
+              (PostgreSQL / Redis / SQLite / 文件)
+</code></pre><h2 id="42-checkpoint-机制详解短期记忆持久化">4.2 Checkpoint 机制详解（短期记忆持久化）
 </h2><p>Checkpoint 是 LangGraph 的核心持久化机制，负责保存 <strong>Graph 的完整执行状态</strong>。</p>
 <h3 id="数据模型">数据模型
 </h3><div class="highlight"><div class="chroma">
@@ -1670,53 +1524,27 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h3 id="工作流程">工作流程
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">用户输入 &#34;你好&#34;
-</span></span><span class="line"><span class="cl">      |
-</span></span><span class="line"><span class="cl">      v
-</span></span><span class="line"><span class="cl">+---&gt; 创建 input checkpoint (step=-1)
-</span></span><span class="line"><span class="cl">|         channel_values = {messages: [HumanMessage(&#34;你好&#34;)]}
-</span></span><span class="line"><span class="cl">|         source = &#34;input&#34;
-</span></span><span class="line"><span class="cl">|         |
-</span></span><span class="line"><span class="cl">|         v
-</span></span><span class="line"><span class="cl">|     执行 agent 节点 -&gt; LLM 返回 &#34;你好！有什么能帮你的？&#34;
-</span></span><span class="line"><span class="cl">|         |
-</span></span><span class="line"><span class="cl">|         v
-</span></span><span class="line"><span class="cl">|     创建 loop checkpoint (step=0)
-</span></span><span class="line"><span class="cl">|         channel_values = {messages: [Human(&#34;你好&#34;), AI(&#34;你好！...&#34;)]}
-</span></span><span class="line"><span class="cl">|         source = &#34;loop&#34;
-</span></span><span class="line"><span class="cl">|         parent_id = 上一个 checkpoint 的 id
-</span></span><span class="line"><span class="cl">|         |
-</span></span><span class="line"><span class="cl">|         v
-</span></span><span class="line"><span class="cl">|     检查是否到达 END
-</span></span><span class="line"><span class="cl">|         |
-</span></span><span class="line"><span class="cl">+--- 否 ---+--- 是 ---&gt; 返回最终状态
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h3 id="关键源码put-方法">关键源码：put 方法
+</h3><pre tabindex="0"><code>用户输入 &#34;你好&#34;
+      |
+      v
++---&gt; 创建 input checkpoint (step=-1)
+|         channel_values = {messages: [HumanMessage(&#34;你好&#34;)]}
+|         source = &#34;input&#34;
+|         |
+|         v
+|     执行 agent 节点 -&gt; LLM 返回 &#34;你好！有什么能帮你的？&#34;
+|         |
+|         v
+|     创建 loop checkpoint (step=0)
+|         channel_values = {messages: [Human(&#34;你好&#34;), AI(&#34;你好！...&#34;)]}
+|         source = &#34;loop&#34;
+|         parent_id = 上一个 checkpoint 的 id
+|         |
+|         v
+|     检查是否到达 END
+|         |
++--- 否 ---+--- 是 ---&gt; 返回最终状态
+</code></pre><h3 id="关键源码put-方法">关键源码：put 方法
 </h3><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -1866,47 +1694,24 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h3 id="向量索引的写入流程">向量索引的写入流程
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">store.put(ns, key, {&#34;text&#34;: &#34;用户喜欢中文交流&#34;})
-</span></span><span class="line"><span class="cl">      |
-</span></span><span class="line"><span class="cl">      v
-</span></span><span class="line"><span class="cl">  _extract_texts()
-</span></span><span class="line"><span class="cl">      | 根据 index config 的 fields 配置
-</span></span><span class="line"><span class="cl">      | 提取需要索引的文本字段
-</span></span><span class="line"><span class="cl">      v
-</span></span><span class="line"><span class="cl">  embeddings.embed_documents([&#34;用户喜欢中文交流&#34;])
-</span></span><span class="line"><span class="cl">      | 调用 embedding 模型生成向量
-</span></span><span class="line"><span class="cl">      v
-</span></span><span class="line"><span class="cl">  _insert_vectors()
-</span></span><span class="line"><span class="cl">      | 将向量存入 self._vectors[ns][key][field_path]
-</span></span><span class="line"><span class="cl">      v
-</span></span><span class="line"><span class="cl">  _apply_put_ops()
-</span></span><span class="line"><span class="cl">      | 将原始数据存入 self._data[ns][key] = Item(...)
-</span></span><span class="line"><span class="cl">      v
-</span></span><span class="line"><span class="cl">  完成
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h3 id="ttltime-to-live存活时间过期淘汰机制">TTL（Time To Live，存活时间）过期淘汰机制
+</h3><pre tabindex="0"><code>store.put(ns, key, {&#34;text&#34;: &#34;用户喜欢中文交流&#34;})
+      |
+      v
+  _extract_texts()
+      | 根据 index config 的 fields 配置
+      | 提取需要索引的文本字段
+      v
+  embeddings.embed_documents([&#34;用户喜欢中文交流&#34;])
+      | 调用 embedding 模型生成向量
+      v
+  _insert_vectors()
+      | 将向量存入 self._vectors[ns][key][field_path]
+      v
+  _apply_put_ops()
+      | 将原始数据存入 self._data[ns][key] = Item(...)
+      v
+  完成
+</code></pre><h3 id="ttltime-to-live存活时间过期淘汰机制">TTL（Time To Live，存活时间）过期淘汰机制
 </h3><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
@@ -1989,21 +1794,11 @@
 </div>
 </div><h3 id="与-langgraph-checkpoint-的关系">与 LangGraph Checkpoint 的关系
 </h3><p>在 LangGraph 1.0+ 中，<code>ChatHistory</code> 的功能被 <strong>Checkpointer</strong> 取代：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">LangChain 旧模式:                    LangGraph 新模式:
-</span></span><span class="line"><span class="cl">Chain + ChatMessageHistory     --&gt;    Graph + Checkpointer
-</span></span><span class="line"><span class="cl">手动管理消息列表               --&gt;    State 自动持久化
-</span></span><span class="line"><span class="cl">按 session_id 存取             --&gt;    按 thread_id 存取
-</span></span></code></pre></td></tr></table>
-</div>
-</div><hr>
+<pre tabindex="0"><code>LangChain 旧模式:                    LangGraph 新模式:
+Chain + ChatMessageHistory     --&gt;    Graph + Checkpointer
+手动管理消息列表               --&gt;    State 自动持久化
+按 session_id 存取             --&gt;    按 thread_id 存取
+</code></pre><hr>
 <h1 id="五checkpoint-vs-store两种持久化的协作">五、Checkpoint vs Store：两种持久化的协作
 </h1><h2 id="51-对比">5.1 对比
 </h2><div class="table-wrapper"><table>
@@ -2048,63 +1843,32 @@
   </tbody>
 </table></div>
 <h2 id="52-协作流程图">5.2 协作流程图
-</h2><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">用户发起新会话 (thread_id = &#34;t_456&#34;)
-</span></span><span class="line"><span class="cl">      |
-</span></span><span class="line"><span class="cl">      v
-</span></span><span class="line"><span class="cl">+-----+------+
-</span></span><span class="line"><span class="cl">| Checkpointer|-----&gt; 加载该 thread 最新 checkpoint
-</span></span><span class="line"><span class="cl">+-----+------+        (恢复短期记忆 + 工作记忆)
-</span></span><span class="line"><span class="cl">      |
-</span></span><span class="line"><span class="cl">      v
-</span></span><span class="line"><span class="cl">+-----+------+
-</span></span><span class="line"><span class="cl">|    Store    |-----&gt; 按 user_id 检索长期记忆
-</span></span><span class="line"><span class="cl">+-----+------+        (用户偏好、历史知识)
-</span></span><span class="line"><span class="cl">      |
-</span></span><span class="line"><span class="cl">      v
-</span></span><span class="line"><span class="cl">  组装 prompt:
-</span></span><span class="line"><span class="cl">    system_message + 长期记忆摘要 + 历史消息 + 当前输入
-</span></span><span class="line"><span class="cl">      |
-</span></span><span class="line"><span class="cl">      v
-</span></span><span class="line"><span class="cl">  调用 LLM
-</span></span><span class="line"><span class="cl">      |
-</span></span><span class="line"><span class="cl">      v
-</span></span><span class="line"><span class="cl">  Agent 执行动作（可能产生新记忆）
-</span></span><span class="line"><span class="cl">      |
-</span></span><span class="line"><span class="cl">      +----------&gt; Checkpointer.put(): 保存新状态到当前 thread
-</span></span><span class="line"><span class="cl">      |
-</span></span><span class="line"><span class="cl">      +----------&gt; Store.put(): 如果有值得长期保存的信息，写入 Store
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h2 id="53-工程实践create_react_agent-中的记忆集成">5.3 工程实践：create_react_agent 中的记忆集成
+</h2><pre tabindex="0"><code>用户发起新会话 (thread_id = &#34;t_456&#34;)
+      |
+      v
++-----+------+
+| Checkpointer|-----&gt; 加载该 thread 最新 checkpoint
++-----+------+        (恢复短期记忆 + 工作记忆)
+      |
+      v
++-----+------+
+|    Store    |-----&gt; 按 user_id 检索长期记忆
++-----+------+        (用户偏好、历史知识)
+      |
+      v
+  组装 prompt:
+    system_message + 长期记忆摘要 + 历史消息 + 当前输入
+      |
+      v
+  调用 LLM
+      |
+      v
+  Agent 执行动作（可能产生新记忆）
+      |
+      +----------&gt; Checkpointer.put(): 保存新状态到当前 thread
+      |
+      +----------&gt; Store.put(): 如果有值得长期保存的信息，写入 Store
+</code></pre><h2 id="53-工程实践create_react_agent-中的记忆集成">5.3 工程实践：create_react_agent 中的记忆集成
 </h2><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -2204,53 +1968,27 @@
 <li>一次性参数（&ldquo;帮我算 2+3&rdquo;）</li>
 </ul>
 <h3 id="写入流程">写入流程
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">候选记忆（来自对话/工具结果）
-</span></span><span class="line"><span class="cl">      |
-</span></span><span class="line"><span class="cl">      v
-</span></span><span class="line"><span class="cl">[是否有长期价值？]
-</span></span><span class="line"><span class="cl">      |         |
-</span></span><span class="line"><span class="cl">     否         是
-</span></span><span class="line"><span class="cl">      |         |
-</span></span><span class="line"><span class="cl">      v         v
-</span></span><span class="line"><span class="cl">   丢弃    [是否用户确认或证据充分？]
-</span></span><span class="line"><span class="cl">                |         |
-</span></span><span class="line"><span class="cl">               否         是
-</span></span><span class="line"><span class="cl">                |         |
-</span></span><span class="line"><span class="cl">                v         v
-</span></span><span class="line"><span class="cl">             暂存     [是否与已有记忆冲突？]
-</span></span><span class="line"><span class="cl">           (低置信度)      |         |
-</span></span><span class="line"><span class="cl">                          是         否
-</span></span><span class="line"><span class="cl">                          |         |
-</span></span><span class="line"><span class="cl">                          v         v
-</span></span><span class="line"><span class="cl">                       更新旧记忆  写入 Store
-</span></span><span class="line"><span class="cl">                       (合并/覆盖)
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h3 id="写入代码示例">写入代码示例
+</h3><pre tabindex="0"><code>候选记忆（来自对话/工具结果）
+      |
+      v
+[是否有长期价值？]
+      |         |
+     否         是
+      |         |
+      v         v
+   丢弃    [是否用户确认或证据充分？]
+                |         |
+               否         是
+                |         |
+                v         v
+             暂存     [是否与已有记忆冲突？]
+           (低置信度)      |         |
+                          是         否
+                          |         |
+                          v         v
+                       更新旧记忆  写入 Store
+                       (合并/覆盖)
+</code></pre><h3 id="写入代码示例">写入代码示例
 </h3><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -2432,43 +2170,22 @@
 <h1 id="七memory-和-rag-的关系">七、Memory 和 RAG 的关系
 </h1><h2 id="71-rag-是一种记忆实现">7.1 RAG 是一种记忆实现
 </h2><p>RAG (Retrieval-Augmented Generation) 本质上是 Agent <strong>语义记忆</strong> 的一种实现方式。</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">+-------------------+
-</span></span><span class="line"><span class="cl">|   Agent Memory    |
-</span></span><span class="line"><span class="cl">+-------------------+
-</span></span><span class="line"><span class="cl">        |
-</span></span><span class="line"><span class="cl">        +--- 短期记忆 (messages in context)
-</span></span><span class="line"><span class="cl">        |
-</span></span><span class="line"><span class="cl">        +--- 工作记忆 (task state)
-</span></span><span class="line"><span class="cl">        |
-</span></span><span class="line"><span class="cl">        +--- 长期记忆
-</span></span><span class="line"><span class="cl">                |
-</span></span><span class="line"><span class="cl">                +--- 用户画像 (structured k-v)
-</span></span><span class="line"><span class="cl">                |
-</span></span><span class="line"><span class="cl">                +--- 语义记忆 / 知识库  &lt;--- RAG 覆盖的范围
-</span></span><span class="line"><span class="cl">                |
-</span></span><span class="line"><span class="cl">                +--- 情景记忆 (historical events)
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h2 id="72-区别对比">7.2 区别对比
+<pre tabindex="0"><code>+-------------------+
+|   Agent Memory    |
++-------------------+
+        |
+        +--- 短期记忆 (messages in context)
+        |
+        +--- 工作记忆 (task state)
+        |
+        +--- 长期记忆
+                |
+                +--- 用户画像 (structured k-v)
+                |
+                +--- 语义记忆 / 知识库  &lt;--- RAG 覆盖的范围
+                |
+                +--- 情景记忆 (historical events)
+</code></pre><h2 id="72-区别对比">7.2 区别对比
 </h2><div class="table-wrapper"><table>
   <thead>
       <tr>
@@ -2541,21 +2258,11 @@
 <h1 id="八消息管理进阶裁剪与摘要">八、消息管理进阶：裁剪与摘要
 </h1><h2 id="81-为什么需要消息管理">8.1 为什么需要消息管理
 </h2><p>LLM 的 context window 有限（4K ~ 200K tokens）。长对话必然需要管理策略：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">对话开始       ......       token 即将超限        策略介入
-</span></span><span class="line"><span class="cl">   |                            |                   |
-</span></span><span class="line"><span class="cl">   v                            v                   v
-</span></span><span class="line"><span class="cl">[msg1, msg2, ..., msg50]  --&gt;  超过限制  --&gt;  裁剪/摘要/滑动窗口
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h2 id="82-策略一消息裁剪trimming">8.2 策略一：消息裁剪（Trimming）
+<pre tabindex="0"><code>对话开始       ......       token 即将超限        策略介入
+   |                            |                   |
+   v                            v                   v
+[msg1, msg2, ..., msg50]  --&gt;  超过限制  --&gt;  裁剪/摘要/滑动窗口
+</code></pre><h2 id="82-策略一消息裁剪trimming">8.2 策略一：消息裁剪（Trimming）
 </h2><p>保留最近 N 条消息，丢弃更早的消息：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
@@ -2694,63 +2401,32 @@
   </tbody>
 </table></div>
 <h2 id="92-生产级完整架构">9.2 生产级完整架构
-</h2><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">+===========================================================+
-</span></span><span class="line"><span class="cl">|                   负载均衡 / API Gateway                    |
-</span></span><span class="line"><span class="cl">+===========================================================+
-</span></span><span class="line"><span class="cl">                          |
-</span></span><span class="line"><span class="cl">              +-----------+-----------+
-</span></span><span class="line"><span class="cl">              |                       |
-</span></span><span class="line"><span class="cl">     +--------+--------+    +--------+--------+
-</span></span><span class="line"><span class="cl">     | Agent Instance 1 |    | Agent Instance 2 |
-</span></span><span class="line"><span class="cl">     +--------+--------+    +--------+--------+
-</span></span><span class="line"><span class="cl">              |                       |
-</span></span><span class="line"><span class="cl">              +-----------+-----------+
-</span></span><span class="line"><span class="cl">                          |
-</span></span><span class="line"><span class="cl">         +----------------+----------------+
-</span></span><span class="line"><span class="cl">         |                |                |
-</span></span><span class="line"><span class="cl">+--------+------+ +------+-------+ +------+-------+
-</span></span><span class="line"><span class="cl">| PostgresSaver  | | PostgresStore | |   Redis      |
-</span></span><span class="line"><span class="cl">| (Checkpoints)  | | (Long-term)   | |  (Cache)     |
-</span></span><span class="line"><span class="cl">+--------+------+ +------+-------+ +------+-------+
-</span></span><span class="line"><span class="cl">         |                |
-</span></span><span class="line"><span class="cl">         +-------+--------+
-</span></span><span class="line"><span class="cl">                 |
-</span></span><span class="line"><span class="cl">         +-------+-------+
-</span></span><span class="line"><span class="cl">         |   PostgreSQL   |
-</span></span><span class="line"><span class="cl">         | (持久化存储)    |
-</span></span><span class="line"><span class="cl">         +---------------+
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h2 id="93-多租户隔离设计">9.3 多租户隔离设计
+</h2><pre tabindex="0"><code>+===========================================================+
+|                   负载均衡 / API Gateway                    |
++===========================================================+
+                          |
+              +-----------+-----------+
+              |                       |
+     +--------+--------+    +--------+--------+
+     | Agent Instance 1 |    | Agent Instance 2 |
+     +--------+--------+    +--------+--------+
+              |                       |
+              +-----------+-----------+
+                          |
+         +----------------+----------------+
+         |                |                |
++--------+------+ +------+-------+ +------+-------+
+| PostgresSaver  | | PostgresStore | |   Redis      |
+| (Checkpoints)  | | (Long-term)   | |  (Cache)     |
++--------+------+ +------+-------+ +------+-------+
+         |                |
+         +-------+--------+
+                 |
+         +-------+-------+
+         |   PostgreSQL   |
+         | (持久化存储)    |
+         +---------------+
+</code></pre><h2 id="93-多租户隔离设计">9.3 多租户隔离设计
 </h2><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1

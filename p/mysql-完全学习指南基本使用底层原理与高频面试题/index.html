@@ -8,13 +8,22 @@
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="MySQL 完全学习指南：基本使用、底层原理与高频面试题">
 <meta property='og:description' content="写在前面 MySQL 是业务系统中最常见的关系型数据库，日常开发既要掌握 SQL（Structured Query Language，结构化查询语言）和表结构设计，也要理解索引、事务、锁、日志、主从复制等底层机制。\n这篇文章按照&quot;基础概念、基础语法、核心特性、底层原理、与 PostgreSQL 的区别、高频面试题&quot;的结构整理 MySQL 核心内容，适合作为日常查阅和面试复习材料。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 SQL、DDL、DML、DCL、TCL、DQL、ACID、OLTP、JSON、UUID、CTE、ICP、MVCC、WAL、MGR、MHA、RTO、RPO 等。文末&quot;与 PostgreSQL 的区别&quot;一节涉及的 PG 侧术语（TID、SSI、2PL、GTID、TOAST、JSONB、GIN、GiST、BRIN）在该节内集中标注。\n目录 MySQL 基础概念 MySQL 基础语法 MySQL 核心特性 MySQL 底层原理 MySQL 与 PostgreSQL 的区别 MySQL 高频面试题 附录：面试技巧总结 1. MySQL 基础概念 1.1 什么是 MySQL？ MySQL 是开源的关系型数据库管理系统（RDBMS，Relational Database Management System），最早由 MySQL AB 开发，2008 年被 Sun Microsystems 收购，现归 Oracle 所有。它使用 SQL 作为查询语言，是互联网业务最常见的 OLTP 数据库选型之一。\n核心定位：\n互联网业务 OLTP 主流选型 成熟的主从复制和分库分表生态 中小规模数据系统的默认数据库 1.2 MySQL 的主要特点 特性 说明 开源免费 社区版采用 GPL 协议，企业版商用授权 多存储引擎 默认 InnoDB，另有 MyISAM、Memory、Archive 等 ACID 事务 InnoDB 引擎支持完整 ACID 事务 主从复制 基于 binlog 的成熟复制机制，支持异步、半同步、MGR 行级锁 InnoDB 行级锁 + MVCC，并发性能好 生态成熟 工具链、运维经验、中间件、培训资源丰富 1.3 MySQL 适用场景 1 2 3 4 5 6 7 ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ │ 互联网OLTP │ │ 电商交易 │ │ 内容平台 │ └─────────────┘ └─────────────┘ └─────────────┘ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ │ 社交业务 │ │ 订单系统 │ │ 用户中心 │ └─────────────┘ └─────────────┘ └─────────────┘ 适合 MySQL 的场景：\n">
@@ -1018,29 +1027,15 @@
 </ul>
 <h4 id="连表查询详解join">连表查询详解（JOIN）
 </h4><h5 id="join-类型对比">JOIN 类型对比
-</h5><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">表A (users)          表B (orders)
-</span></span><span class="line"><span class="cl">+----+------+       +----+---------+
-</span></span><span class="line"><span class="cl">| id | name |       | id | user_id |
-</span></span><span class="line"><span class="cl">+----+------+       +----+---------+
-</span></span><span class="line"><span class="cl">| 1  | 张三 |       | 1  |    1    |
-</span></span><span class="line"><span class="cl">| 2  | 李四 |       | 2  |    1    |
-</span></span><span class="line"><span class="cl">| 3  | 王五 |       | 3  |    4    |  ← user_id=4 在users中不存在
-</span></span><span class="line"><span class="cl">+----+------+       +----+---------+
-</span></span></code></pre></td></tr></table>
-</div>
-</div><div class="table-wrapper"><table>
+</h5><pre tabindex="0"><code>表A (users)          表B (orders)
++----+------+       +----+---------+
+| id | name |       | id | user_id |
++----+------+       +----+---------+
+| 1  | 张三 |       | 1  |    1    |
+| 2  | 李四 |       | 2  |    1    |
+| 3  | 王五 |       | 3  |    4    |  ← user_id=4 在users中不存在
++----+------+       +----+---------+
+</code></pre><div class="table-wrapper"><table>
   <thead>
       <tr>
           <th>JOIN 类型</th>
@@ -1248,144 +1243,65 @@
 </div><h5 id="join-底层实现算法">JOIN 底层实现算法
 </h5><p>MySQL 实现 JOIN 有三种算法：</p>
 <p><strong>1. Nested Loop Join（嵌套循环，默认）</strong></p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">原理: 双重for循环
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">for each row r1 in 驱动表(外层):
-</span></span><span class="line"><span class="cl">    for each row r2 in 被驱动表(内层):
-</span></span><span class="line"><span class="cl">        if r1 和 r2 满足 ON 条件:
-</span></span><span class="line"><span class="cl">            输出 (r1, r2)
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">特点:
-</span></span><span class="line"><span class="cl">- 驱动表全表扫描，被驱动表按索引查找
-</span></span><span class="line"><span class="cl">- 优化器选择小表作为驱动表
-</span></span><span class="line"><span class="cl">- 时间复杂度: O(M × N)，有索引时 O(M × logN)
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>2. Block Nested Loop Join（BNL，MySQL 5.6-8.0.17）</strong></p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">原理: 批量读取驱动表到内存(join buffer)，减少被驱动表扫描次数
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│ 1. 读取驱动表的多行放入 Join Buffer          │
-</span></span><span class="line"><span class="cl">│    Join Buffer: [r1, r2, r3, ... rN]        │
-</span></span><span class="line"><span class="cl">│                                             │
-</span></span><span class="line"><span class="cl">│ 2. 扫描被驱动表，每行与Buffer中所有行比较     │
-</span></span><span class="line"><span class="cl">│    for each row in 被驱动表:                 │
-</span></span><span class="line"><span class="cl">│        与Buffer中所有行做匹配                 │
-</span></span><span class="line"><span class="cl">│                                             │
-</span></span><span class="line"><span class="cl">│ 3. Buffer满了就清空，重复步骤1-2              │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────┘
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">优势: 被驱动表无索引时，减少全表扫描次数
-</span></span><span class="line"><span class="cl">     原本扫描M次 → 扫描 M/buffer_size 次
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">配置: join_buffer_size（默认256KB）
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>3. Hash Join（MySQL 8.0.18+，替代BNL）</strong></p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">原理: 对小表建哈希表，大表逐行探测
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">Phase 1 - Build（构建阶段）:
-</span></span><span class="line"><span class="cl">┌──────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│ 小表(驱动表) → 内存 Hash Table    │
-</span></span><span class="line"><span class="cl">│ key = JOIN列的hash值             │
-</span></span><span class="line"><span class="cl">│ value = 行数据                   │
-</span></span><span class="line"><span class="cl">│                                  │
-</span></span><span class="line"><span class="cl">│ hash(user_id) → [row1, row2...]  │
-</span></span><span class="line"><span class="cl">└──────────────────────────────────┘
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">Phase 2 - Probe（探测阶段）:
-</span></span><span class="line"><span class="cl">┌──────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│ 逐行扫描大表(被驱动表)            │
-</span></span><span class="line"><span class="cl">│ 计算JOIN列的hash值               │
-</span></span><span class="line"><span class="cl">│ 在Hash Table中查找匹配行         │
-</span></span><span class="line"><span class="cl">│ O(1) 查找，总复杂度 O(M + N)     │
-</span></span><span class="line"><span class="cl">└──────────────────────────────────┘
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">优势: 等值JOIN无索引时性能远优于嵌套循环
-</span></span><span class="line"><span class="cl">局限: 仅支持等值连接（=），不支持范围条件（&gt;、&lt;）
-</span></span><span class="line"><span class="cl">     Hash Table超出内存时会溢出到磁盘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>优化器如何选择算法</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">被驱动表JOIN列有索引？
-</span></span><span class="line"><span class="cl">├── 是 → Index Nested Loop Join（最优，O(M × logN)）
-</span></span><span class="line"><span class="cl">└── 否 → MySQL 8.0.18+？
-</span></span><span class="line"><span class="cl">         ├── 是 → Hash Join（等值连接时）
-</span></span><span class="line"><span class="cl">         └── 否 → Block Nested Loop Join
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>JOIN 性能优化建议</strong>：</p>
+<pre tabindex="0"><code>原理: 双重for循环
+
+for each row r1 in 驱动表(外层):
+    for each row r2 in 被驱动表(内层):
+        if r1 和 r2 满足 ON 条件:
+            输出 (r1, r2)
+
+特点:
+- 驱动表全表扫描，被驱动表按索引查找
+- 优化器选择小表作为驱动表
+- 时间复杂度: O(M × N)，有索引时 O(M × logN)
+</code></pre><p><strong>2. Block Nested Loop Join（BNL，MySQL 5.6-8.0.17）</strong></p>
+<pre tabindex="0"><code>原理: 批量读取驱动表到内存(join buffer)，减少被驱动表扫描次数
+
+┌─────────────────────────────────────────────┐
+│ 1. 读取驱动表的多行放入 Join Buffer          │
+│    Join Buffer: [r1, r2, r3, ... rN]        │
+│                                             │
+│ 2. 扫描被驱动表，每行与Buffer中所有行比较     │
+│    for each row in 被驱动表:                 │
+│        与Buffer中所有行做匹配                 │
+│                                             │
+│ 3. Buffer满了就清空，重复步骤1-2              │
+└─────────────────────────────────────────────┘
+
+优势: 被驱动表无索引时，减少全表扫描次数
+     原本扫描M次 → 扫描 M/buffer_size 次
+
+配置: join_buffer_size（默认256KB）
+</code></pre><p><strong>3. Hash Join（MySQL 8.0.18+，替代BNL）</strong></p>
+<pre tabindex="0"><code>原理: 对小表建哈希表，大表逐行探测
+
+Phase 1 - Build（构建阶段）:
+┌──────────────────────────────────┐
+│ 小表(驱动表) → 内存 Hash Table    │
+│ key = JOIN列的hash值             │
+│ value = 行数据                   │
+│                                  │
+│ hash(user_id) → [row1, row2...]  │
+└──────────────────────────────────┘
+
+Phase 2 - Probe（探测阶段）:
+┌──────────────────────────────────┐
+│ 逐行扫描大表(被驱动表)            │
+│ 计算JOIN列的hash值               │
+│ 在Hash Table中查找匹配行         │
+│ O(1) 查找，总复杂度 O(M + N)     │
+└──────────────────────────────────┘
+
+优势: 等值JOIN无索引时性能远优于嵌套循环
+局限: 仅支持等值连接（=），不支持范围条件（&gt;、&lt;）
+     Hash Table超出内存时会溢出到磁盘
+</code></pre><p><strong>优化器如何选择算法</strong>：</p>
+<pre tabindex="0"><code>被驱动表JOIN列有索引？
+├── 是 → Index Nested Loop Join（最优，O(M × logN)）
+└── 否 → MySQL 8.0.18+？
+         ├── 是 → Hash Join（等值连接时）
+         └── 否 → Block Nested Loop Join
+</code></pre><p><strong>JOIN 性能优化建议</strong>：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -1834,33 +1750,17 @@
 <hr>
 <h2 id="4-mysql-底层原理">4. MySQL 底层原理
 </h2><h3 id="41-mysql-架构设计">4.1 MySQL 架构设计
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│            连接池 (Connection Pool)              │
-</span></span><span class="line"><span class="cl">├─────────────────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│   SQL接口  │  解析器  │  优化器  │   缓存器      │
-</span></span><span class="line"><span class="cl">├─────────────────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│           存储引擎 (Storage Engines)             │
-</span></span><span class="line"><span class="cl">│    InnoDB  │  MyISAM  │  Memory  │  ...        │
-</span></span><span class="line"><span class="cl">├─────────────────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│            文件系统 (File System)                │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>核心组件</strong>：</p>
+</h3><pre tabindex="0"><code>┌─────────────────────────────────────────────────┐
+│            连接池 (Connection Pool)              │
+├─────────────────────────────────────────────────┤
+│   SQL接口  │  解析器  │  优化器  │   缓存器      │
+├─────────────────────────────────────────────────┤
+│           存储引擎 (Storage Engines)             │
+│    InnoDB  │  MyISAM  │  Memory  │  ...        │
+├─────────────────────────────────────────────────┤
+│            文件系统 (File System)                │
+└─────────────────────────────────────────────────┘
+</code></pre><p><strong>核心组件</strong>：</p>
 <ol>
 <li><strong>连接器</strong>：管理客户端连接，验证身份，权限校验</li>
 <li><strong>查询缓存</strong>：8.0已移除（命中率低，任何表修改都会使相关缓存失效）</li>
@@ -1869,49 +1769,25 @@
 <li><strong>执行器</strong>：校验权限，调用存储引擎API逐行执行操作，返回结果集</li>
 </ol>
 <p><strong>SQL执行流程</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">客户端发送SQL
-</span></span><span class="line"><span class="cl">    ↓
-</span></span><span class="line"><span class="cl">连接器：验证用户名密码，获取权限
-</span></span><span class="line"><span class="cl">    ↓
-</span></span><span class="line"><span class="cl">查询缓存（8.0已移除）：命中则直接返回结果，未命中则继续
-</span></span><span class="line"><span class="cl">    ↓
-</span></span><span class="line"><span class="cl">分析器：词法分析(识别关键字、表名、列名) → 语法分析(是否符合SQL语法)
-</span></span><span class="line"><span class="cl">    ↓
-</span></span><span class="line"><span class="cl">优化器：
-</span></span><span class="line"><span class="cl">  - 多个索引可用时，选择代价最小的索引
-</span></span><span class="line"><span class="cl">  - 多表JOIN时，决定驱动表顺序
-</span></span><span class="line"><span class="cl">  - 决定用Nested Loop还是Hash Join
-</span></span><span class="line"><span class="cl">  - 子查询改写（如IN转EXISTS）
-</span></span><span class="line"><span class="cl">  - 常量折叠、条件下推
-</span></span><span class="line"><span class="cl">    ↓
-</span></span><span class="line"><span class="cl">执行器：检查表权限 → 调用存储引擎接口 → 逐行/批量获取数据 → 返回结果
-</span></span><span class="line"><span class="cl">    ↓
-</span></span><span class="line"><span class="cl">存储引擎(InnoDB)：从Buffer Pool或磁盘读取数据页
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>查看优化器决策</strong>：</p>
+<pre tabindex="0"><code>客户端发送SQL
+    ↓
+连接器：验证用户名密码，获取权限
+    ↓
+查询缓存（8.0已移除）：命中则直接返回结果，未命中则继续
+    ↓
+分析器：词法分析(识别关键字、表名、列名) → 语法分析(是否符合SQL语法)
+    ↓
+优化器：
+  - 多个索引可用时，选择代价最小的索引
+  - 多表JOIN时，决定驱动表顺序
+  - 决定用Nested Loop还是Hash Join
+  - 子查询改写（如IN转EXISTS）
+  - 常量折叠、条件下推
+    ↓
+执行器：检查表权限 → 调用存储引擎接口 → 逐行/批量获取数据 → 返回结果
+    ↓
+存储引擎(InnoDB)：从Buffer Pool或磁盘读取数据页
+</code></pre><p><strong>查看优化器决策</strong>：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -2004,27 +1880,14 @@
 <hr>
 <h4 id="二b树原理深入">二、B+树原理深入
 </h4><h5 id="1-b树结构图解">1. B+树结构图解
-</h5><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">                           [根节点: 30|60|90]
-</span></span><span class="line"><span class="cl">                          /      |      |      \
-</span></span><span class="line"><span class="cl">                   [10|20]   [40|50]   [70|80]   [100|110]
-</span></span><span class="line"><span class="cl">                   / | \     / | \     / | \     /  |  \
-</span></span><span class="line"><span class="cl">                  ↓  ↓  ↓   ↓  ↓  ↓   ↓  ↓  ↓   ↓   ↓   ↓
-</span></span><span class="line"><span class="cl">        叶子节点（双向链表连接）:
-</span></span><span class="line"><span class="cl">        [5|10] ↔ [15|20] ↔ [25|30] ↔ [35|40] ↔ [45|50] ↔ ...
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>结构特点</strong>：</p>
+</h5><pre tabindex="0"><code>                           [根节点: 30|60|90]
+                          /      |      |      \
+                   [10|20]   [40|50]   [70|80]   [100|110]
+                   / | \     / | \     / | \     /  |  \
+                  ↓  ↓  ↓   ↓  ↓  ↓   ↓  ↓  ↓   ↓   ↓   ↓
+        叶子节点（双向链表连接）:
+        [5|10] ↔ [15|20] ↔ [25|30] ↔ [35|40] ↔ [45|50] ↔ ...
+</code></pre><p><strong>结构特点</strong>：</p>
 <ul>
 <li><strong>非叶子节点</strong>：只存储键值和指针，不存储数据</li>
 <li><strong>叶子节点</strong>：存储键值和完整数据（聚簇索引）或主键值（二级索引）</li>
@@ -2080,47 +1943,24 @@
 </ol>
 <h5 id="3-b树的页结构">3. B+树的页结构
 </h5><p>MySQL默认页大小：16KB</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│  File Header (38字节)              │  页通用信息
-</span></span><span class="line"><span class="cl">├────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│  Page Header (56字节)              │  页状态信息
-</span></span><span class="line"><span class="cl">├────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│  Infimum + Supremum (26字节)       │  最小/最大记录
-</span></span><span class="line"><span class="cl">├────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│  User Records (变长)               │  用户数据行
-</span></span><span class="line"><span class="cl">│    ↓ 行格式:                       │
-</span></span><span class="line"><span class="cl">│    [记录头|主键|事务ID|回滚指针|列数据] │
-</span></span><span class="line"><span class="cl">├────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│  Free Space (变长)                 │  空闲空间
-</span></span><span class="line"><span class="cl">├────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│  Page Directory (变长)             │  页目录（槽位）
-</span></span><span class="line"><span class="cl">├────────────────────────────────────┤
-</span></span><span class="line"><span class="cl">│  File Trailer (8字节)              │  校验和
-</span></span><span class="line"><span class="cl">└────────────────────────────────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>查询过程</strong>：</p>
+<pre tabindex="0"><code>┌────────────────────────────────────┐
+│  File Header (38字节)              │  页通用信息
+├────────────────────────────────────┤
+│  Page Header (56字节)              │  页状态信息
+├────────────────────────────────────┤
+│  Infimum + Supremum (26字节)       │  最小/最大记录
+├────────────────────────────────────┤
+│  User Records (变长)               │  用户数据行
+│    ↓ 行格式:                       │
+│    [记录头|主键|事务ID|回滚指针|列数据] │
+├────────────────────────────────────┤
+│  Free Space (变长)                 │  空闲空间
+├────────────────────────────────────┤
+│  Page Directory (变长)             │  页目录（槽位）
+├────────────────────────────────────┤
+│  File Trailer (8字节)              │  校验和
+└────────────────────────────────────┘
+</code></pre><p><strong>查询过程</strong>：</p>
 <ol>
 <li>在Page Directory中通过二分查找定位槽位</li>
 <li>从槽位开始遍历链表找到具体记录</li>
@@ -2173,37 +2013,19 @@
 </div>
 </div><p><strong>溢出页结构</strong>：</p>
 <p>对于 <code>VARCHAR</code>、<code>VARBINARY</code>、<code>BLOB</code>、<code>TEXT</code>、<code>JSON</code> 这些可变长大字段，超出阈值的部分会存到<strong>单独的溢出页</strong>中：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">                        叶子节点（聚簇索引数据页 16KB）
-</span></span><span class="line"><span class="cl">┌──────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│ row1: id, name, ..., [20B指针 → ]            │──┐
-</span></span><span class="line"><span class="cl">│ row2: ...                                     │  │
-</span></span><span class="line"><span class="cl">└──────────────────────────────────────────────┘  │
-</span></span><span class="line"><span class="cl">                                                   ▼
-</span></span><span class="line"><span class="cl">                              ┌────────────────────────────┐
-</span></span><span class="line"><span class="cl">                              │  Uncompressed BLOB Page    │ 16KB
-</span></span><span class="line"><span class="cl">                              │  (实际大字段数据)           │
-</span></span><span class="line"><span class="cl">                              ├────────────────────────────┤
-</span></span><span class="line"><span class="cl">                              │  next page pointer ────────┼──▶ 下一个溢出页（链表）
-</span></span><span class="line"><span class="cl">                              └────────────────────────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>关键点：</p>
+<pre tabindex="0"><code>                        叶子节点（聚簇索引数据页 16KB）
+┌──────────────────────────────────────────────┐
+│ row1: id, name, ..., [20B指针 → ]            │──┐
+│ row2: ...                                     │  │
+└──────────────────────────────────────────────┘  │
+                                                   ▼
+                              ┌────────────────────────────┐
+                              │  Uncompressed BLOB Page    │ 16KB
+                              │  (实际大字段数据)           │
+                              ├────────────────────────────┤
+                              │  next page pointer ────────┼──▶ 下一个溢出页（链表）
+                              └────────────────────────────┘
+</code></pre><p>关键点：</p>
 <ul>
 <li>溢出页类型为 <code>FIL_PAGE_TYPE_BLOB</code>（普通）或 <code>FIL_PAGE_TYPE_ZBLOB</code>（压缩）</li>
 <li>多个溢出页通过<strong>单向链表</strong>串联，可以存任意大小的数据（一个 BLOB 最大 4GB）</li>
@@ -2236,19 +2058,10 @@
 <li>通常是主键索引</li>
 </ul>
 <p><strong>结构示意</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">非叶子节点: [主键值, 页号]
-</span></span><span class="line"><span class="cl">              ↓
-</span></span><span class="line"><span class="cl">叶子节点: [主键值 | 完整行数据(id, name, age, email, ...)]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>优点</strong>：</p>
+<pre tabindex="0"><code>非叶子节点: [主键值, 页号]
+              ↓
+叶子节点: [主键值 | 完整行数据(id, name, age, email, ...)]
+</code></pre><p><strong>优点</strong>：</p>
 <ul>
 <li>主键查询极快（直接拿到完整数据）</li>
 <li>范围查询快（数据物理存储连续）</li>
@@ -2347,51 +2160,26 @@
 </span></span></span></code></pre></td></tr></table>
 </div>
 </div><p>这张表实际上有 <strong>4 棵 B+ 树</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│  聚簇索引 (PRIMARY KEY id)                              │
-</span></span><span class="line"><span class="cl">│  叶子节点: (id, name, age, email, ...)  ← 完整行数据    │  ★ 数据本体
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────────┘
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│  二级索引 idx_name                                       │
-</span></span><span class="line"><span class="cl">│  叶子节点: (name, id)                                    │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────────┘
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│  二级索引 idx_age                                        │
-</span></span><span class="line"><span class="cl">│  叶子节点: (age, id)                                     │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────────┘
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│  二级索引 uk_email                                       │
-</span></span><span class="line"><span class="cl">│  叶子节点: (email, id)                                   │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>每棵二级索引都是<strong>独立的 B+ 树</strong>，叶子节点都只存 <strong>&ldquo;索引列 + 主键&rdquo;</strong>，<strong>不存完整行</strong>。</p>
+<pre tabindex="0"><code>┌─────────────────────────────────────────────────────────┐
+│  聚簇索引 (PRIMARY KEY id)                              │
+│  叶子节点: (id, name, age, email, ...)  ← 完整行数据    │  ★ 数据本体
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│  二级索引 idx_name                                       │
+│  叶子节点: (name, id)                                    │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│  二级索引 idx_age                                        │
+│  叶子节点: (age, id)                                     │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│  二级索引 uk_email                                       │
+│  叶子节点: (email, id)                                   │
+└─────────────────────────────────────────────────────────┘
+</code></pre><p>每棵二级索引都是<strong>独立的 B+ 树</strong>，叶子节点都只存 <strong>&ldquo;索引列 + 主键&rdquo;</strong>，<strong>不存完整行</strong>。</p>
 <p><strong>查询时两棵树如何协作</strong>：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
@@ -2401,37 +2189,19 @@
 <pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="k">user</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;Tom&#39;</span><span class="p">;</span><span class="w">
 </span></span></span></code></pre></td></tr></table>
 </div>
-</div><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">  ① 进入 idx_name 这棵树查找 &#39;Tom&#39;
-</span></span><span class="line"><span class="cl">  ┌─────────────────────────┐
-</span></span><span class="line"><span class="cl">  │  idx_name B+ 树          │
-</span></span><span class="line"><span class="cl">  │  叶子: (&#39;Tom&#39;, id=1)     │ ──┐
-</span></span><span class="line"><span class="cl">  └─────────────────────────┘   │ 拿到 id=1
-</span></span><span class="line"><span class="cl">                                 │
-</span></span><span class="line"><span class="cl">                                 ▼
-</span></span><span class="line"><span class="cl">  ② 拿 id=1 进入聚簇索引这棵树查找
-</span></span><span class="line"><span class="cl">  ┌─────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">  │  聚簇索引 B+ 树                      │
-</span></span><span class="line"><span class="cl">  │  叶子: (1, &#39;Tom&#39;, 20, &#39;t@x.com&#39;)    │ ← 完整行
-</span></span><span class="line"><span class="cl">  └─────────────────────────────────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>这就是<strong>回表</strong>的本质 —— 在两棵不同的 B+ 树之间跳转。</p>
+</div><pre tabindex="0"><code>  ① 进入 idx_name 这棵树查找 &#39;Tom&#39;
+  ┌─────────────────────────┐
+  │  idx_name B+ 树          │
+  │  叶子: (&#39;Tom&#39;, id=1)     │ ──┐
+  └─────────────────────────┘   │ 拿到 id=1
+                                 │
+                                 ▼
+  ② 拿 id=1 进入聚簇索引这棵树查找
+  ┌─────────────────────────────────────┐
+  │  聚簇索引 B+ 树                      │
+  │  叶子: (1, &#39;Tom&#39;, 20, &#39;t@x.com&#39;)    │ ← 完整行
+  └─────────────────────────────────────┘
+</code></pre><p>这就是<strong>回表</strong>的本质 —— 在两棵不同的 B+ 树之间跳转。</p>
 <p><strong>几个容易混淆的点</strong>：</p>
 <div class="table-wrapper"><table>
   <thead>
@@ -2483,25 +2253,13 @@
 </ul>
 <p>这也是为什么 <strong>InnoDB 强烈建议主键短小</strong>（比如自增 BIGINT 而不是长字符串）—— 主键值会被复制到<strong>每一个二级索引的每一个叶子节点</strong>里，主键越大，二级索引越臃肿。</p>
 <p><strong>结构示意</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">二级索引结构（假设索引: age）:
-</span></span><span class="line"><span class="cl">非叶子节点: [age, 页号]
-</span></span><span class="line"><span class="cl">              ↓
-</span></span><span class="line"><span class="cl">叶子节点: [age | 主键值id]
-</span></span><span class="line"><span class="cl">           ↓ 回表查询
-</span></span><span class="line"><span class="cl">聚簇索引: [id | 完整行数据]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>示例</strong>：</p>
+<pre tabindex="0"><code>二级索引结构（假设索引: age）:
+非叶子节点: [age, 页号]
+              ↓
+叶子节点: [age | 主键值id]
+           ↓ 回表查询
+聚簇索引: [id | 完整行数据]
+</code></pre><p><strong>示例</strong>：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -2533,15 +2291,8 @@
 </span></span></span></code></pre></td></tr></table>
 </div>
 </div><p>此时二级索引 <code>idx_age</code> 的叶子节点大致存储：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">[age=25 | id=1] → [age=25 | id=3] → [age=30 | id=2]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>查询完整行时需要回表：</p>
+<pre tabindex="0"><code>[age=25 | id=1] → [age=25 | id=3] → [age=30 | id=2]
+</code></pre><p>查询完整行时需要回表：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
@@ -2650,65 +2401,33 @@
 </div>
 </div><p>结论：<strong>用了索引不代表不回表；只有查询字段都能从当前索引中拿到，才不需要回表。</strong></p>
 <p><strong>回表完整流程图</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span><span class="lnt">26
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">查询: SELECT * FROM users WHERE age = 25;
-</span></span><span class="line"><span class="cl">索引: INDEX idx_age (age)
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">Step 1: 在二级索引 B+树 中查找 age=25
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│  二级索引 idx_age (B+树)                         │
-</span></span><span class="line"><span class="cl">│                                                 │
-</span></span><span class="line"><span class="cl">│  非叶子节点: [age值, 子页号]                      │
-</span></span><span class="line"><span class="cl">│       [20] [25] [30]                            │
-</span></span><span class="line"><span class="cl">│        ↓                                        │
-</span></span><span class="line"><span class="cl">│  叶子节点: [age=25, id=7] [age=25, id=12] ...   │
-</span></span><span class="line"><span class="cl">│             ↓ 得到主键 id=7, id=12               │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────┘
-</span></span><span class="line"><span class="cl">                    │
-</span></span><span class="line"><span class="cl">                    │ 回表（用主键去聚簇索引查完整行）
-</span></span><span class="line"><span class="cl">                    ↓
-</span></span><span class="line"><span class="cl">Step 2: 用主键 id 回到聚簇索引查找完整数据
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│  聚簇索引 (B+树, 按主键排序)                      │
-</span></span><span class="line"><span class="cl">│                                                 │
-</span></span><span class="line"><span class="cl">│  叶子节点: [id=7 | name=&#39;张三&#39;, age=25, ...]     │
-</span></span><span class="line"><span class="cl">│           [id=12 | name=&#39;李四&#39;, age=25, ...]    │
-</span></span><span class="line"><span class="cl">│             ↓ 返回完整行数据                      │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────┘
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">总结: 2次 B+树查找 = 1次二级索引 + 1次聚簇索引
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>回表的性能影响</strong>：</p>
+<pre tabindex="0"><code>查询: SELECT * FROM users WHERE age = 25;
+索引: INDEX idx_age (age)
+
+Step 1: 在二级索引 B+树 中查找 age=25
+┌─────────────────────────────────────────────────┐
+│  二级索引 idx_age (B+树)                         │
+│                                                 │
+│  非叶子节点: [age值, 子页号]                      │
+│       [20] [25] [30]                            │
+│        ↓                                        │
+│  叶子节点: [age=25, id=7] [age=25, id=12] ...   │
+│             ↓ 得到主键 id=7, id=12               │
+└─────────────────────────────────────────────────┘
+                    │
+                    │ 回表（用主键去聚簇索引查完整行）
+                    ↓
+Step 2: 用主键 id 回到聚簇索引查找完整数据
+┌─────────────────────────────────────────────────┐
+│  聚簇索引 (B+树, 按主键排序)                      │
+│                                                 │
+│  叶子节点: [id=7 | name=&#39;张三&#39;, age=25, ...]     │
+│           [id=12 | name=&#39;李四&#39;, age=25, ...]    │
+│             ↓ 返回完整行数据                      │
+└─────────────────────────────────────────────────┘
+
+总结: 2次 B+树查找 = 1次二级索引 + 1次聚簇索引
+</code></pre><p><strong>回表的性能影响</strong>：</p>
 <ul>
 <li>每次回表都是一次随机I/O（主键不连续时尤其明显）</li>
 <li>当回表行数过多时，优化器可能放弃索引直接全表扫描</li>
@@ -2801,94 +2520,45 @@
 </span></span></span></code></pre></td></tr></table>
 </div>
 </div><p><strong>联合索引 B+树结构图解</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">联合索引 INDEX(a, b, c) 的 B+树结构:
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">                    ┌──────────────────────┐
-</span></span><span class="line"><span class="cl">                    │  根节点 (非叶子)       │
-</span></span><span class="line"><span class="cl">                    │  [a=1,页P1] [a=2,页P2]│
-</span></span><span class="line"><span class="cl">                    └──────┬───────┬───────┘
-</span></span><span class="line"><span class="cl">                           │       │
-</span></span><span class="line"><span class="cl">            ┌──────────────┘       └──────────────┐
-</span></span><span class="line"><span class="cl">            ↓                                      ↓
-</span></span><span class="line"><span class="cl">┌───────────────────────────┐        ┌───────────────────────────┐
-</span></span><span class="line"><span class="cl">│ 叶子节点 P1 (a=1的数据)    │   →    │ 叶子节点 P2 (a=2的数据)    │
-</span></span><span class="line"><span class="cl">│                           │        │                           │
-</span></span><span class="line"><span class="cl">│ [a=1,b=1,c=1,id=3]       │        │ [a=2,b=1,c=1,id=5]       │
-</span></span><span class="line"><span class="cl">│ [a=1,b=1,c=2,id=8]       │        │ [a=2,b=1,c=3,id=2]       │
-</span></span><span class="line"><span class="cl">│ [a=1,b=2,c=1,id=1]       │        │ [a=2,b=2,c=2,id=9]       │
-</span></span><span class="line"><span class="cl">│ [a=1,b=3,c=1,id=6]       │        │ ...                       │
-</span></span><span class="line"><span class="cl">└───────────────────────────┘        └───────────────────────────┘
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">排序规则: 先按a排序 → a相同按b排序 → b相同按c排序
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">关键观察:
-</span></span><span class="line"><span class="cl">- a 是全局有序的 → WHERE a=1 可以快速定位
-</span></span><span class="line"><span class="cl">- b 在 a 确定后是局部有序的 → WHERE a=1 AND b=2 可以继续利用有序性
-</span></span><span class="line"><span class="cl">- b 全局无序 → WHERE b=2 无法利用索引（b=1可能出现在a=1和a=2中）
-</span></span><span class="line"><span class="cl">- c 只在 (a,b) 都确定后才有序 → WHERE a=1 AND c=3 只能用到a
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>为什么跳过中间列就失效</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">假设索引 (a, b, c)，查询 WHERE a=1 AND c=3:
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">在a=1的范围内，数据按b排序:
-</span></span><span class="line"><span class="cl">[a=1, b=1, c=1] ← c=1
-</span></span><span class="line"><span class="cl">[a=1, b=1, c=2] ← c=2
-</span></span><span class="line"><span class="cl">[a=1, b=2, c=1] ← c=1  ← c又变小了！
-</span></span><span class="line"><span class="cl">[a=1, b=2, c=3] ← c=3  ✓
-</span></span><span class="line"><span class="cl">[a=1, b=3, c=1] ← c=1  ← c又变小了！
-</span></span><span class="line"><span class="cl">[a=1, b=3, c=3] ← c=3  ✓
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">c在a确定但b不确定时是无序的，无法用B+树的有序性快速定位
-</span></span><span class="line"><span class="cl">只能用到a列的索引，然后逐行过滤c=3
-</span></span></code></pre></td></tr></table>
-</div>
-</div><hr>
+<pre tabindex="0"><code>联合索引 INDEX(a, b, c) 的 B+树结构:
+
+                    ┌──────────────────────┐
+                    │  根节点 (非叶子)       │
+                    │  [a=1,页P1] [a=2,页P2]│
+                    └──────┬───────┬───────┘
+                           │       │
+            ┌──────────────┘       └──────────────┐
+            ↓                                      ↓
+┌───────────────────────────┐        ┌───────────────────────────┐
+│ 叶子节点 P1 (a=1的数据)    │   →    │ 叶子节点 P2 (a=2的数据)    │
+│                           │        │                           │
+│ [a=1,b=1,c=1,id=3]       │        │ [a=2,b=1,c=1,id=5]       │
+│ [a=1,b=1,c=2,id=8]       │        │ [a=2,b=1,c=3,id=2]       │
+│ [a=1,b=2,c=1,id=1]       │        │ [a=2,b=2,c=2,id=9]       │
+│ [a=1,b=3,c=1,id=6]       │        │ ...                       │
+└───────────────────────────┘        └───────────────────────────┘
+
+排序规则: 先按a排序 → a相同按b排序 → b相同按c排序
+
+关键观察:
+- a 是全局有序的 → WHERE a=1 可以快速定位
+- b 在 a 确定后是局部有序的 → WHERE a=1 AND b=2 可以继续利用有序性
+- b 全局无序 → WHERE b=2 无法利用索引（b=1可能出现在a=1和a=2中）
+- c 只在 (a,b) 都确定后才有序 → WHERE a=1 AND c=3 只能用到a
+</code></pre><p><strong>为什么跳过中间列就失效</strong>：</p>
+<pre tabindex="0"><code>假设索引 (a, b, c)，查询 WHERE a=1 AND c=3:
+
+在a=1的范围内，数据按b排序:
+[a=1, b=1, c=1] ← c=1
+[a=1, b=1, c=2] ← c=2
+[a=1, b=2, c=1] ← c=1  ← c又变小了！
+[a=1, b=2, c=3] ← c=3  ✓
+[a=1, b=3, c=1] ← c=1  ← c又变小了！
+[a=1, b=3, c=3] ← c=3  ✓
+
+c在a确定但b不确定时是无序的，无法用B+树的有序性快速定位
+只能用到a列的索引，然后逐行过滤c=3
+</code></pre><hr>
 <h6 id="联合索引冲突与解决">联合索引冲突与解决
 </h6><p><strong>冲突场景1：多个索引竞争，优化器选错</strong></p>
 <div class="highlight"><div class="chroma">
@@ -4304,21 +3974,11 @@
 </li>
 </ul>
 <p><strong>Read View机制</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">每次SELECT时：
-</span></span><span class="line"><span class="cl">1. 生成新的Read View，包含当前活跃事务列表
-</span></span><span class="line"><span class="cl">2. 根据DB_TRX_ID判断数据版本是否可见
-</span></span><span class="line"><span class="cl">3. 如果不可见，从Undo Log中找到可见的版本
-</span></span></code></pre></td></tr></table>
-</div>
-</div><div class="highlight"><div class="chroma">
+<pre tabindex="0"><code>每次SELECT时：
+1. 生成新的Read View，包含当前活跃事务列表
+2. 根据DB_TRX_ID判断数据版本是否可见
+3. 如果不可见，从Undo Log中找到可见的版本
+</code></pre><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
 </span><span class="lnt"> 2
@@ -4362,21 +4022,11 @@
 </li>
 </ul>
 <p><strong>实现细节</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">事务开始时：
-</span></span><span class="line"><span class="cl">1. 第一次SELECT生成Read View并缓存
-</span></span><span class="line"><span class="cl">2. 后续查询复用同一个Read View
-</span></span><span class="line"><span class="cl">3. 根据Read View找到事务开始时可见的数据版本
-</span></span></code></pre></td></tr></table>
-</div>
-</div><div class="highlight"><div class="chroma">
+<pre tabindex="0"><code>事务开始时：
+1. 第一次SELECT生成Read View并缓存
+2. 后续查询复用同一个Read View
+3. 根据Read View找到事务开始时可见的数据版本
+</code></pre><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
 </span><span class="lnt"> 2
@@ -4915,29 +4565,15 @@
 </li>
 </ol>
 <h4 id="工作原理">工作原理
-</h4><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">当前事务ID = 100
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">数据行:
-</span></span><span class="line"><span class="cl">id=1, name=&#39;张三&#39;, DB_TRX_ID=90, DB_ROLL_PTR → undo log版本链
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">Undo Log链:
-</span></span><span class="line"><span class="cl">版本2: name=&#39;李四&#39;, DB_TRX_ID=95
-</span></span><span class="line"><span class="cl">版本1: name=&#39;张三&#39;, DB_TRX_ID=90
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>可见性判断</strong>：</p>
+</h4><pre tabindex="0"><code>当前事务ID = 100
+
+数据行:
+id=1, name=&#39;张三&#39;, DB_TRX_ID=90, DB_ROLL_PTR → undo log版本链
+
+Undo Log链:
+版本2: name=&#39;李四&#39;, DB_TRX_ID=95
+版本1: name=&#39;张三&#39;, DB_TRX_ID=90
+</code></pre><p><strong>可见性判断</strong>：</p>
 <ul>
 <li>如果数据的事务ID &lt; Read View最小事务ID → 可见</li>
 <li>如果数据的事务ID &gt; Read View最大事务ID → 不可见</li>
@@ -4956,15 +4592,8 @@
 </ul>
 </li>
 <li><strong>流程</strong>：
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">修改数据 → 写入Buffer Pool → 写入Redo Log Buffer → 刷盘到Redo Log → 后台异步刷脏页
-</span></span></code></pre></td></tr></table>
-</div>
-</div></li>
+<pre tabindex="0"><code>修改数据 → 写入Buffer Pool → 写入Redo Log Buffer → 刷盘到Redo Log → 后台异步刷脏页
+</code></pre></li>
 </ul>
 <h4 id="undo-log回滚日志">Undo Log（回滚日志）
 </h4><ul>
@@ -5003,19 +4632,10 @@
 </ul>
 <p>TCL 本身不是核心变更，关键看事务是否提交：事务中有写操作并 <code>COMMIT</code>，写操作会进入 Binlog；如果 <code>ROLLBACK</code>，则不会记录为有效变更。</p>
 <p><strong>两阶段提交</strong>：保证Redo Log和Bin Log一致性</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">1. 写入Redo Log（prepare状态）
-</span></span><span class="line"><span class="cl">2. 写入Bin Log
-</span></span><span class="line"><span class="cl">3. 提交事务，Redo Log改为commit状态
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h3 id="47-高可用与多副本复制">4.7 高可用与多副本复制
+<pre tabindex="0"><code>1. 写入Redo Log（prepare状态）
+2. 写入Bin Log
+3. 提交事务，Redo Log改为commit状态
+</code></pre><h3 id="47-高可用与多副本复制">4.7 高可用与多副本复制
 </h3><p>MySQL 高可用的目标是：当主库故障时，业务能够尽快切换到可用节点，同时尽量减少数据丢失和服务不可用时间。</p>
 <h4 id="主从复制基础">主从复制基础
 </h4><div class="highlight"><div class="chroma">

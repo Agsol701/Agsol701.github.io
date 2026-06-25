@@ -8,13 +8,22 @@
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="Python SDK 源码解析：官方 MCP Python SDK 的目录结构、能力模型与底层实现">
 <meta property='og:description' content="写在前面 如果说 PrefectHQ/fastmcp 更适合帮你快速建立开发直觉，那么 modelcontextprotocol/python-sdk 更适合帮你建立“官方视角”。\n这点非常重要。\n因为很多人学 MCP 时会遇到一个典型问题：\n会写框架代码 但分不清哪些是框架抽象，哪些是协议能力 而官方 Python SDK 的价值就在这里：\n它能帮你把“开发体验”和“协议边界”对齐起来。\n所以这篇文章会重点拆三件事：\n官方 Python SDK 的目录结构怎么理解 它暴露了哪些能力模型 它底层是怎样把 MCP 协议落到 Python 里的 一、先给官方 Python SDK 一个定位 如果用一句话概括：\nmodelcontextprotocol/python-sdk 是 MCP 官方维护的 Python SDK，用来在 Python 生态中实现 MCP server、client 以及相关协议能力。\n和高层框架相比，它更值得学习的地方在于：\n更贴近官方能力模型 更容易看到协议原语 示例覆盖面很完整 适合从最小能力一直读到进阶 transport 所以这个仓库的价值，不只是“可以用”，更是“可以作为学习协议的标准参照物”。\n二、从目录结构看这个项目 2.1 先建立一个目录结构心智图 如果不纠结某个版本里的细节差异，可以先把官方 Python SDK 粗略理解成下面这几块：\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 python-sdk/ ├── README.md ├── examples/ │ └── snippets/ │ └── servers/ ├── src/ │ └── mcp/ │ ├── server/ │ ├── client/ │ ├── types/ 或 protocol models │ ├── transport/ │ ├── auth/ │ ├── utilities / shared helpers │ └── high-level API related modules ├── tests/ └── pyproject.toml 同样地，这里的重点不是每个目录名绝对一模一样，而是先抓住这个仓库的骨架：\n">

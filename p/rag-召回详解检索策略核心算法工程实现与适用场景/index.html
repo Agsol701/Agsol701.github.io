@@ -1,28 +1,37 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把注意力放在大模型、prompt、向量数据库上。\n但真正决定效果上限的，往往是召回。\n因为 RAG 的基本链路是：\n1 2 3 4 flowchart TD A[&#34;用户问题&#34;] --&gt; B[&#34;检索外部知识&#34;] B --&gt; C[&#34;把检索结果放进上下文&#34;] C --&gt; D[&#34;让大模型生成答案&#34;] 如果召回阶段没有把正确证据找出来，后面的模型再强，也很难凭空答对。\n所以这篇文章只聚焦一个问题：\nRAG 里到底有哪些召回策略，它们背后的算法是什么，工程上怎么实现，分别适合什么场景？\n这篇会覆盖：\n召回在 RAG 链路里的位置 BM25（Best Matching 25）关键词召回 向量语义召回 混合召回 多路召回 查询改写与查询扩展 metadata filter Parent-Child Retrieval（父子检索） Summary Index（摘要索引） Graph Retrieval（图检索） rerank 和召回的关系 召回评估与调优 一、先理解召回的目标 1.1 召回不是最终排序 在 RAG 里，召回的职责不是直接选出最终答案，而是：\n从大量知识片段中，找出一批“可能相关”的候选证据。\n它和排序的职责不同。\n召回关注：\n正确证据有没有进入候选集 候选集覆盖是否足够 是否漏掉关键文档 是否覆盖不同表达方式 排序关注：\n哪些候选更相关 正确候选是否排在前面 噪声是否被压下去 最终放进 prompt 的内容是否干净 所以召回阶段更重视 Recall，排序阶段更重视 Precision。\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把注意力放在大模型、prompt、向量数据库上。\n但真正决定效果上限的，往往是召回。\n因为 RAG 的基本链路是：\nflowchart TD A[&#34;用户问题&#34;] --&gt; B[&#34;检索外部知识&#34;] B --&gt; C[&#34;把检索结果放进上下文&#34;] C --&gt; D[&#34;让大模型生成答案&#34;] 如果召回阶段没有把正确证据找出来，后面的模型再强，也很难凭空答对。\n所以这篇文章只聚焦一个问题：\nRAG 里到底有哪些召回策略，它们背后的算法是什么，工程上怎么实现，分别适合什么场景？\n这篇会覆盖：\n召回在 RAG 链路里的位置 BM25（Best Matching 25）关键词召回 向量语义召回 混合召回 多路召回 查询改写与查询扩展 metadata filter Parent-Child Retrieval（父子检索） Summary Index（摘要索引） Graph Retrieval（图检索） rerank 和召回的关系 召回评估与调优 一、先理解召回的目标 1.1 召回不是最终排序 在 RAG 里，召回的职责不是直接选出最终答案，而是：\n从大量知识片段中，找出一批“可能相关”的候选证据。\n它和排序的职责不同。\n召回关注：\n正确证据有没有进入候选集 候选集覆盖是否足够 是否漏掉关键文档 是否覆盖不同表达方式 排序关注：\n哪些候选更相关 正确候选是否排在前面 噪声是否被压下去 最终放进 prompt 的内容是否干净 所以召回阶段更重视 Recall，排序阶段更重视 Precision。\n">
 <title>RAG 召回详解：检索策略、核心算法、工程实现与适用场景</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/rag-%E5%8F%AC%E5%9B%9E%E8%AF%A6%E8%A7%A3%E6%A3%80%E7%B4%A2%E7%AD%96%E7%95%A5%E6%A0%B8%E5%BF%83%E7%AE%97%E6%B3%95%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E9%80%82%E7%94%A8%E5%9C%BA%E6%99%AF/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="RAG 召回详解：检索策略、核心算法、工程实现与适用场景">
-<meta property='og:description' content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把注意力放在大模型、prompt、向量数据库上。\n但真正决定效果上限的，往往是召回。\n因为 RAG 的基本链路是：\n1 2 3 4 flowchart TD A[&#34;用户问题&#34;] --&gt; B[&#34;检索外部知识&#34;] B --&gt; C[&#34;把检索结果放进上下文&#34;] C --&gt; D[&#34;让大模型生成答案&#34;] 如果召回阶段没有把正确证据找出来，后面的模型再强，也很难凭空答对。\n所以这篇文章只聚焦一个问题：\nRAG 里到底有哪些召回策略，它们背后的算法是什么，工程上怎么实现，分别适合什么场景？\n这篇会覆盖：\n召回在 RAG 链路里的位置 BM25（Best Matching 25）关键词召回 向量语义召回 混合召回 多路召回 查询改写与查询扩展 metadata filter Parent-Child Retrieval（父子检索） Summary Index（摘要索引） Graph Retrieval（图检索） rerank 和召回的关系 召回评估与调优 一、先理解召回的目标 1.1 召回不是最终排序 在 RAG 里，召回的职责不是直接选出最终答案，而是：\n从大量知识片段中，找出一批“可能相关”的候选证据。\n它和排序的职责不同。\n召回关注：\n正确证据有没有进入候选集 候选集覆盖是否足够 是否漏掉关键文档 是否覆盖不同表达方式 排序关注：\n哪些候选更相关 正确候选是否排在前面 噪声是否被压下去 最终放进 prompt 的内容是否干净 所以召回阶段更重视 Recall，排序阶段更重视 Precision。\n">
+<meta property='og:description' content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把注意力放在大模型、prompt、向量数据库上。\n但真正决定效果上限的，往往是召回。\n因为 RAG 的基本链路是：\nflowchart TD A[&#34;用户问题&#34;] --&gt; B[&#34;检索外部知识&#34;] B --&gt; C[&#34;把检索结果放进上下文&#34;] C --&gt; D[&#34;让大模型生成答案&#34;] 如果召回阶段没有把正确证据找出来，后面的模型再强，也很难凭空答对。\n所以这篇文章只聚焦一个问题：\nRAG 里到底有哪些召回策略，它们背后的算法是什么，工程上怎么实现，分别适合什么场景？\n这篇会覆盖：\n召回在 RAG 链路里的位置 BM25（Best Matching 25）关键词召回 向量语义召回 混合召回 多路召回 查询改写与查询扩展 metadata filter Parent-Child Retrieval（父子检索） Summary Index（摘要索引） Graph Retrieval（图检索） rerank 和召回的关系 召回评估与调优 一、先理解召回的目标 1.1 召回不是最终排序 在 RAG 里，召回的职责不是直接选出最终答案，而是：\n从大量知识片段中，找出一批“可能相关”的候选证据。\n它和排序的职责不同。\n召回关注：\n正确证据有没有进入候选集 候选集覆盖是否足够 是否漏掉关键文档 是否覆盖不同表达方式 排序关注：\n哪些候选更相关 正确候选是否排在前面 噪声是否被压下去 最终放进 prompt 的内容是否干净 所以召回阶段更重视 Recall，排序阶段更重视 Precision。\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/rag-%E5%8F%AC%E5%9B%9E%E8%AF%A6%E8%A7%A3%E6%A3%80%E7%B4%A2%E7%AD%96%E7%95%A5%E6%A0%B8%E5%BF%83%E7%AE%97%E6%B3%95%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0%E4%B8%8E%E9%80%82%E7%94%A8%E5%9C%BA%E6%99%AF/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='rag' /><meta property='article:published_time' content='2026-05-06T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-06T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="RAG 召回详解：检索策略、核心算法、工程实现与适用场景">
-<meta name="twitter:description" content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把注意力放在大模型、prompt、向量数据库上。\n但真正决定效果上限的，往往是召回。\n因为 RAG 的基本链路是：\n1 2 3 4 flowchart TD A[&#34;用户问题&#34;] --&gt; B[&#34;检索外部知识&#34;] B --&gt; C[&#34;把检索结果放进上下文&#34;] C --&gt; D[&#34;让大模型生成答案&#34;] 如果召回阶段没有把正确证据找出来，后面的模型再强，也很难凭空答对。\n所以这篇文章只聚焦一个问题：\nRAG 里到底有哪些召回策略，它们背后的算法是什么，工程上怎么实现，分别适合什么场景？\n这篇会覆盖：\n召回在 RAG 链路里的位置 BM25（Best Matching 25）关键词召回 向量语义召回 混合召回 多路召回 查询改写与查询扩展 metadata filter Parent-Child Retrieval（父子检索） Summary Index（摘要索引） Graph Retrieval（图检索） rerank 和召回的关系 召回评估与调优 一、先理解召回的目标 1.1 召回不是最终排序 在 RAG 里，召回的职责不是直接选出最终答案，而是：\n从大量知识片段中，找出一批“可能相关”的候选证据。\n它和排序的职责不同。\n召回关注：\n正确证据有没有进入候选集 候选集覆盖是否足够 是否漏掉关键文档 是否覆盖不同表达方式 排序关注：\n哪些候选更相关 正确候选是否排在前面 噪声是否被压下去 最终放进 prompt 的内容是否干净 所以召回阶段更重视 Recall，排序阶段更重视 Precision。\n">
+<meta name="twitter:description" content="写在前面 在 RAG（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把注意力放在大模型、prompt、向量数据库上。\n但真正决定效果上限的，往往是召回。\n因为 RAG 的基本链路是：\nflowchart TD A[&#34;用户问题&#34;] --&gt; B[&#34;检索外部知识&#34;] B --&gt; C[&#34;把检索结果放进上下文&#34;] C --&gt; D[&#34;让大模型生成答案&#34;] 如果召回阶段没有把正确证据找出来，后面的模型再强，也很难凭空答对。\n所以这篇文章只聚焦一个问题：\nRAG 里到底有哪些召回策略，它们背后的算法是什么，工程上怎么实现，分别适合什么场景？\n这篇会覆盖：\n召回在 RAG 链路里的位置 BM25（Best Matching 25）关键词召回 向量语义召回 混合召回 多路召回 查询改写与查询扩展 metadata filter Parent-Child Retrieval（父子检索） Summary Index（摘要索引） Graph Retrieval（图检索） rerank 和召回的关系 召回评估与调优 一、先理解召回的目标 1.1 召回不是最终排序 在 RAG 里，召回的职责不是直接选出最终答案，而是：\n从大量知识片段中，找出一批“可能相关”的候选证据。\n它和排序的职责不同。\n召回关注：\n正确证据有没有进入候选集 候选集覆盖是否足够 是否漏掉关键文档 是否覆盖不同表达方式 排序关注：\n哪些候选更相关 正确候选是否排在前面 噪声是否被压下去 最终放进 prompt 的内容是否干净 所以召回阶段更重视 Recall，排序阶段更重视 Precision。\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -464,21 +473,11 @@
 </h1><p>在 <code>RAG</code>（Retrieval-Augmented Generation，检索增强生成）系统里，很多人会把注意力放在大模型、prompt、向量数据库上。</p>
 <p>但真正决定效果上限的，往往是召回。</p>
 <p>因为 RAG 的基本链路是：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;用户问题&#34;] --&gt; B[&#34;检索外部知识&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;把检索结果放进上下文&#34;]
-</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;让大模型生成答案&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>如果召回阶段没有把正确证据找出来，后面的模型再强，也很难凭空答对。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;用户问题&#34;] --&gt; B[&#34;检索外部知识&#34;]
+  B --&gt; C[&#34;把检索结果放进上下文&#34;]
+  C --&gt; D[&#34;让大模型生成答案&#34;]
+</code></pre><p>如果召回阶段没有把正确证据找出来，后面的模型再强，也很难凭空答对。</p>
 <p>所以这篇文章只聚焦一个问题：</p>
 <blockquote>
 <p>RAG 里到底有哪些召回策略，它们背后的算法是什么，工程上怎么实现，分别适合什么场景？</p></blockquote>
@@ -807,29 +806,15 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>查询时并行执行：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;用户 query&#34;] --&gt; B[&#34;向量数据库：向量召回 top 50&#34;]
-</span></span><span class="line"><span class="cl">  A --&gt; C[&#34;搜索引擎：BM25 召回 top 50&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; D[&#34;按 chunk_id 合并去重&#34;]
-</span></span><span class="line"><span class="cl">  C --&gt; D
-</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;RRF 或加权融合&#34;]
-</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;rerank&#34;]
-</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;最终 top-k&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>关键是两边必须使用同一个 <code>chunk_id</code>。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;用户 query&#34;] --&gt; B[&#34;向量数据库：向量召回 top 50&#34;]
+  A --&gt; C[&#34;搜索引擎：BM25 召回 top 50&#34;]
+  B --&gt; D[&#34;按 chunk_id 合并去重&#34;]
+  C --&gt; D
+  D --&gt; E[&#34;RRF 或加权融合&#34;]
+  E --&gt; F[&#34;rerank&#34;]
+  F --&gt; G[&#34;最终 top-k&#34;]
+</code></pre><p>关键是两边必须使用同一个 <code>chunk_id</code>。</p>
 <p>例如向量库里有：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
@@ -1123,21 +1108,11 @@
 <p>可以把它理解成一张多层图。</p>
 <p>底层图连接很多近邻点，上层图更稀疏，用于快速跳转。</p>
 <p>查询过程类似：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;从最高层入口点开始&#34;] --&gt; B[&#34;找到当前层更接近 query 的节点&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;逐层向下&#34;]
-</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;在底层做更细的近邻搜索&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>它的特点：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;从最高层入口点开始&#34;] --&gt; B[&#34;找到当前层更接近 query 的节点&#34;]
+  B --&gt; C[&#34;逐层向下&#34;]
+  C --&gt; D[&#34;在底层做更细的近邻搜索&#34;]
+</code></pre><p>它的特点：</p>
 <ul>
 <li>查询速度快</li>
 <li>召回质量高</li>
@@ -1215,21 +1190,11 @@
 </h2><p>PQ 是 Product Quantization，乘积量化。</p>
 <p>它的目标是压缩向量，降低内存和存储成本。</p>
 <p>基本思路是：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;原始高维向量&#34;] --&gt; B[&#34;拆成多个子向量&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;每个子向量用码本近似表示&#34;]
-</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;用较短编码代替原始向量&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>优点：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;原始高维向量&#34;] --&gt; B[&#34;拆成多个子向量&#34;]
+  B --&gt; C[&#34;每个子向量用码本近似表示&#34;]
+  C --&gt; D[&#34;用较短编码代替原始向量&#34;]
+</code></pre><p>优点：</p>
 <ul>
 <li>节省内存</li>
 <li>支持更大规模索引</li>
@@ -1347,31 +1312,16 @@
 <blockquote>
 <p>BM25 + 向量召回 + 结果融合 + rerank。</p></blockquote>
 <h2 id="52-典型混合召回流程">5.2 典型混合召回流程
-</h2><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span><span class="lnt">9
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;用户 query&#34;] --&gt; B[&#34;并行执行 BM25 召回 top 50&#34;]
-</span></span><span class="line"><span class="cl">  A --&gt; C[&#34;并行执行向量召回 top 50&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; D[&#34;合并结果&#34;]
-</span></span><span class="line"><span class="cl">  C --&gt; D
-</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;去重&#34;]
-</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;分数融合&#34;]
-</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;rerank&#34;]
-</span></span><span class="line"><span class="cl">  G --&gt; H[&#34;取 top 5 到 top 10 进入上下文&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>这个流程的目标是：</p>
+</h2><pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;用户 query&#34;] --&gt; B[&#34;并行执行 BM25 召回 top 50&#34;]
+  A --&gt; C[&#34;并行执行向量召回 top 50&#34;]
+  B --&gt; D[&#34;合并结果&#34;]
+  C --&gt; D
+  D --&gt; E[&#34;去重&#34;]
+  E --&gt; F[&#34;分数融合&#34;]
+  F --&gt; G[&#34;rerank&#34;]
+  G --&gt; H[&#34;取 top 5 到 top 10 进入上下文&#34;]
+</code></pre><p>这个流程的目标是：</p>
 <ul>
 <li>BM25 兜住精确匹配</li>
 <li>向量召回兜住语义表达</li>
@@ -1539,21 +1489,11 @@
 <h1 id="六多路召回">六、多路召回
 </h1><h2 id="61-多路召回是什么">6.1 多路召回是什么
 </h2><p>多路召回确实和混合召回很像，因为它们都会出现：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;多种检索结果&#34;] --&gt; B[&#34;合并&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;去重&#34;]
-</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;融合或重排&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>但它们关注的层次不一样。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;多种检索结果&#34;] --&gt; B[&#34;合并&#34;]
+  B --&gt; C[&#34;去重&#34;]
+  C --&gt; D[&#34;融合或重排&#34;]
+</code></pre><p>但它们关注的层次不一样。</p>
 <p>一句话区分：</p>
 <blockquote>
 <p>混合召回关注“用哪些检索算法互补”，多路召回关注“从哪些检索通道找候选”。</p></blockquote>
@@ -1725,19 +1665,10 @@
 </div>
 </div><p>直接查细粒度 chunk，可能只召回局部字段说明。</p>
 <p>更好的做法是增加 summary index 召回：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;Summary Vector(数据权限模型是怎么设计的)&#34;] --&gt; B[&#34;先找到“权限模型设计”章节&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;再在这个章节下检索原文 chunk&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h3 id="问题四问题依赖实体关系">问题四：问题依赖实体关系
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;Summary Vector(数据权限模型是怎么设计的)&#34;] --&gt; B[&#34;先找到“权限模型设计”章节&#34;]
+  B --&gt; C[&#34;再在这个章节下检索原文 chunk&#34;]
+</code></pre><h3 id="问题四问题依赖实体关系">问题四：问题依赖实体关系
 </h3><p>例如：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
@@ -1823,21 +1754,11 @@
 <p>所以多路召回应有明确目的。</p>
 <p>不要为了“看起来高级”加很多路。</p>
 <p>更合理的做法是：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;先做基础混合召回&#34;] --&gt; B[&#34;看失败样本漏在哪里&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;针对性增加一路召回&#34;]
-</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;用评估集验证 Recall@k 是否提升&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>例如：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;先做基础混合召回&#34;] --&gt; B[&#34;看失败样本漏在哪里&#34;]
+  B --&gt; C[&#34;针对性增加一路召回&#34;]
+  C --&gt; D[&#34;用评估集验证 Recall@k 是否提升&#34;]
+</code></pre><p>例如：</p>
 <ul>
 <li>错误码漏召回：加强 BM25 或字段权重</li>
 <li>指代问题漏召回：增加 query rewrite</li>
@@ -2024,21 +1945,11 @@
 <p>为什么可能有效？</p>
 <p>因为用户问题有时很短，而假想文档更接近知识库里的答案表述。</p>
 <p>简化流程：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;question&#34;] --&gt; B[&#34;LLM 生成 hypothetical document&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;embedding hypothetical document&#34;]
-</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;vector search&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>适合：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;question&#34;] --&gt; B[&#34;LLM 生成 hypothetical document&#34;]
+  B --&gt; C[&#34;embedding hypothetical document&#34;]
+  C --&gt; D[&#34;vector search&#34;]
+</code></pre><p>适合：</p>
 <ul>
 <li>用户问题很短</li>
 <li>抽象问题</li>
@@ -2267,19 +2178,10 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>检索时：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;用 child chunk 做精准召回&#34;] --&gt; B[&#34;找到 child 所属 parent&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;把 parent 或相邻片段交给 LLM&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h2 id="83-示例">8.3 示例
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;用 child chunk 做精准召回&#34;] --&gt; B[&#34;找到 child 所属 parent&#34;]
+  B --&gt; C[&#34;把 parent 或相邻片段交给 LLM&#34;]
+</code></pre><h2 id="83-示例">8.3 示例
 </h2><p>原文：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
@@ -2441,23 +2343,12 @@
 </div>
 </div><h2 id="93-工程实现">9.3 工程实现
 </h2><p>离线阶段：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;文档解析&#34;] --&gt; B[&#34;按章节切分&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;为每个章节生成 summary&#34;]
-</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;summary embedding 入库&#34;]
-</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;原文 chunk embedding 入库&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>在线阶段：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;文档解析&#34;] --&gt; B[&#34;按章节切分&#34;]
+  B --&gt; C[&#34;为每个章节生成 summary&#34;]
+  C --&gt; D[&#34;summary embedding 入库&#34;]
+  D --&gt; E[&#34;原文 chunk embedding 入库&#34;]
+</code></pre><p>在线阶段：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -2618,25 +2509,13 @@
 </div>
 </div><h2 id="103-图召回流程">10.3 图召回流程
 </h2><p>常见流程：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;用户问题&#34;] --&gt; B[&#34;实体识别&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;实体链接到图节点&#34;]
-</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;沿关系边扩展一跳或多跳&#34;]
-</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;拿到相关文档、chunk 或实体说明&#34;]
-</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;和文本召回结果融合&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>例如：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;用户问题&#34;] --&gt; B[&#34;实体识别&#34;]
+  B --&gt; C[&#34;实体链接到图节点&#34;]
+  C --&gt; D[&#34;沿关系边扩展一跳或多跳&#34;]
+  D --&gt; E[&#34;拿到相关文档、chunk 或实体说明&#34;]
+  E --&gt; F[&#34;和文本召回结果融合&#34;]
+</code></pre><p>例如：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt">1
@@ -2764,23 +2643,12 @@
 </h2><p>召回负责找候选。</p>
 <p>rerank 负责把候选重新排序。</p>
 <p>常见流程：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;多路召回 top 100&#34;] --&gt; B[&#34;去重&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;rerank&#34;]
-</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;取 top 5 到 top 10&#34;]
-</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;上下文组装&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h2 id="112-cross-encoder-rerank">11.2 Cross-Encoder Rerank
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;多路召回 top 100&#34;] --&gt; B[&#34;去重&#34;]
+  B --&gt; C[&#34;rerank&#34;]
+  C --&gt; D[&#34;取 top 5 到 top 10&#34;]
+  D --&gt; E[&#34;上下文组装&#34;]
+</code></pre><h2 id="112-cross-encoder-rerank">11.2 Cross-Encoder Rerank
 </h2><p>向量召回通常是双塔结构：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
@@ -3172,23 +3040,12 @@
 </h2><p>召回是从知识库里找候选证据。</p>
 <p>生成是大模型基于这些证据组织答案。</p>
 <p>在 RAG 链路里，召回通常发生在生成之前：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;用户问题&#34;] --&gt; B[&#34;召回候选 chunk&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;rerank 排序&#34;]
-</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;上下文组装&#34;]
-</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;LLM 生成答案&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>召回质量决定答案上限。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;用户问题&#34;] --&gt; B[&#34;召回候选 chunk&#34;]
+  B --&gt; C[&#34;rerank 排序&#34;]
+  C --&gt; D[&#34;上下文组装&#34;]
+  D --&gt; E[&#34;LLM 生成答案&#34;]
+</code></pre><p>召回质量决定答案上限。</p>
 <p>如果正确证据没有被召回，后面的 rerank、prompt、LLM 通常很难补救。</p>
 <h2 id="152-召回和排序有什么区别">15.2 召回和排序有什么区别？
 </h2><p>召回关注的是：</p>
@@ -3300,21 +3157,11 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>完整流程可以理解为：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;query 分词&#34;] --&gt; B[&#34;查倒排索引找到候选 chunk&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;用 BM25 计算相关性分数&#34;]
-</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;返回 top-k&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>所以：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;query 分词&#34;] --&gt; B[&#34;查倒排索引找到候选 chunk&#34;]
+  B --&gt; C[&#34;用 BM25 计算相关性分数&#34;]
+  C --&gt; D[&#34;返回 top-k&#34;]
+</code></pre><p>所以：</p>
 <blockquote>
 <p>倒排索引解决“去哪找”，BM25 解决“谁排前面”。</p></blockquote>
 <h2 id="156-什么是混合召回">15.6 什么是混合召回？
@@ -3329,27 +3176,14 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>例如：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;query&#34;] --&gt; B[&#34;BM25 top-k&#34;]
-</span></span><span class="line"><span class="cl">  A --&gt; C[&#34;向量 top-k&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; D[&#34;去重&#34;]
-</span></span><span class="line"><span class="cl">  C --&gt; D
-</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;融合排序&#34;]
-</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;rerank&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>它的价值在于互补。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;query&#34;] --&gt; B[&#34;BM25 top-k&#34;]
+  A --&gt; C[&#34;向量 top-k&#34;]
+  B --&gt; D[&#34;去重&#34;]
+  C --&gt; D
+  D --&gt; E[&#34;融合排序&#34;]
+  E --&gt; F[&#34;rerank&#34;]
+</code></pre><p>它的价值在于互补。</p>
 <p>BM25 可以抓住精确词。</p>
 <p>向量检索可以抓住语义相似。</p>
 <p>两者结合，比单一路召回更稳。</p>
@@ -3527,21 +3361,11 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>这个问题可能需要沿着关系查：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;客户 A&#34;] --&gt; B[&#34;合同 B&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;套餐 C&#34;]
-</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;SLA 条款 D&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>向量检索可能只找到语义相似文本，但不一定能正确沿关系跳转。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;客户 A&#34;] --&gt; B[&#34;合同 B&#34;]
+  B --&gt; C[&#34;套餐 C&#34;]
+  C --&gt; D[&#34;SLA 条款 D&#34;]
+</code></pre><p>向量检索可能只找到语义相似文本，但不一定能正确沿关系跳转。</p>
 <p>图召回适合：</p>
 <ul>
 <li>组织架构</li>
@@ -3590,19 +3414,10 @@
 <p>召回负责从大规模知识库里找一批候选。</p>
 <p>rerank 负责对候选重新排序。</p>
 <p>流程通常是：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;召回 top-50&#34;] --&gt; B[&#34;rerank 重排&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;取 top-5 进入上下文&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>rerank 不能凭空找回召回阶段漏掉的正确 chunk。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;召回 top-50&#34;] --&gt; B[&#34;rerank 重排&#34;]
+  B --&gt; C[&#34;取 top-5 进入上下文&#34;]
+</code></pre><p>rerank 不能凭空找回召回阶段漏掉的正确 chunk。</p>
 <p>所以如果正确证据没有进入候选集，rerank 通常救不回来。</p>
 <h2 id="1516-怎么评估召回效果">15.16 怎么评估召回效果？
 </h2><p>常见指标包括：</p>
@@ -3645,21 +3460,11 @@
 <p>如果没有，优先修召回链路。</p>
 <h2 id="1518-生产级召回和-demo-最大区别是什么">15.18 生产级召回和 demo 最大区别是什么？
 </h2><p>demo 往往是：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;chunk&#34;] --&gt; B[&#34;embedding&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;向量库 top-k&#34;]
-</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;LLM&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>生产级召回通常还需要：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;chunk&#34;] --&gt; B[&#34;embedding&#34;]
+  B --&gt; C[&#34;向量库 top-k&#34;]
+  C --&gt; D[&#34;LLM&#34;]
+</code></pre><p>生产级召回通常还需要：</p>
 <ul>
 <li>文档解析质量</li>
 <li>chunk 策略</li>

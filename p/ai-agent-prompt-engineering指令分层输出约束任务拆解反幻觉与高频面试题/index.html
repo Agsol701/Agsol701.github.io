@@ -8,13 +8,22 @@
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="AI Agent Prompt Engineering：指令分层、输出约束、任务拆解、反幻觉与高频面试题">
 <meta property='og:description' content="写在前面 Agent 不是靠一个神奇 prompt 就能稳定运行，但 prompt 仍然是 Agent 行为控制的重要接口。\n好的 prompt 不是写得长，而是把目标、边界、输入、输出和失败处理说清楚。\n本文在讲解 Agent Prompt 核心概念的同时，结合 LangChain 源码分析 prompt 模板系统的设计实现，帮助理解&quot;工程化的 prompt 管理&quot;是如何落地的。\n一、Agent Prompt 的目标 1.1 不是让模型更会聊天 Agent prompt 的目标通常是：\n明确任务目标 限定工具使用边界 约束输出格式 说明失败时如何处理 让模型遵守业务规则 1.2 Prompt 与 Skills 的区别 在 Agent 体系中，prompt 和 skills（工具/技能）经常被混淆，但它们是两个不同层面的东西：\n维度 Prompt Skills 本质 文本指令，告诉模型&quot;你是谁、怎么做&quot; 可执行的能力单元，包含代码逻辑 形态 字符串（系统消息、模板） 函数/工具/子流程（有输入输出接口） 作用时机 推理前注入，影响模型行为 运行时被调用，执行具体操作 谁在执行 Large Language Model（LLM，大语言模型）自身理解并遵循 程序代码执行，LLM 只负责决定何时调用 可靠性 软约束（模型可能不遵守） 硬执行（代码逻辑确定性高） 举例 &ldquo;你是知识库Agent，不可编造内容&rdquo; search_docs(query) 检索函数 简单类比：\n">
@@ -628,27 +637,14 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><p>框架内部自动组装的消息结构：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">flowchart</span> <span class="n">TD</span>
-</span></span><span class="line"><span class="cl">    <span class="n">A</span><span class="p">[</span><span class="err">实际发给</span> <span class="n">LLM</span> <span class="err">的消息列表</span><span class="p">]</span>
-</span></span><span class="line"><span class="cl">    <span class="n">A</span> <span class="o">--&gt;</span> <span class="n">B</span><span class="p">[</span><span class="n">SystemMessage</span><span class="p">:</span> <span class="n">system_prompt</span> <span class="err">内容</span><span class="p">]</span>
-</span></span><span class="line"><span class="cl">    <span class="n">A</span> <span class="o">--&gt;</span> <span class="n">C</span><span class="p">[</span><span class="err">历史消息</span><span class="p">:</span> <span class="n">messages</span> <span class="err">列表中的所有历史消息</span><span class="p">]</span>
-</span></span><span class="line"><span class="cl">    <span class="n">C</span> <span class="o">--&gt;</span> <span class="n">C1</span><span class="p">[</span><span class="n">HumanMessage</span> <span class="o">/</span> <span class="n">AIMessage</span> <span class="o">/</span> <span class="n">ToolMessage</span> <span class="err">按时序排列</span><span class="p">]</span>
-</span></span><span class="line"><span class="cl">    <span class="n">A</span> <span class="o">--&gt;</span> <span class="n">D</span><span class="p">[</span><span class="err">工具定义</span><span class="p">:</span> <span class="err">通过</span> <span class="n">bind_tools</span> <span class="err">自动注入到</span> <span class="n">API</span> <span class="err">请求中</span><span class="p">]</span>
-</span></span><span class="line"><span class="cl">    <span class="n">D</span> <span class="o">--&gt;</span> <span class="n">D1</span><span class="p">[</span><span class="n">tools</span><span class="p">:</span> <span class="n">name</span> <span class="o">/</span> <span class="n">description</span> <span class="o">/</span> <span class="n">parameters</span><span class="p">]</span>
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>与旧版的对比：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[实际发给 LLM 的消息列表]
+    A --&gt; B[SystemMessage: system_prompt 内容]
+    A --&gt; C[历史消息: messages 列表中的所有历史消息]
+    C --&gt; C1[HumanMessage / AIMessage / ToolMessage 按时序排列]
+    A --&gt; D[工具定义: 通过 bind_tools 自动注入到 API 请求中]
+    D --&gt; D1[tools: name / description / parameters]
+</code></pre><p>与旧版的对比：</p>
 <div class="table-wrapper"><table>
   <thead>
       <tr>
@@ -795,33 +791,17 @@
 <h2 id="34-langchain-源码格式指令注入机制">3.4 LangChain 源码：格式指令注入机制
 </h2><p>LangChain 通过 OutputParser 体系将格式约束注入 prompt，形成&quot;告诉模型怎么输出 → 解析模型输出&quot;的闭环。</p>
 <p>核心流程：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">sequenceDiagram
-</span></span><span class="line"><span class="cl">    participant O as OutputParser
-</span></span><span class="line"><span class="cl">    participant P as Prompt
-</span></span><span class="line"><span class="cl">    participant L as LLM
-</span></span><span class="line"><span class="cl">    participant A as 应用代码
-</span></span><span class="line"><span class="cl">    O-&gt;&gt;P: get_format_instructions()
-</span></span><span class="line"><span class="cl">    P-&gt;&gt;L: 包含格式约束的完整 prompt
-</span></span><span class="line"><span class="cl">    L--&gt;&gt;O: 原始文本输出
-</span></span><span class="line"><span class="cl">    O-&gt;&gt;A: parse() 返回结构化对象
-</span></span><span class="line"><span class="cl">    O--&gt;&gt;A: 解析失败时 retry 或抛异常
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><code>PydanticOutputParser</code> 的核心实现（<code>langchain_core/output_parsers/pydantic.py</code>）：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">sequenceDiagram
+    participant O as OutputParser
+    participant P as Prompt
+    participant L as LLM
+    participant A as 应用代码
+    O-&gt;&gt;P: get_format_instructions()
+    P-&gt;&gt;L: 包含格式约束的完整 prompt
+    L--&gt;&gt;O: 原始文本输出
+    O-&gt;&gt;A: parse() 返回结构化对象
+    O--&gt;&gt;A: 解析失败时 retry 或抛异常
+</code></pre><p><code>PydanticOutputParser</code> 的核心实现（<code>langchain_core/output_parsers/pydantic.py</code>）：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1
@@ -1060,39 +1040,20 @@
 <h2 id="54-langchain-10messages-作为证据链">5.4 langchain 1.0+：Messages 作为证据链
 </h2><p>在当前版本中，不再需要单独的 <code>agent_scratchpad</code> 格式转换机制。Agent 的推理历史就是 <code>messages</code> 列表本身——每一轮工具调用的 AIMessage 和 ToolMessage 配对自动形成证据链：</p>
 <p>Scratchpad 的累积过程：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart LR
-</span></span><span class="line"><span class="cl">    subgraph R1[第1轮]
-</span></span><span class="line"><span class="cl">        A[用户问题] --&gt; B[LLM 决定调用 search_docs]
-</span></span><span class="line"><span class="cl">        B --&gt; C[工具返回结果]
-</span></span><span class="line"><span class="cl">    end
-</span></span><span class="line"><span class="cl">    subgraph R2[第2轮]
-</span></span><span class="line"><span class="cl">        D[messages 已包含&lt;br/&gt;AI 调用 search_docs + ToolMessage 结果] --&gt; E[LLM 基于结果&lt;br/&gt;生成回答或继续调用工具]
-</span></span><span class="line"><span class="cl">    end
-</span></span><span class="line"><span class="cl">    subgraph R3[第3轮: 如需要]
-</span></span><span class="line"><span class="cl">        F[messages 继续累积] --&gt; G[LLM 综合所有证据&lt;br/&gt;生成最终回答]
-</span></span><span class="line"><span class="cl">    end
-</span></span><span class="line"><span class="cl">    C --&gt; D
-</span></span><span class="line"><span class="cl">    E --&gt; F
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>messages 列表的实际结构：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    subgraph R1[第1轮]
+        A[用户问题] --&gt; B[LLM 决定调用 search_docs]
+        B --&gt; C[工具返回结果]
+    end
+    subgraph R2[第2轮]
+        D[messages 已包含&lt;br/&gt;AI 调用 search_docs + ToolMessage 结果] --&gt; E[LLM 基于结果&lt;br/&gt;生成回答或继续调用工具]
+    end
+    subgraph R3[第3轮: 如需要]
+        F[messages 继续累积] --&gt; G[LLM 综合所有证据&lt;br/&gt;生成最终回答]
+    end
+    C --&gt; D
+    E --&gt; F
+</code></pre><p>messages 列表的实际结构：</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
 <pre tabindex="0" class="chroma"><code><span class="lnt"> 1

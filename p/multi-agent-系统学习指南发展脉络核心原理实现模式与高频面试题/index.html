@@ -8,13 +8,22 @@
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="Multi-Agent 系统学习指南：发展脉络、核心原理、实现模式与高频面试题">
 <meta property='og:description' content="写在前面 Multi-Agent 不是把多个 AI Agent 放在一起聊天这么简单。\n它真正解决的问题是：\n当一个任务太大、太长、太开放，单个 Agent 的上下文、工具、注意力和执行时间都不够用时，如何把任务拆成多个角色协作完成。\n所以 Multi-Agent 的核心不是&quot;多&quot;，而是分工、协作、调度和收敛。如果没有清晰的任务边界、通信协议、状态管理和停止条件，多个 Agent 很容易变成多个不稳定因素叠加。\n这篇文章按照&quot;发展脉络、基本原理、常见架构、工程实现、生产难点、面试题&quot;来整理 Multi-Agent 系统。读完后应该能回答三个问题：\n为什么需要 Multi-Agent，而不是一个更强的单 Agent？ Multi-Agent 系统通常怎么组织、怎么通信、怎么停止？ 真正落地时，应该优先控制哪些工程风险？ 文中术语首次出现时给出全称和缩写，后续直接使用缩写。\n目录 Multi-Agent 到底是什么 发展脉络：从传统多智能体到 LLM Agent 协作 为什么需要 Multi-Agent 核心原理：分工、通信、状态与控制 常见架构模式 实现一个 Multi-Agent 系统 生产级工程问题 Multi-Agent 和相邻概念的区别 常见高频面试题 附录：进一步阅读 1. Multi-Agent 到底是什么 1.1 一句话定义 Multi-Agent System（MAS，多智能体系统） 可以理解为：\n多个具备独立角色、目标、工具或上下文的 Agent，通过某种协作机制共同完成一个任务的系统。\n这里的 Agent 通常由几部分组成：\n">
@@ -461,25 +470,13 @@
 <p>单 Agent 是一个执行者。Multi-Agent 是一组执行者加上一套组织方式。</p>
 <h3 id="12-multi-agent-的本质">1.2 Multi-Agent 的本质
 </h3><p>Multi-Agent 的本质是把复杂任务拆成多个局部问题：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">    A[用户目标] --&gt; B[任务分解]
-</span></span><span class="line"><span class="cl">    B --&gt; C[分配给多个 Agent]
-</span></span><span class="line"><span class="cl">    C --&gt; D[各自执行、调用工具、产出中间结果]
-</span></span><span class="line"><span class="cl">    D --&gt; E[汇总、验证、冲突解决]
-</span></span><span class="line"><span class="cl">    E --&gt; F[生成最终答案或执行最终动作]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>它解决的是&quot;单个 Agent 处理不过来&quot;的问题，而不是&quot;让系统看起来更智能&quot;的问题。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[用户目标] --&gt; B[任务分解]
+    B --&gt; C[分配给多个 Agent]
+    C --&gt; D[各自执行、调用工具、产出中间结果]
+    D --&gt; E[汇总、验证、冲突解决]
+    E --&gt; F[生成最终答案或执行最终动作]
+</code></pre><p>它解决的是&quot;单个 Agent 处理不过来&quot;的问题，而不是&quot;让系统看起来更智能&quot;的问题。</p>
 <h3 id="13-一个最小例子">1.3 一个最小例子
 </h3><p>假设用户说：</p>
 <blockquote>
@@ -675,27 +672,14 @@
 <h3 id="33-任务超过单上下文窗口">3.3 任务超过单上下文窗口
 </h3><p>长文档、代码库、大量搜索结果，很容易超过单 Agent 的上下文容量。</p>
 <p>Multi-Agent 可以让每个子 Agent 读取一部分材料，再把压缩后的结论交给主 Agent：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart LR
-</span></span><span class="line"><span class="cl">    A[原始材料 A] --&gt; B[Agent A] --&gt; C[摘要 A]
-</span></span><span class="line"><span class="cl">    D[原始材料 B] --&gt; E[Agent B] --&gt; F[摘要 B]
-</span></span><span class="line"><span class="cl">    G[原始材料 C] --&gt; H[Agent C] --&gt; I[摘要 C]
-</span></span><span class="line"><span class="cl">    C --&gt; J[Lead Agent 汇总]
-</span></span><span class="line"><span class="cl">    F --&gt; J
-</span></span><span class="line"><span class="cl">    I --&gt; J
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>这种模式的本质是<strong>分布式上下文压缩</strong>。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    A[原始材料 A] --&gt; B[Agent A] --&gt; C[摘要 A]
+    D[原始材料 B] --&gt; E[Agent B] --&gt; F[摘要 B]
+    G[原始材料 C] --&gt; H[Agent C] --&gt; I[摘要 C]
+    C --&gt; J[Lead Agent 汇总]
+    F --&gt; J
+    I --&gt; J
+</code></pre><p>这种模式的本质是<strong>分布式上下文压缩</strong>。</p>
 <h3 id="34-需要互相检查">3.4 需要互相检查
 </h3><p>LLM 容易生成看似合理但缺少依据的内容。</p>
 <p>引入 Reviewer Agent 或 Judge Agent 可以做二次检查：</p>
@@ -1711,31 +1695,16 @@
 <h2 id="5-常见架构模式">5. 常见架构模式
 </h2><h3 id="51-orchestrator-worker">5.1 Orchestrator-Worker
 </h3><p>这是最常见、也最容易工程化的模式。</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span><span class="lnt">9
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">    A[用户请求] --&gt; B[Orchestrator Agent]
-</span></span><span class="line"><span class="cl">    B --&gt; C[Worker Agent A]
-</span></span><span class="line"><span class="cl">    B --&gt; D[Worker Agent B]
-</span></span><span class="line"><span class="cl">    B --&gt; E[Worker Agent C]
-</span></span><span class="line"><span class="cl">    C --&gt; F[Synthesizer / Reviewer]
-</span></span><span class="line"><span class="cl">    D --&gt; F
-</span></span><span class="line"><span class="cl">    E --&gt; F
-</span></span><span class="line"><span class="cl">    F --&gt; G[最终输出]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>Orchestrator 负责：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[用户请求] --&gt; B[Orchestrator Agent]
+    B --&gt; C[Worker Agent A]
+    B --&gt; D[Worker Agent B]
+    B --&gt; E[Worker Agent C]
+    C --&gt; F[Synthesizer / Reviewer]
+    D --&gt; F
+    E --&gt; F
+    F --&gt; G[最终输出]
+</code></pre><p>Orchestrator 负责：</p>
 <ul>
 <li>理解用户目标</li>
 <li>拆解任务</li>
@@ -1776,27 +1745,14 @@
 <h3 id="54-blackboard">5.4 Blackboard
 </h3><p><code>Blackboard</code> 可以理解为共享白板模式。</p>
 <p>所有 Agent 不一定互相直接聊天，而是读写一个共享工作区：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">    A[Agent A] --&gt; D[共享状态 / 文件 / 数据库]
-</span></span><span class="line"><span class="cl">    B[Agent B] --&gt; D
-</span></span><span class="line"><span class="cl">    C[Agent C] --&gt; D
-</span></span><span class="line"><span class="cl">    D --&gt; A
-</span></span><span class="line"><span class="cl">    D --&gt; B
-</span></span><span class="line"><span class="cl">    D --&gt; C
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>它适合需要沉淀中间产物的场景，例如：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[Agent A] --&gt; D[共享状态 / 文件 / 数据库]
+    B[Agent B] --&gt; D
+    C[Agent C] --&gt; D
+    D --&gt; A
+    D --&gt; B
+    D --&gt; C
+</code></pre><p>它适合需要沉淀中间产物的场景，例如：</p>
 <ul>
 <li>多 Agent 共同写报告</li>
 <li>多 Agent 分析同一代码库</li>
@@ -1806,27 +1762,14 @@
 <p>Anthropic 的多 Agent research 复盘里提到，子 Agent 可以把输出写到外部系统，再把轻量引用交给协调者，这能减少信息在主 Agent 中反复转述造成的损耗。</p>
 <h3 id="55-graph-workflow">5.5 Graph Workflow
 </h3><p>Graph Workflow 用图结构控制 Agent 流转。</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart LR
-</span></span><span class="line"><span class="cl">    A[plan] --&gt; B[dispatch]
-</span></span><span class="line"><span class="cl">    B --&gt; C[wait_workers]
-</span></span><span class="line"><span class="cl">    C --&gt; D[review]
-</span></span><span class="line"><span class="cl">    D --&gt; E{failed?}
-</span></span><span class="line"><span class="cl">    E -- yes: retry --&gt; C
-</span></span><span class="line"><span class="cl">    E -- no --&gt; F[final]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>这种模式适合生产系统，因为它具备：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    A[plan] --&gt; B[dispatch]
+    B --&gt; C[wait_workers]
+    C --&gt; D[review]
+    D --&gt; E{failed?}
+    E -- yes: retry --&gt; C
+    E -- no --&gt; F[final]
+</code></pre><p>这种模式适合生产系统，因为它具备：</p>
 <ul>
 <li>明确节点</li>
 <li>明确状态</li>
@@ -1839,47 +1782,21 @@
 <h3 id="56-pipeline">5.6 Pipeline
 </h3><p>Pipeline 是固定流水线模式。</p>
 <p>它不是让多个 Agent 自由协商，而是把任务拆成稳定阶段：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart LR
-</span></span><span class="line"><span class="cl">    A[plan] --&gt; B[research] --&gt; C[summarize] --&gt; D[write] --&gt; E[review] --&gt; F[publish]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>或者在代码任务里：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart LR
-</span></span><span class="line"><span class="cl">    A[plan] --&gt; B[code] --&gt; C[test] --&gt; D[debug] --&gt; E[review] --&gt; F[final]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>Pipeline 的优点是稳定、便于测试、便于观测。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    A[plan] --&gt; B[research] --&gt; C[summarize] --&gt; D[write] --&gt; E[review] --&gt; F[publish]
+</code></pre><p>或者在代码任务里：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    A[plan] --&gt; B[code] --&gt; C[test] --&gt; D[debug] --&gt; E[review] --&gt; F[final]
+</code></pre><p>Pipeline 的优点是稳定、便于测试、便于观测。</p>
 <p>缺点是灵活性不如 Orchestrator-Worker。如果中间某一步发现任务需要重新拆分，就要额外设计回跳逻辑。</p>
 <h3 id="57-debate--critic">5.7 Debate / Critic
 </h3><p>Debate / Critic 模式让多个 Agent 从不同角度生成观点，再由 Critic 或 Judge 做裁决。</p>
 <p>常见结构是：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">    A[Agent A 给方案] --&gt; D[Judge 汇总并选择]
-</span></span><span class="line"><span class="cl">    B[Agent B 挑问题] --&gt; D
-</span></span><span class="line"><span class="cl">    C[Agent C 给替代方案] --&gt; D
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>它适合：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[Agent A 给方案] --&gt; D[Judge 汇总并选择]
+    B[Agent B 挑问题] --&gt; D
+    C[Agent C 给替代方案] --&gt; D
+</code></pre><p>它适合：</p>
 <ul>
 <li>架构评审</li>
 <li>方案对比</li>
@@ -1889,21 +1806,11 @@
 <p>但它不适合事实核查的唯一手段。多个模型互相辩论，仍然可能一起错。事实问题应该回到检索、引用、测试和规则校验。</p>
 <h3 id="58-reflection">5.8 Reflection
 </h3><p>Reflection 是&quot;执行 + 反思 + 修正&quot;模式。</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart LR
-</span></span><span class="line"><span class="cl">    A[Actor 生成初稿] --&gt; B[Reflector 找问题]
-</span></span><span class="line"><span class="cl">    B --&gt; C[Actor 修正]
-</span></span><span class="line"><span class="cl">    C --&gt; D[Reflector 再检查]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>这类模式常用于写作、代码生成、SQL 生成、报告生成。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    A[Actor 生成初稿] --&gt; B[Reflector 找问题]
+    B --&gt; C[Actor 修正]
+    C --&gt; D[Reflector 再检查]
+</code></pre><p>这类模式常用于写作、代码生成、SQL 生成、报告生成。</p>
 <p>它的关键不是让模型无限自我反省，而是给 Reflection 设定明确检查清单：</p>
 <ul>
 <li>是否满足用户约束</li>
@@ -1925,29 +1832,15 @@
 <p>它的风险是成本高，而且多数投票不保证事实正确。如果 5 个 Agent 都基于同一个错误前提，投票只会让错误看起来更有信心。</p>
 <h3 id="510-tree-search--branching">5.10 Tree Search / Branching
 </h3><p>Tree Search / Branching 模式让多个 Agent 探索不同路径。</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">    A[目标]
-</span></span><span class="line"><span class="cl">    A --&gt; B[路径 A]
-</span></span><span class="line"><span class="cl">    A --&gt; C[路径 B]
-</span></span><span class="line"><span class="cl">    A --&gt; D[路径 C]
-</span></span><span class="line"><span class="cl">    B --&gt; E[评估]
-</span></span><span class="line"><span class="cl">    C --&gt; E
-</span></span><span class="line"><span class="cl">    D --&gt; E
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>它适合开放式问题，例如算法设计、复杂规划、研究选题、代码修复路径探索。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[目标]
+    A --&gt; B[路径 A]
+    A --&gt; C[路径 B]
+    A --&gt; D[路径 C]
+    B --&gt; E[评估]
+    C --&gt; E
+    D --&gt; E
+</code></pre><p>它适合开放式问题，例如算法设计、复杂规划、研究选题、代码修复路径探索。</p>
 <p>这类模式的关键是&quot;分支之后必须评估&quot;。如果只分支不评估，系统只是花更多 token 生成更多不确定内容。</p>
 <h3 id="511-human-ai-collaborative">5.11 Human-AI Collaborative
 </h3><p>Human-AI Collaborative 模式把人类放进 Multi-Agent 流程里。</p>
@@ -1963,25 +1856,13 @@
 </h3><p>这一节把上面的模式落到几个真实项目上看。</p>
 <h4 id="5121-multi-agent-coder软件工程闭环">5.12.1 Multi-Agent Coder：软件工程闭环
 </h4><p>你提到的 <code>multiagentcoder</code>，如果指的是代码生成类的多 Agent 实现，它通常不是一个单一固定架构名，而是一类模式：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">    A[需求] --&gt; B[Planner Agent: 拆任务、定方案]
-</span></span><span class="line"><span class="cl">    B --&gt; C[Coder Agent: 修改代码]
-</span></span><span class="line"><span class="cl">    C --&gt; D[Tester Agent: 运行测试、收集失败]
-</span></span><span class="line"><span class="cl">    D --&gt; E[Debugger Agent: 根据错误修复]
-</span></span><span class="line"><span class="cl">    E --&gt; F[Reviewer Agent: 检查质量和风险]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>这类系统的核心启发是：代码任务不能只靠&quot;生成&quot;，必须引入<strong>执行反馈</strong>。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[需求] --&gt; B[Planner Agent: 拆任务、定方案]
+    B --&gt; C[Coder Agent: 修改代码]
+    C --&gt; D[Tester Agent: 运行测试、收集失败]
+    D --&gt; E[Debugger Agent: 根据错误修复]
+    E --&gt; F[Reviewer Agent: 检查质量和风险]
+</code></pre><p>这类系统的核心启发是：代码任务不能只靠&quot;生成&quot;，必须引入<strong>执行反馈</strong>。</p>
 <p>好的 Multi-Agent Coder 至少要有：</p>
 <ul>
 <li>仓库读取能力</li>
@@ -1999,33 +1880,17 @@
 <h4 id="5122-stanford-oval-storm研究写作流水线">5.12.2 Stanford OVAL STORM：研究写作流水线
 </h4><p><code>STORM</code>（Synthesis of Topic Outlines through Retrieval and Multi-perspective Question Asking）是 Stanford OVAL 开源的知识整理系统，用来围绕一个主题检索资料，并生成带引用的长文报告。</p>
 <p>它的实现不是简单的&quot;搜索一下然后写文章&quot;，而是两阶段流水线：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">    A[Pre-writing]
-</span></span><span class="line"><span class="cl">    A --&gt; A1[检索资料]
-</span></span><span class="line"><span class="cl">    A --&gt; A2[生成多视角问题]
-</span></span><span class="line"><span class="cl">    A --&gt; A3[模拟 writer 和 expert 的对话]
-</span></span><span class="line"><span class="cl">    A --&gt; A4[生成大纲]
-</span></span><span class="line"><span class="cl">    A4 --&gt; B[Writing]
-</span></span><span class="line"><span class="cl">    B --&gt; B1[基于大纲和资料写文章]
-</span></span><span class="line"><span class="cl">    B --&gt; B2[加引用]
-</span></span><span class="line"><span class="cl">    B --&gt; B3[polish]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>STORM 对 Multi-Agent 的启发主要有三点。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[Pre-writing]
+    A --&gt; A1[检索资料]
+    A --&gt; A2[生成多视角问题]
+    A --&gt; A3[模拟 writer 和 expert 的对话]
+    A --&gt; A4[生成大纲]
+    A4 --&gt; B[Writing]
+    B --&gt; B1[基于大纲和资料写文章]
+    B --&gt; B2[加引用]
+    B --&gt; B3[polish]
+</code></pre><p>STORM 对 Multi-Agent 的启发主要有三点。</p>
 <p>第一，研究型任务的关键不是直接写答案，而是先生成好问题。问题质量决定检索质量，检索质量决定写作质量。</p>
 <p>第二，多视角可以显式建模。STORM 会通过不同 perspective 引导提问，这比让一个 Agent 泛泛地&quot;全面调研&quot;更稳。</p>
 <p>第三，写作前要先形成 outline。outline 是长文任务的中间状态，也是控制最终结构的抓手。</p>
@@ -2052,25 +1917,13 @@
 <h4 id="5124-gpt-researcher自治研究-agent">5.12.4 GPT Researcher：自治研究 Agent
 </h4><p><code>GPT</code>（Generative Pre-trained Transformer）Researcher 是 assafelovic 开源的深度研究 Agent。</p>
 <p>它的 README 描述了一条很典型的研究链路：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">    A[根据研究问题创建 task-specific agent] --&gt; B[生成一组问题]
-</span></span><span class="line"><span class="cl">    B --&gt; C[crawler agent 为每个问题收集资料]
-</span></span><span class="line"><span class="cl">    C --&gt; D[摘要并追踪来源]
-</span></span><span class="line"><span class="cl">    D --&gt; E[过滤和聚合摘要]
-</span></span><span class="line"><span class="cl">    E --&gt; F[生成最终研究报告]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>GPT Researcher 对 Multi-Agent 的启发是：研究任务要把&quot;搜、读、摘、筛、写&quot;分开。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[根据研究问题创建 task-specific agent] --&gt; B[生成一组问题]
+    B --&gt; C[crawler agent 为每个问题收集资料]
+    C --&gt; D[摘要并追踪来源]
+    D --&gt; E[过滤和聚合摘要]
+    E --&gt; F[生成最终研究报告]
+</code></pre><p>GPT Researcher 对 Multi-Agent 的启发是：研究任务要把&quot;搜、读、摘、筛、写&quot;分开。</p>
 <p>如果一个 Agent 同时负责搜索、阅读、判断、写作，它很容易把低质量来源和高质量来源混在一起。拆成 crawler、summarizer、aggregator、writer 后，系统更容易记录证据链，也更容易替换其中某个环节。</p>
 <p>它和 STORM 的区别可以这样理解：</p>
 <div class="table-wrapper"><table>
@@ -2401,29 +2254,15 @@
 <li>最终答案引用了哪些中间产物</li>
 </ul>
 <p>比较实用的 trace 结构是：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">    A[run_id]
-</span></span><span class="line"><span class="cl">    A --&gt; B[planner_span]
-</span></span><span class="line"><span class="cl">    A --&gt; C[worker_span_A]
-</span></span><span class="line"><span class="cl">    A --&gt; D[worker_span_B]
-</span></span><span class="line"><span class="cl">    A --&gt; E[worker_span_C]
-</span></span><span class="line"><span class="cl">    A --&gt; F[reviewer_span]
-</span></span><span class="line"><span class="cl">    A --&gt; G[writer_span]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>没有 trace 的 Multi-Agent 很难排查问题。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[run_id]
+    A --&gt; B[planner_span]
+    A --&gt; C[worker_span_A]
+    A --&gt; D[worker_span_B]
+    A --&gt; E[worker_span_C]
+    A --&gt; F[reviewer_span]
+    A --&gt; G[writer_span]
+</code></pre><p>没有 trace 的 Multi-Agent 很难排查问题。</p>
 <h3 id="74-上线要能灰度">7.4 上线要能灰度
 </h3><p>Multi-Agent 系统里很多东西都会影响行为：</p>
 <ul>

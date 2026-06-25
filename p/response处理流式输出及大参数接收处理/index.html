@@ -8,13 +8,22 @@
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="response处理流式输出及大参数接收处理">
 <meta property='og:description' content="response处理流式输出及大参数接收处理 处理流式输出中，response.text和response.content的区别 在处理流式输出（如 SSE 服务器推送、大文件下载、分块传输等场景）时，response.text 和 response.content 的区别主要体现在数据形式、处理方式和适用场景上，核心差异源于流式传输的 “分块” 特性。以下是详细对比：\n1. 数据形式与处理逻辑 特性 response.text response.content 数据类型 字符串（str） 字节流（bytes） 处理逻辑 会等待所有数据接收完成后，将完整字节流按编码（如 utf-8）解码为字符串。 直接返回接收到的原始字节片段，不等待完整数据，也不做解码。 流式适配性 不适合流式处理：必须等全量数据加载到内存后才能获取，无法逐块处理。 适合流式处理：可实时获取分块字节数据，边接收边处理。 2. 流式场景下的核心区别 在流式输出中（通常通过 stream=True 启用，如 requests.get(url, stream=True)），服务器会将数据分块传输，而非一次性返回完整内容。此时两者的行为差异显著：\n（1）response.text 的问题：无法实时处理 response.text 的设计是获取完整响应的文本内容，其内部逻辑是：\n等待所有分块数据传输完成，拼接成完整字节流； 根据响应头的编码（如 Content-Type: text/html; charset=utf-8）解码为字符串。 在流式场景中使用 response.text 会导致：\n阻塞等待：必须等到所有数据传输完毕才能拿到结果，失去 “流式” 的实时性； 内存爆炸：若数据量极大（如 GB 级日志流），完整加载到内存会导致 OOM（内存溢出）。 示例（错误用法）：\n1 2 3 4 5 6 import requests # 启用流式传输 response = requests.get(&#34;https://api.example.com/stream&#34;, stream=True) # 错误：response.text 会等待所有数据接收完成才返回 content = response.text # 大流式数据会导致内存飙升、长时间阻塞 （2）response.content 的特点：支持逐块处理 response.content 本质是原始字节数据的容器，在流式场景中：\n">
@@ -477,143 +486,72 @@
 <p>核心差异可概括为：<code>content</code> 面向 “字节流的分块实时处理”，<code>text</code> 面向 “完整文本的一次性获取”。</p>
 <h1 id="responseiter_lines优化">response.iter_lines优化()
 </h1><p>在处理大数据量的流式输出的时候性能问题优化。</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span><span class="lnt">26
-</span><span class="lnt">27
-</span><span class="lnt">28
-</span><span class="lnt">29
-</span><span class="lnt">30
-</span><span class="lnt">31
-</span><span class="lnt">32
-</span><span class="lnt">33
-</span><span class="lnt">34
-</span><span class="lnt">35
-</span><span class="lnt">36
-</span><span class="lnt">37
-</span><span class="lnt">38
-</span><span class="lnt">39
-</span><span class="lnt">40
-</span><span class="lnt">41
-</span><span class="lnt">42
-</span><span class="lnt">43
-</span><span class="lnt">44
-</span><span class="lnt">45
-</span><span class="lnt">46
-</span><span class="lnt">47
-</span><span class="lnt">48
-</span><span class="lnt">49
-</span><span class="lnt">50
-</span><span class="lnt">51
-</span><span class="lnt">52
-</span><span class="lnt">53
-</span><span class="lnt">54
-</span><span class="lnt">55
-</span><span class="lnt">56
-</span><span class="lnt">57
-</span><span class="lnt">58
-</span><span class="lnt">59
-</span><span class="lnt">60
-</span><span class="lnt">61
-</span><span class="lnt">62
-</span><span class="lnt">63
-</span><span class="lnt">64
-</span><span class="lnt">65
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">def chunk_iter_lines(resp, chunk_size=65536, decode_unicode=False, encoding=None, trim_threshold=1 &lt;&lt; 20):
-</span></span><span class="line"><span class="cl">    &#34;&#34;&#34;
-</span></span><span class="line"><span class="cl">    高性能 iter_lines 实现，优化超长行场景。
-</span></span><span class="line"><span class="cl">    Args:
-</span></span><span class="line"><span class="cl">        resp: requests.Response (需 stream=True)
-</span></span><span class="line"><span class="cl">        chunk_size: 每次读取块大小 (默认 64KB)
-</span></span><span class="line"><span class="cl">        decode_unicode: 是否解码为 str
-</span></span><span class="line"><span class="cl">        encoding: 解码使用的编码 (默认 resp.encoding or utf-8)
-</span></span><span class="line"><span class="cl">        trim_threshold: 缓冲区超过该值时清理前缀 (默认 1MB)
-</span></span><span class="line"><span class="cl">    &#34;&#34;&#34;
-</span></span><span class="line"><span class="cl">    buf = bytearray()
-</span></span><span class="line"><span class="cl">    start = 0
-</span></span><span class="line"><span class="cl">    read = resp.raw.read
-</span></span><span class="line"><span class="cl">    enc = encoding or getattr(resp, &#34;encoding&#34;, None) or &#34;utf-8&#34;
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">    while True:
-</span></span><span class="line"><span class="cl">        chunk = read(chunk_size)
-</span></span><span class="line"><span class="cl">        if not chunk:
-</span></span><span class="line"><span class="cl">            break
-</span></span><span class="line"><span class="cl">        buf.extend(chunk)
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">        while True:
-</span></span><span class="line"><span class="cl">            nl = buf.find(b&#39;\n&#39;, start)
-</span></span><span class="line"><span class="cl">            cr = buf.find(b&#39;\r&#39;, start)
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">            if nl == -1 and cr == -1:
-</span></span><span class="line"><span class="cl">                break
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">            # CR 在缓冲末尾，可能是 CRLF 跨块，等待下一次 read
-</span></span><span class="line"><span class="cl">            if cr != -1 and cr == len(buf) - 1 and (nl == -1 or cr &lt; nl):
-</span></span><span class="line"><span class="cl">                break
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">            if nl == -1:
-</span></span><span class="line"><span class="cl">                line_end = cr
-</span></span><span class="line"><span class="cl">                line_ending_len = 1
-</span></span><span class="line"><span class="cl">            elif cr == -1:
-</span></span><span class="line"><span class="cl">                line_end = nl
-</span></span><span class="line"><span class="cl">                line_ending_len = 1
-</span></span><span class="line"><span class="cl">            else:
-</span></span><span class="line"><span class="cl">                if cr &lt; nl and cr + 1 &lt; len(buf) and buf[cr + 1] == 10:
-</span></span><span class="line"><span class="cl">                    line_end = cr
-</span></span><span class="line"><span class="cl">                    line_ending_len = 2
-</span></span><span class="line"><span class="cl">                else:
-</span></span><span class="line"><span class="cl">                    line_end = min(cr, nl)
-</span></span><span class="line"><span class="cl">                    line_ending_len = 1
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">            line = bytes(buf[start:line_end])
-</span></span><span class="line"><span class="cl">            start = line_end + line_ending_len
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">            if decode_unicode:
-</span></span><span class="line"><span class="cl">                yield line.decode(enc, errors=&#34;replace&#34;)
-</span></span><span class="line"><span class="cl">            else:
-</span></span><span class="line"><span class="cl">                yield line
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">        # 缓冲区定期修剪，避免无限增长
-</span></span><span class="line"><span class="cl">        if start &gt; trim_threshold:
-</span></span><span class="line"><span class="cl">            del buf[:start]
-</span></span><span class="line"><span class="cl">            start = 0
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">    if start &lt; len(buf):
-</span></span><span class="line"><span class="cl">        leftover = bytes(buf[start:])
-</span></span><span class="line"><span class="cl">        if decode_unicode:
-</span></span><span class="line"><span class="cl">            yield leftover.decode(enc, errors=&#34;replace&#34;)
-</span></span><span class="line"><span class="cl">        else:
-</span></span><span class="line"><span class="cl">            yield leftover
-</span></span></code></pre></td></tr></table>
-</div>
-</div>
+<pre tabindex="0"><code>def chunk_iter_lines(resp, chunk_size=65536, decode_unicode=False, encoding=None, trim_threshold=1 &lt;&lt; 20):
+    &#34;&#34;&#34;
+    高性能 iter_lines 实现，优化超长行场景。
+    Args:
+        resp: requests.Response (需 stream=True)
+        chunk_size: 每次读取块大小 (默认 64KB)
+        decode_unicode: 是否解码为 str
+        encoding: 解码使用的编码 (默认 resp.encoding or utf-8)
+        trim_threshold: 缓冲区超过该值时清理前缀 (默认 1MB)
+    &#34;&#34;&#34;
+    buf = bytearray()
+    start = 0
+    read = resp.raw.read
+    enc = encoding or getattr(resp, &#34;encoding&#34;, None) or &#34;utf-8&#34;
+
+    while True:
+        chunk = read(chunk_size)
+        if not chunk:
+            break
+        buf.extend(chunk)
+
+        while True:
+            nl = buf.find(b&#39;\n&#39;, start)
+            cr = buf.find(b&#39;\r&#39;, start)
+
+            if nl == -1 and cr == -1:
+                break
+
+            # CR 在缓冲末尾，可能是 CRLF 跨块，等待下一次 read
+            if cr != -1 and cr == len(buf) - 1 and (nl == -1 or cr &lt; nl):
+                break
+
+            if nl == -1:
+                line_end = cr
+                line_ending_len = 1
+            elif cr == -1:
+                line_end = nl
+                line_ending_len = 1
+            else:
+                if cr &lt; nl and cr + 1 &lt; len(buf) and buf[cr + 1] == 10:
+                    line_end = cr
+                    line_ending_len = 2
+                else:
+                    line_end = min(cr, nl)
+                    line_ending_len = 1
+
+            line = bytes(buf[start:line_end])
+            start = line_end + line_ending_len
+
+            if decode_unicode:
+                yield line.decode(enc, errors=&#34;replace&#34;)
+            else:
+                yield line
+
+        # 缓冲区定期修剪，避免无限增长
+        if start &gt; trim_threshold:
+            del buf[:start]
+            start = 0
+
+    if start &lt; len(buf):
+        leftover = bytes(buf[start:])
+        if decode_unicode:
+            yield leftover.decode(enc, errors=&#34;replace&#34;)
+        else:
+            yield leftover
+</code></pre>
 </section>
 
 

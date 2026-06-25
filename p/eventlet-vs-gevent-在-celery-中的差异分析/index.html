@@ -8,13 +8,22 @@
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="Eventlet vs Gevent 在 Celery 中的差异分析">
 <meta property='og:description' content="Eventlet vs Gevent 在 Celery 中的差异分析 问题现象 在使用 Celery 的 green pool（协程并发池）时，比较常见的一类现象是：\n使用 eventlet 时，worker 进程看起来是正常的 进程没有退出，心跳有时也还在 但是消费者就是“不再消费”或者消费明显卡住 将启动参数从 eventlet 改成 gevent 后，现象消失 这个问题很容易让人误以为是 Celery 的 consumer 逻辑有 bug，但从源码链路来看，更多时候问题并不在 Celery 的“消费逻辑本身”，而是在 green pool 的运行时、monkey patch 时机、事件循环实现、以及第三方库兼容性 上。\n先说结论 先给结论，再展开源码：\neventlet 和 gevent 在 Celery 里都属于 green pool，本质都是单进程内跑大量 greenlet Celery 对两者的封装其实很薄，主要差异不在 Celery 自己，而在 eventlet / gevent 运行时 eventlet 对 monkey patch 的时机更敏感，兼容性问题也更多 gevent 的底层事件循环更成熟，默认运行表现通常更稳定 “进程正常但不消费”这类现象，通常意味着 worker 没挂，但某个关键 I/O 或 hub 调度被阻塞了 如果切到 gevent 后恢复正常，通常说明问题更接近于 eventlet 的运行时行为，而不是任务代码或 broker 协议本身 Celery Pool 类型概览 Celery 支持多种并发池（Pool）实现，通过 -P 参数指定：\n">
@@ -646,49 +655,25 @@
 </div>
 </div><p><strong>特点</strong>：代码发起请求后进入等待状态，CPU 空闲。</p>
 <h4 id="为什么选择不同的-pool">为什么选择不同的 Pool
-</h4><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">CPU 密集型任务（用 prefork）：
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│ 进程1: ████████████████████████████ │  ← CPU 满载
-</span></span><span class="line"><span class="cl">│ 进程2: ████████████████████████████ │
-</span></span><span class="line"><span class="cl">│ 进程3: ████████████████████████████ │
-</span></span><span class="line"><span class="cl">│ 进程4: ████████████████████████████ │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────┘
-</span></span><span class="line"><span class="cl">→ 多进程并行，充分利用多核 CPU
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">I/O 密集型任务（用 gevent/eventlet）：
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│ 协程1: ██░░░░░░░░░░░░██░░░░░░░░░░██ │  ← 大部分时间在等待
-</span></span><span class="line"><span class="cl">│ 协程2: ░░██░░░░░░░░░░░░██░░░░░░░░░░ │
-</span></span><span class="line"><span class="cl">│ 协程3: ░░░░██░░░░░░░░░░░░██░░░░░░░░ │
-</span></span><span class="line"><span class="cl">│ 协程4: ░░░░░░██░░░░░░░░░░░░██░░░░░░ │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────┘
-</span></span><span class="line"><span class="cl">██ = CPU 工作  ░░ = 等待 I/O
-</span></span><span class="line"><span class="cl">→ 单进程多协程，等待时自动切换执行其他协程
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h4 id="简单判断方法">简单判断方法
+</h4><pre tabindex="0"><code>CPU 密集型任务（用 prefork）：
+┌─────────────────────────────────────┐
+│ 进程1: ████████████████████████████ │  ← CPU 满载
+│ 进程2: ████████████████████████████ │
+│ 进程3: ████████████████████████████ │
+│ 进程4: ████████████████████████████ │
+└─────────────────────────────────────┘
+→ 多进程并行，充分利用多核 CPU
+
+I/O 密集型任务（用 gevent/eventlet）：
+┌─────────────────────────────────────┐
+│ 协程1: ██░░░░░░░░░░░░██░░░░░░░░░░██ │  ← 大部分时间在等待
+│ 协程2: ░░██░░░░░░░░░░░░██░░░░░░░░░░ │
+│ 协程3: ░░░░██░░░░░░░░░░░░██░░░░░░░░ │
+│ 协程4: ░░░░░░██░░░░░░░░░░░░██░░░░░░ │
+└─────────────────────────────────────┘
+██ = CPU 工作  ░░ = 等待 I/O
+→ 单进程多协程，等待时自动切换执行其他协程
+</code></pre><h4 id="简单判断方法">简单判断方法
 </h4><p><strong>任务是在&quot;算&quot;还是在&quot;等&quot;？</strong></p>
 <ul>
 <li>算得多 → CPU 密集型 → 用 prefork</li>

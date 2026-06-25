@@ -8,13 +8,22 @@
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="go的迭代器">
 <meta property='og:description' content="迭代器 iter 包是 Go 1.23 新增的标准库，提供了迭代器的基本定义和相关操作。\nfor/range 语句改进 Go 语言内置的容器类型有数组、切片和映射。它们都有一种无需暴露底层实现即可访问其元素的方法：for/range 语句。\nfor/range 语句除了适用于 Go 的内置容器类型外，还适用于字符串和通道。此外 Go 1.22 开始 for/range 语句支持 int。\n从 Go 1.23 开始，for/range 语句支持单参数的函数。 并且单参数本身必须是一个接收 0 到 2 个参数并返回一个 bool 的函数；按照惯例，我们称之为 yield 函数。\n1 2 3 func(yield func() bool) func(yield func(V) bool) func(yield func(K, V) bool) 当我们在 Go 中谈论迭代器时，我们指的是具有这三种类型之一的函数。\ngo 迭代器 Go 1.23 中增加的迭代器是一个函数类型，它把另一个函数（ yield 函数）作为参数，将容器中的连续元素传递给 yield 函数。\n迭代器函数会在以下两种情况停止。\n在序列迭代结束后停止，表示此次迭代结束。 在 yield 函数返回 false 时停止，表示提前停止迭代。 Go 标准库 iter 包 中定义了 Seq 和 Seq2 作为迭代器的简称，它们将每个序列元素的 1 或 2 个值传递给 yield 函数： 1 2 3 4 type ( Seq[V any] func(yield func(V) bool) Seq2[K, V any] func(yield func(K, V) bool) ) 其中：\n">

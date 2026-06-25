@@ -8,13 +8,22 @@
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="go的协程">
 <meta property='og:description' content="Go 语言还提供 chan 在多个 goroutine 间进行通信。goroutine 和 chan 是 Go 语言秉承的 CSP（Communicating Sequential Process）并发模式的重要实现基础。\n协程与线程的区别 一个线程可以承载多个协程，一个进程也可以拥有多个协程。 线程是操作系统调度的执行单元，协程通常由语言运行时或用户态调度器调度。 协程能保留上一次调用时的状态，每次过程重入时，就相当于进入上一次调用的状态。 传统协程多为协作式调度，需要主动让出执行权；Go 的 goroutine 由 runtime 调度，并支持抢占式调度。 协程并不是取代线程，而是在线程之上的更轻量抽象。Go 的 goroutine 需要由 M（操作系统线程）承载运行，并通过 runtime scheduler 完成调度。 Go语言协程(goroutine) 什么是Go语言协程(goroutine) goroutine 可以看作是 goroutine 的 Go 语言 实现。\nGo 的 main 函数运行在 main goroutine 中。main 函数退出后，程序会直接退出，其他尚未完成的 goroutine 也会随之结束。\ngoroutine特点 goroutine 是协程的 Go 语言实现，它是语言原生支持的，相对于一般由库实现协程的方式，goroutine 更加强大，它的调度一定程度上是由 Go 运行时（runtime）管理。 其好处之一是，当某 goroutine 发生阻塞时（例如同步 I/O 操作等），会自动出让 CPU 给其它 goroutine。 goroutine 是非常轻量级的，它就是一段代码，一个 函数 入口，以及为其分配的一个可动态增长的栈。所以它非常廉价，我们可以很轻松地创建上万个 goroutine。\n">
@@ -422,49 +431,21 @@ goroutine 是非常轻量级的，它就是一段代码，一个 <strong><a clas
 </h2><p>Go 运行时的调度器使用 <code>GOMAXPROCS</code> 参数来确定可以同时执行 Go 代码的 P 的数量。默认值是机器上的 CPU 逻辑核心数。例如在一个 8 核心的机器上，<code>GOMAXPROCS</code> 默认为 8。Go 语言中可以通过 <code>runtime.GOMAXPROCS</code> 函数设置当前程序并发时占用的 CPU 逻辑核心数。（Go 1.5 版本之前，默认使用的是单核心执行。Go 1.5 版本之后，默认使用全部的 CPU 逻辑核心数。）</p>
 <h2 id="go语言协程创建教程总结">Go语言协程创建教程总结
 </h2><p>在 Go 程序中使用 <code>go</code> 关键字为一个函数创建一个 goroutine。在 Go 中，创建 goroutine 有两种方法，分别为：使用普通函数创建和使用匿名函数创建。普通函数创建 goroutine 语法：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">go funcName(paramlist)
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>匿名函数创建 goroutine 语法：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">go func( paramlist ){
-</span></span><span class="line"><span class="cl">    //do something
-</span></span><span class="line"><span class="cl">}( paramlist2 )
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h1 id="并发安全和锁">并发安全和锁
+<pre tabindex="0"><code>go funcName(paramlist)
+</code></pre><p>匿名函数创建 goroutine 语法：</p>
+<pre tabindex="0"><code>go func( paramlist ){
+    //do something
+}( paramlist2 )
+</code></pre><h1 id="并发安全和锁">并发安全和锁
 </h1><h2 id="互斥锁">互斥锁
 </h2><h3 id="语法">语法
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="o">//</span> <span class="err">定义互斥锁变量</span> <span class="n">mutex</span>
-</span></span><span class="line"><span class="cl"><span class="k">var</span> <span class="n">mutex</span> <span class="n">sync</span><span class="o">.</span><span class="n">Mutex</span>
-</span></span><span class="line"><span class="cl"><span class="o">//</span> <span class="err">对需要访问的资源加锁</span>
-</span></span><span class="line"><span class="cl"><span class="n">mutex</span><span class="o">.</span><span class="n">Lock</span><span class="p">(</span> <span class="p">)</span>
-</span></span><span class="line"><span class="cl"><span class="o">//</span> <span class="err">资源访问结束解锁</span>
-</span></span><span class="line"><span class="cl"><span class="n">mutex</span><span class="o">.</span><span class="n">Unlock</span><span class="p">(</span> <span class="p">)</span>
-</span></span></code></pre></td></tr></table>
-</div>
-</div><div class="table-wrapper"><table>
+</h3><pre tabindex="0"><code>// 定义互斥锁变量 mutex
+var mutex sync.Mutex
+// 对需要访问的资源加锁
+mutex.Lock( )
+// 资源访问结束解锁
+mutex.Unlock( )
+</code></pre><div class="table-wrapper"><table>
   <thead>
       <tr>
           <th style="text-align: left">方法名</th>
@@ -590,27 +571,14 @@ goroutine 是非常轻量级的，它就是一段代码，一个 <strong><a clas
 <h3 id="什么是读写锁">什么是读写锁
 </h3><p>读写锁可以让多个读操作并发，同时读取，但是对于写操作是完全互斥的。也就是说，当一个 goroutine 进行写操作的时候，其他 goroutine 既不能进行读操作，也不能进行写操作。</p>
 <h3 id="读写锁结构">读写锁结构
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">type RWMutex struct {
-</span></span><span class="line"><span class="cl">    w Mutex
-</span></span><span class="line"><span class="cl">    writerSem uint32
-</span></span><span class="line"><span class="cl">    readerSem uint32
-</span></span><span class="line"><span class="cl">    readerCount int32
-</span></span><span class="line"><span class="cl">    readerWait int32
-</span></span><span class="line"><span class="cl">}
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h3 id="方法">方法
+</h3><pre tabindex="0"><code>type RWMutex struct {
+    w Mutex
+    writerSem uint32
+    readerSem uint32
+    readerCount int32
+    readerWait int32
+}
+</code></pre><h3 id="方法">方法
 </h3><div class="table-wrapper"><table>
   <thead>
       <tr>
@@ -647,47 +615,23 @@ goroutine 是非常轻量级的，它就是一段代码，一个 <strong><a clas
 </h3><p>读写锁的使用必须保证 Lock 和 Unlock 成对出现，或者是 RLock 和 RUnlock 成对出现，在我们需要写数据时，需要使用成对的 Lock 和 Unlock，在我们需要读数据时，需要使用成对的 RLock 和 RUnlock。</p>
 <h4 id="读写锁写数据">读写锁写数据
 </h4><h4 id="语法-1">语法
-</h4><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="o">//</span> <span class="err">定义一个读写锁</span>
-</span></span><span class="line"><span class="cl"><span class="k">var</span> <span class="n">rwMux</span> <span class="n">sync</span><span class="o">.</span><span class="n">RWMutex</span>
-</span></span><span class="line"><span class="cl"><span class="o">//</span> <span class="err">锁住需要写入的数据</span>
-</span></span><span class="line"><span class="cl"><span class="n">rwMux</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>
-</span></span><span class="line"><span class="cl"><span class="o">//</span> <span class="err">释放锁</span>
-</span></span><span class="line"><span class="cl"><span class="n">rwMux</span><span class="o">.</span><span class="n">Unlock</span><span class="p">()</span>
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h4 id="说明-2">说明
+</h4><pre tabindex="0"><code>// 定义一个读写锁
+var rwMux sync.RWMutex
+// 锁住需要写入的数据
+rwMux.Lock()
+// 释放锁
+rwMux.Unlock()
+</code></pre><h4 id="说明-2">说明
 </h4><p>首先，我们使用 sync.RWMutex 定义一个读写锁，接着使用 rwMux.Lock() 锁住需要写的数据，写完之后，使用 rwMux.Unlock() 释放锁。</p>
 <h3 id="读写锁读数据">读写锁读数据
 </h3><h4 id="语法-2">语法
-</h4><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="o">//</span> <span class="err">定义一个读写锁</span>
-</span></span><span class="line"><span class="cl"><span class="k">var</span> <span class="n">rwMux</span> <span class="n">sync</span><span class="o">.</span><span class="n">RWMutex</span>
-</span></span><span class="line"><span class="cl"><span class="o">//</span> <span class="err">锁住需要读取的数据</span>
-</span></span><span class="line"><span class="cl"><span class="n">rwMux</span><span class="o">.</span><span class="n">RLock</span><span class="p">()</span>
-</span></span><span class="line"><span class="cl"><span class="o">//</span> <span class="err">释放锁</span>
-</span></span><span class="line"><span class="cl"><span class="n">rwMux</span><span class="o">.</span><span class="n">RUnlock</span><span class="p">()</span>
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h4 id="说明-3">说明
+</h4><pre tabindex="0"><code>// 定义一个读写锁
+var rwMux sync.RWMutex
+// 锁住需要读取的数据
+rwMux.RLock()
+// 释放锁
+rwMux.RUnlock()
+</code></pre><h4 id="说明-3">说明
 </h4><p>首先，我们使用 sync.RWMutex 定义一个读写锁，接着使用 rwMux.RLock() 锁住需要读的数据，读完之后，使用 rwMux.RUnlock() 释放锁。</p>
 <div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">

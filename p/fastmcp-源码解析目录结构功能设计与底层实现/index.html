@@ -8,13 +8,22 @@
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="FastMCP 源码解析：目录结构、功能设计与底层实现">
 <meta property='og:description' content="写在前面 如果你想系统学习：\nPython 里怎么开发 MCP server 一个高层 MCP 框架怎么设计 工具、资源、提示模板是怎么被封装出来的 那么 PrefectHQ/fastmcp 是一个非常适合读源码的项目。\n它的价值不只在于“能快速写一个 server”，更在于它把 MCP 开发里最常见的几类问题都整理成了统一框架能力：\nserver 生命周期 tool / resource / prompt 注册 schema 自动生成 transport 适配 context 注入 auth / proxy / composition 所以这篇文章的重点不是介绍怎么安装 fastmcp，而是回答三个更关键的问题：\n这个项目的目录结构是怎么组织的 它到底帮开发者封装了哪些能力 它底层是怎样把 Python 函数变成 MCP 能力的 一、先给 FastMCP 一个定位 如果只用一句话概括：\nFastMCP 是一个面向 Python 开发者的高层 MCP 框架，用来降低开发 MCP server 和 MCP client 的复杂度。\n这句话里最重要的是“高层框架”。\n也就是说，它不是在和 MCP 协议竞争，而是在 MCP 协议之上提供一层更适合 Python 开发者的抽象。\n">

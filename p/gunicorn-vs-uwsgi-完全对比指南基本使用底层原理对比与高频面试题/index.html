@@ -8,13 +8,22 @@
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="Gunicorn vs uWSGI 完全对比指南：基本使用、底层原理、对比与高频面试题">
 <meta property='og:description' content="写在前面 在 Python Web 服务部署的话题里，Gunicorn 和 uWSGI 是绕不开的两个关键词。它们都是 WSGI 服务器，承担着相同的角色：把 HTTP 请求翻译成 Python 应用能理解的 WSGI 调用。但它们在实现语言、设计哲学、配置复杂度、社区现状上差异巨大。\n写过 Flask、Django 应用的开发者大多接触过其中一个，但很多人停留在&quot;gunicorn -w 4 app:app 跑起来&quot;或&quot;复制一份 uwsgi.ini 改改&quot;的层面，碰到下面这些问题就开始打问号：\nGunicorn 和 uWSGI 到底什么关系？为什么有人用前者、有人用后者？ 为什么 worker 数量推荐 2 × CPU + 1？两者的 worker 模型有什么区别？ sync / gthread / gevent 这些 worker class 到底差在哪？ uWSGI 的 emperor 模式、cheaper、master/worker 是什么？ 为什么所有官方文档都强调&quot;必须放在 nginx 后面&quot;？ --preload 加不加，到底有什么差别？lazy-apps 又是什么？ 服务死锁了，应该 kill 主进程发什么信号？ 2026 年了，新项目还该选 uWSGI 吗？ 这篇文章按&quot;基础概念、Gunicorn 篇、uWSGI 篇、深度对比、选型决策、生产部署、高频面试题&quot;的结构整理两个服务器的核心知识，所有事实分别对齐 Gunicorn 官方文档 与 uWSGI 官方文档，适合作为日常查阅和面试复习材料。\n">
@@ -517,73 +526,37 @@
 <li><strong>管理 worker 生命周期</strong>（进程池、崩溃重启、超时回收）</li>
 </ol>
 <p>层级架构图（WSGI 服务器与上下游的关系）：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span><span class="lnt">26
-</span><span class="lnt">27
-</span><span class="lnt">28
-</span><span class="lnt">29
-</span><span class="lnt">30
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│                          客户端（浏览器 / App）                        │
-</span></span><span class="line"><span class="cl">└──────────────────────────────┬──────────────────────────────────────┘
-</span></span><span class="line"><span class="cl">                               │ HTTPS 请求
-</span></span><span class="line"><span class="cl">                               ▼
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│  第 1 层：反向代理 / 负载均衡（nginx / HAProxy / 云 LB）                 │
-</span></span><span class="line"><span class="cl">│                                                                     │
-</span></span><span class="line"><span class="cl">│  职责：TLS 终止、静态文件、请求 buffer、限流、负载分发                     │
-</span></span><span class="line"><span class="cl">└──────────────────────────────┬──────────────────────────────────────┘
-</span></span><span class="line"><span class="cl">                               │ HTTP 或 uwsgi 协议
-</span></span><span class="line"><span class="cl">                               ▼
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│  第 2 层：WSGI 服务器（Gunicorn 或 uWSGI，二选一）                      │
-</span></span><span class="line"><span class="cl">│                                                                     │
-</span></span><span class="line"><span class="cl">│  职责：监听 socket → 管理 worker 进程池 → 将 HTTP 请求翻译为             │
-</span></span><span class="line"><span class="cl">│       (environ, start_response) → 调用应用 → 响应回写                  │
-</span></span><span class="line"><span class="cl">└──────────────────────────────┬──────────────────────────────────────┘
-</span></span><span class="line"><span class="cl">                               │ WSGI 调用（Python 函数调用）
-</span></span><span class="line"><span class="cl">                               ▼
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│  第 3 层：Python Web 应用（Flask / Django / Bottle）                   │
-</span></span><span class="line"><span class="cl">│                                                                     │
-</span></span><span class="line"><span class="cl">│  职责：路由、业务逻辑、模板渲染、调用后端服务                              │
-</span></span><span class="line"><span class="cl">└──────────────────────────────┬──────────────────────────────────────┘
-</span></span><span class="line"><span class="cl">                               │ 数据库 / 缓存 / 外部 API 调用
-</span></span><span class="line"><span class="cl">                               ▼
-</span></span><span class="line"><span class="cl">┌─────────────────────────────────────────────────────────────────────┐
-</span></span><span class="line"><span class="cl">│  第 4 层：后端依赖（PostgreSQL / Redis / 第三方 API / 消息队列）         │
-</span></span><span class="line"><span class="cl">└─────────────────────────────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>各层边界清晰：<strong>上游</strong>（nginx）负责安全和流量管控，<strong>WSGI 服务器</strong>负责进程管理和协议翻译，<strong>下游</strong>（应用）只关心业务逻辑。WSGI 服务器是中间的&quot;齿轮&quot;——上接 HTTP/uwsgi 协议，下接 Python callable。</p>
+<pre tabindex="0"><code>┌─────────────────────────────────────────────────────────────────────┐
+│                          客户端（浏览器 / App）                        │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │ HTTPS 请求
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  第 1 层：反向代理 / 负载均衡（nginx / HAProxy / 云 LB）                 │
+│                                                                     │
+│  职责：TLS 终止、静态文件、请求 buffer、限流、负载分发                     │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │ HTTP 或 uwsgi 协议
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  第 2 层：WSGI 服务器（Gunicorn 或 uWSGI，二选一）                      │
+│                                                                     │
+│  职责：监听 socket → 管理 worker 进程池 → 将 HTTP 请求翻译为             │
+│       (environ, start_response) → 调用应用 → 响应回写                  │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │ WSGI 调用（Python 函数调用）
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  第 3 层：Python Web 应用（Flask / Django / Bottle）                   │
+│                                                                     │
+│  职责：路由、业务逻辑、模板渲染、调用后端服务                              │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │ 数据库 / 缓存 / 外部 API 调用
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  第 4 层：后端依赖（PostgreSQL / Redis / 第三方 API / 消息队列）         │
+└─────────────────────────────────────────────────────────────────────┘
+</code></pre><p>各层边界清晰：<strong>上游</strong>（nginx）负责安全和流量管控，<strong>WSGI 服务器</strong>负责进程管理和协议翻译，<strong>下游</strong>（应用）只关心业务逻辑。WSGI 服务器是中间的&quot;齿轮&quot;——上接 HTTP/uwsgi 协议，下接 Python callable。</p>
 <p>Python 自带的 <code>wsgiref.simple_server</code> 也是一个 WSGI 服务器，但仅用于开发。生产环境需要 Gunicorn / uWSGI 这类支持多 worker、信号管理、超时回收的实现。</p>
 <h3 id="13-gunicorn-和-uwsgi-是两个-wsgi-服务器实现">1.3 Gunicorn 和 uWSGI 是两个 WSGI 服务器实现
 </h3><blockquote>
@@ -618,15 +591,8 @@
 <p>它们解决同一个问题——<strong>把 HTTP 请求翻译成 WSGI 调用</strong>——但走了不同的路。</p>
 <h3 id="13-部署架构里的位置">1.3 部署架构里的位置
 </h3><p>一个典型的 Python Web 应用上线，从客户端到代码大致经过这几层：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">客户端 ── HTTPS ── nginx（反向代理 + TLS 终止 + 静态文件） ──── HTTP / uwsgi 协议 ──── WSGI 服务器（Gunicorn 或 uWSGI 二选一）──── 调用 ──── 你的 Flask/Django 应用
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>WSGI 服务器处在第 3 层。它的职责是：</p>
+<pre tabindex="0"><code>客户端 ── HTTPS ── nginx（反向代理 + TLS 终止 + 静态文件） ──── HTTP / uwsgi 协议 ──── WSGI 服务器（Gunicorn 或 uWSGI 二选一）──── 调用 ──── 你的 Flask/Django 应用
+</code></pre><p>WSGI 服务器处在第 3 层。它的职责是：</p>
 <ul>
 <li>监听 socket（TCP 端口或 Unix socket）</li>
 <li>派生 worker 进程池</li>
@@ -707,19 +673,10 @@
   </tbody>
 </table></div>
 <p>典型架构里两者并存：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">客户端 → nginx → Gunicorn worker（处理 HTTP，快速返回）→ 发任务到 Redis
-</span></span><span class="line"><span class="cl">                                                            ↓
-</span></span><span class="line"><span class="cl">                                       Celery worker（从 Redis 取任务，后台执行）
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>Gunicorn worker 负责&quot;接请求、快速响应&quot;，Celery worker 负责&quot;后台跑耗时任务&quot;。不要把两者搞混。</p>
+<pre tabindex="0"><code>客户端 → nginx → Gunicorn worker（处理 HTTP，快速返回）→ 发任务到 Redis
+                                                            ↓
+                                       Celery worker（从 Redis 取任务，后台执行）
+</code></pre><p>Gunicorn worker 负责&quot;接请求、快速响应&quot;，Celery worker 负责&quot;后台跑耗时任务&quot;。不要把两者搞混。</p>
 <h3 id="16-一张图看懂选型差异速览">1.6 一张图看懂选型差异（速览）
 </h3><div class="table-wrapper"><table>
   <thead>
@@ -783,15 +740,8 @@
 </h2><h3 id="21-一句话定义">2.1 一句话定义
 </h3><p><code>Gunicorn</code>（Green Unicorn）是一个 Python WSGI HTTP Server，采用 <strong>pre-fork worker 模型</strong>：一个 arbiter（仲裁/主）进程负责管理一组 worker 进程，arbiter 不接触客户端 socket，所有请求都由 worker 处理。</p>
 <h3 id="22-它在-python-web-部署里的位置">2.2 它在 Python Web 部署里的位置
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">客户端 ── HTTPS ── nginx（反向代理 + TLS 终止 + 静态文件） ──── HTTP ──── Gunicorn（WSGI 服务器）──── 调用 ──── 你的 Flask/Django 应用
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><code>Gunicorn</code> 处在第 3 层。它的职责是：</p>
+</h3><pre tabindex="0"><code>客户端 ── HTTPS ── nginx（反向代理 + TLS 终止 + 静态文件） ──── HTTP ──── Gunicorn（WSGI 服务器）──── 调用 ──── 你的 Flask/Django 应用
+</code></pre><p><code>Gunicorn</code> 处在第 3 层。它的职责是：</p>
 <ul>
 <li>监听 socket（TCP 端口或 Unix socket）</li>
 <li>派生 worker 进程池</li>
@@ -990,38 +940,20 @@
       </tr>
   </tbody>
 </table></div>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">IO-bound：  CPU 空闲等着 ████████░░░░░░░░ IO 完成才继续
-</span></span><span class="line"><span class="cl">CPU-bound： CPU 一直满载  ████████████████ 没有等待
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>对 worker 选型的直接影响：</p>
+<pre tabindex="0"><code>IO-bound：  CPU 空闲等着 ████████░░░░░░░░ IO 完成才继续
+CPU-bound： CPU 一直满载  ████████████████ 没有等待
+</code></pre><p>对 worker 选型的直接影响：</p>
 <ul>
 <li>IO-bound → 用 <code>gevent</code>/<code>gthread</code>，单 worker 可并发处理多请求（等 IO 时切换到别的请求）</li>
 <li>CPU-bound → 用 <code>sync</code>，多进程各自跑满一个 CPU 核</li>
 </ul>
 <h3 id="401-pre-fork-是进程管理策略不是并发模型">4.0.1 pre-fork 是进程管理策略，不是并发模型
 </h3><p>一个常见误解是&quot;pre-fork = CPU-bound&quot;。实际上 <strong>pre-fork 只负责提前 fork 出 worker 进程池</strong>，是所有 worker 类型的基础架构层，与 IO/CPU 无关：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">pre-fork（进程管理层）← 所有 worker 类型都建立在这个基础上
-</span></span><span class="line"><span class="cl">  ├── sync worker     ← 进程内串行处理，适合 CPU-bound
-</span></span><span class="line"><span class="cl">  ├── gthread worker  ← 进程内线程池，适合混合负载
-</span></span><span class="line"><span class="cl">  └── gevent worker   ← 进程内协程，适合 IO-bound
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>你选 <code>-k sync/gthread/gevent</code> 决定的是 <strong>fork 出来的 worker 内部怎么处理并发</strong>，而 pre-fork 本身是中立的：</p>
+<pre tabindex="0"><code>pre-fork（进程管理层）← 所有 worker 类型都建立在这个基础上
+  ├── sync worker     ← 进程内串行处理，适合 CPU-bound
+  ├── gthread worker  ← 进程内线程池，适合混合负载
+  └── gevent worker   ← 进程内协程，适合 IO-bound
+</code></pre><p>你选 <code>-k sync/gthread/gevent</code> 决定的是 <strong>fork 出来的 worker 内部怎么处理并发</strong>，而 pre-fork 本身是中立的：</p>
 <ul>
 <li>pre-fork + sync = 每进程串行跑满 CPU → 所谓&quot;pre-fork 适合 CPU-bound&quot;</li>
 <li>pre-fork + gevent = 每进程内协程并发 → IO-bound 利器</li>
@@ -1485,23 +1417,12 @@
 <h2 id="10-uwsgi-进程模型与并发">10. uWSGI 进程模型与并发
 </h2><h3 id="101-master--worker-模型">10.1 master + worker 模型
 </h3><p>与 Gunicorn 类似，uWSGI 也用 master 进程管 worker：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">master 进程（可选，--master 启用）
-</span></span><span class="line"><span class="cl">  ├── worker 1（进程，可含多线程）
-</span></span><span class="line"><span class="cl">  ├── worker 2
-</span></span><span class="line"><span class="cl">  ├── worker 3
-</span></span><span class="line"><span class="cl">  └── worker 4
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>差异在于 uWSGI 的 master 功能更重——它还负责内置 cron、spooler、信号路由等。</p>
+<pre tabindex="0"><code>master 进程（可选，--master 启用）
+  ├── worker 1（进程，可含多线程）
+  ├── worker 2
+  ├── worker 3
+  └── worker 4
+</code></pre><p>差异在于 uWSGI 的 master 功能更重——它还负责内置 cron、spooler、信号路由等。</p>
 <h3 id="102-并发模式">10.2 并发模式
 </h3><div class="table-wrapper"><table>
   <thead>
@@ -1708,15 +1629,8 @@
 <h2 id="12-uwsgi-底层原理与协议">12. uWSGI 底层原理与协议
 </h2><h3 id="121-uwsgi-二进制协议">12.1 uwsgi 二进制协议
 </h3><p>uWSGI 定义了自己的二进制协议（全小写 <code>uwsgi</code>），用于 nginx ↔ uWSGI 之间通信。协议结构：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">[1 byte modifier1] [2 bytes datasize] [1 byte modifier2] [key-value pairs...]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>相比 HTTP 文本协议，uwsgi 协议的优势：</p>
+<pre tabindex="0"><code>[1 byte modifier1] [2 bytes datasize] [1 byte modifier2] [key-value pairs...]
+</code></pre><p>相比 HTTP 文本协议，uwsgi 协议的优势：</p>
 <ul>
 <li>解析更快（固定头部 + 预编码长度）</li>
 <li>减少 CPU 消耗（无需解析 HTTP header 文本）</li>

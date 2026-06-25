@@ -8,13 +8,22 @@
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="什么是 RAG：完整流程、常见实现、底层原理、常见坑与高频面试题">
 <meta property='og:description' content="写在前面 这两年 RAG（Retrieval-Augmented Generation，检索增强生成）基本已经成了大模型落地里出现频率最高的词之一。\n很多人会把它简单理解成：\n向量数据库 知识库问答 embedding 检索 给模型外挂记忆 这些理解都不算完全错，但都不够完整。\n如果先用一句话做一个总定义：\nRAG，即 Retrieval-Augmented Generation，是一种“先检索外部知识，再基于检索结果生成答案”的系统方法。\n这里最关键的是两点：\nRAG 不是单纯的检索系统 RAG 也不是单纯的生成系统 它本质上是一套把“知识供给”与“语言生成”组合起来的应用架构。\n所以这篇文章不只回答“RAG 是什么”，还会系统整理这些问题：\n一个完整的 RAG 到底分几步 常见实现方式有哪些 它底层为什么能工作 工程上最容易踩哪些坑 面试里最常被问什么 除了搭建，还应该怎么评估和优化 文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 RAG（Retrieval-Augmented Generation）、LLM（Large Language Model）、BM25（Best Matching 25）、ANN（Approximate Nearest Neighbor）、HNSW（Hierarchical Navigable Small World）、TF-IDF（Term Frequency-Inverse Document Frequency）、MRR（Mean Reciprocal Rank）、NDCG（Normalized Discounted Cumulative Gain）、FAISS（Facebook AI Similarity Search）、OCR（Optical Character Recognition）、PDF（Portable Document Format）、API（Application Programming Interface）。\n一、RAG 到底是什么 1.1 最直白的理解 可以先把 RAG 理解成：\n让模型在回答前，先去知识库里“查资料”。\n">
@@ -1979,31 +1988,16 @@
 </ul>
 <h3 id="77-一个可落地的-rag-评估闭环">7.7 一个可落地的 RAG 评估闭环
 </h3><p>可以把生产级 RAG 的评估闭环理解成：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span><span class="lnt">8
-</span><span class="lnt">9
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">flowchart TD
-</span></span><span class="line"><span class="cl">  A[&#34;收集真实问题&#34;] --&gt; B[&#34;标注标准答案和 golden chunk&#34;]
-</span></span><span class="line"><span class="cl">  B --&gt; C[&#34;离线跑评估&#34;]
-</span></span><span class="line"><span class="cl">  C --&gt; D[&#34;定位错误层级&#34;]
-</span></span><span class="line"><span class="cl">  D --&gt; E[&#34;针对性改数据、chunk、召回、排序或 prompt&#34;]
-</span></span><span class="line"><span class="cl">  E --&gt; F[&#34;和 baseline 对比&#34;]
-</span></span><span class="line"><span class="cl">  F --&gt; G[&#34;小流量上线&#34;]
-</span></span><span class="line"><span class="cl">  G --&gt; H[&#34;收集线上反馈和失败样本&#34;]
-</span></span><span class="line"><span class="cl">  H --&gt; I[&#34;回流评估集&#34;]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>这套闭环跑起来之后，RAG 优化才会从“凭感觉调参”变成“有证据地迭代”。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+  A[&#34;收集真实问题&#34;] --&gt; B[&#34;标注标准答案和 golden chunk&#34;]
+  B --&gt; C[&#34;离线跑评估&#34;]
+  C --&gt; D[&#34;定位错误层级&#34;]
+  D --&gt; E[&#34;针对性改数据、chunk、召回、排序或 prompt&#34;]
+  E --&gt; F[&#34;和 baseline 对比&#34;]
+  F --&gt; G[&#34;小流量上线&#34;]
+  G --&gt; H[&#34;收集线上反馈和失败样本&#34;]
+  H --&gt; I[&#34;回流评估集&#34;]
+</code></pre><p>这套闭环跑起来之后，RAG 优化才会从“凭感觉调参”变成“有证据地迭代”。</p>
 <h3 id="78-评估里最容易忽略的几件事">7.8 评估里最容易忽略的几件事
 </h3><h4 id="不要只看平均分">不要只看平均分
 </h4><p>平均分会掩盖关键问题。</p>

@@ -8,13 +8,22 @@
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题">
 <meta property='og:description' content="写在前面 最近在使用 Claude Code、Cursor、Ducc 这类命令行 / IDE 研发 Agent 时，&ldquo;Skills&quot;这个词出现得越来越频繁。\n很多人第一次接触 Skills，会把它和：\nPrompt 模板 System Prompt MCP（Model Context Protocol） Tools / Function Calling Agent / Subagent Slash Command Plugin 混为一谈。\n但 Skills 实际上是一个有明确边界的概念。\n如果用一句话先做总定义：\nSkills 是一种按需加载、可被模型自主发现并使用的&quot;任务方法包&rdquo;，它把&quot;做某一类任务的方法、流程、约束、参考资料&quot;封装成一组文件，让 Agent 在合适的时机自动取用。\n它解决的核心问题是：\n怎么把&quot;经验和方法&quot;喂给模型，而不是每次都靠用户在 prompt 里反复说 怎么避免一次性把所有方法塞进 system prompt，把上下文撑爆 怎么让&quot;团队最佳实践&quot;和&quot;工具能力&quot;一起被 Agent 复用 下面分十个部分，把 Skills 从概念到落地讲清楚。本文使用 Claude Code 的 Skills 实现作为例子，因为它是目前 Skills 形态最完整、最具代表性的实现。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 LLM、SOP、MCP、IDE、CLI、YAML、MD、DSL、SDK、SP（System Prompt）。\n目录 Skills 是什么 Skills 解决了什么问题 Skills 的基本结构 Skills 怎么使用 Skills 怎么开发 Skills 的底层原理 Skills 与 MCP、Tools、Subagent 的区别 Skills 的最佳实践 Skills 常见高频面试题 附录：进一步阅读 1. Skills 是什么 1.1 一句话定义 Skills 是 Agent 用的&quot;按需加载的方法书&quot;。\n">
@@ -644,25 +653,13 @@
 </ul>
 <h4 id="142-skills-里其实也有始终在线的部分--是元信息">1.4.2 Skills 里其实也有&quot;始终在线&quot;的部分 —— 是元信息
 </h4><p>Skills 整体是按需加载的，但<strong>每个 Skill 的 <code>name + description</code><strong>会被 Agent 启动时</strong>一次性扫进上下文</strong>，因为模型必须看得见这份&quot;目录&quot;才知道有哪些 Skill 可调。</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">[永远在线]                       [按需在线]
-</span></span><span class="line"><span class="cl">┌──────────────────┐            ┌──────────────────┐
-</span></span><span class="line"><span class="cl">│  CLAUDE.md 全文   │            │  SKILL.md 正文   │
-</span></span><span class="line"><span class="cl">│  Skills 目录索引  │  ←─ 命中 ─→ │  辅助文件        │
-</span></span><span class="line"><span class="cl">│  (name+desc 摘要) │             │                  │
-</span></span><span class="line"><span class="cl">└──────────────────┘            └──────────────────┘
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>这也是为什么前面反复强调 <strong><code>description</code> 写得准比正文写得多更重要</strong> —— 它是常驻在上下文里的，写得越冗余越浪费，写得越精准检索越准。</p>
+<pre tabindex="0"><code>[永远在线]                       [按需在线]
+┌──────────────────┐            ┌──────────────────┐
+│  CLAUDE.md 全文   │            │  SKILL.md 正文   │
+│  Skills 目录索引  │  ←─ 命中 ─→ │  辅助文件        │
+│  (name+desc 摘要) │             │                  │
+└──────────────────┘            └──────────────────┘
+</code></pre><p>这也是为什么前面反复强调 <strong><code>description</code> 写得准比正文写得多更重要</strong> —— 它是常驻在上下文里的，写得越冗余越浪费，写得越精准检索越准。</p>
 <h4 id="143-一个工程细节skill-命中后会粘在当前会话">1.4.3 一个工程细节：Skill 命中后会&quot;粘&quot;在当前会话
 </h4><p>官方文档对这件事有非常精确的定义（<code>Skill content lifecycle</code>）：</p>
 <blockquote>
@@ -746,75 +743,38 @@ Claude Code 支持在 frontmatter 里加 <code>disable-model-invocation: true</c
 <hr>
 <h2 id="3-skills-的基本结构">3. Skills 的基本结构
 </h2><p>以 Claude Code 的 Skills 为例，一个 Skill 的标准结构如下。这里把它放进所属的 <strong>skills 根目录</strong> 中，可以同时看清楚&quot;上一层级&quot;和&quot;同级 Skill&quot;的关系：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span><span class="lnt">19
-</span><span class="lnt">20
-</span><span class="lnt">21
-</span><span class="lnt">22
-</span><span class="lnt">23
-</span><span class="lnt">24
-</span><span class="lnt">25
-</span><span class="lnt">26
-</span><span class="lnt">27
-</span><span class="lnt">28
-</span><span class="lnt">29
-</span><span class="lnt">30
-</span><span class="lnt">31
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">.claude/                              # ← 上一层级：Claude Code 的项目/用户配置目录
-</span></span><span class="line"><span class="cl">├── settings.json                     #   配置文件（与 Skills 同级，不是 Skill）
-</span></span><span class="line"><span class="cl">└── skills/                           # ← 上一层级：所有 Skill 的根目录（自动发现）
-</span></span><span class="line"><span class="cl">    │
-</span></span><span class="line"><span class="cl">    ├── my-skill/                     # ← 当前 Skill：本节示例
-</span></span><span class="line"><span class="cl">    │   ├── SKILL.md                  #   入口文件，必需
-</span></span><span class="line"><span class="cl">    │   ├── reference.md              #   参考资料（可选）
-</span></span><span class="line"><span class="cl">    │   ├── examples/                 #   示例（可选）
-</span></span><span class="line"><span class="cl">    │   │   ├── good.md
-</span></span><span class="line"><span class="cl">    │   │   └── bad.md
-</span></span><span class="line"><span class="cl">    │   ├── templates/                #   模板文件（可选）
-</span></span><span class="line"><span class="cl">    │   │   └── pr-template.md
-</span></span><span class="line"><span class="cl">    │   └── scripts/                  #   辅助脚本（可选）
-</span></span><span class="line"><span class="cl">    │       └── check.sh
-</span></span><span class="line"><span class="cl">    │
-</span></span><span class="line"><span class="cl">    ├── code-review/                  # ← 同级 Skill：每个目录就是一个独立 Skill
-</span></span><span class="line"><span class="cl">    │   └── SKILL.md
-</span></span><span class="line"><span class="cl">    │
-</span></span><span class="line"><span class="cl">    ├── git-commit/                   # ← 同级 Skill
-</span></span><span class="line"><span class="cl">    │   ├── SKILL.md
-</span></span><span class="line"><span class="cl">    │   ├── reference/
-</span></span><span class="line"><span class="cl">    │   │   └── conventional-commits.md
-</span></span><span class="line"><span class="cl">    │   └── examples/
-</span></span><span class="line"><span class="cl">    │       ├── good.md
-</span></span><span class="line"><span class="cl">    │       └── bad.md
-</span></span><span class="line"><span class="cl">    │
-</span></span><span class="line"><span class="cl">    └── sql-review/                   # ← 同级 Skill
-</span></span><span class="line"><span class="cl">        ├── SKILL.md
-</span></span><span class="line"><span class="cl">        └── reference/
-</span></span><span class="line"><span class="cl">            ├── index-rules.md
-</span></span><span class="line"><span class="cl">            └── mysql-pitfalls.md
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>几个关键约定：</p>
+<pre tabindex="0"><code>.claude/                              # ← 上一层级：Claude Code 的项目/用户配置目录
+├── settings.json                     #   配置文件（与 Skills 同级，不是 Skill）
+└── skills/                           # ← 上一层级：所有 Skill 的根目录（自动发现）
+    │
+    ├── my-skill/                     # ← 当前 Skill：本节示例
+    │   ├── SKILL.md                  #   入口文件，必需
+    │   ├── reference.md              #   参考资料（可选）
+    │   ├── examples/                 #   示例（可选）
+    │   │   ├── good.md
+    │   │   └── bad.md
+    │   ├── templates/                #   模板文件（可选）
+    │   │   └── pr-template.md
+    │   └── scripts/                  #   辅助脚本（可选）
+    │       └── check.sh
+    │
+    ├── code-review/                  # ← 同级 Skill：每个目录就是一个独立 Skill
+    │   └── SKILL.md
+    │
+    ├── git-commit/                   # ← 同级 Skill
+    │   ├── SKILL.md
+    │   ├── reference/
+    │   │   └── conventional-commits.md
+    │   └── examples/
+    │       ├── good.md
+    │       └── bad.md
+    │
+    └── sql-review/                   # ← 同级 Skill
+        ├── SKILL.md
+        └── reference/
+            ├── index-rules.md
+            └── mysql-pitfalls.md
+</code></pre><p>几个关键约定：</p>
 <ul>
 <li><strong><code>.claude/skills/</code> 是 Skill 的根目录</strong>：你自己创建 Skill 时主要放在两个地方 —— 项目级 <code>&lt;project&gt;/.claude/skills/</code>（随仓库走，团队共享）或用户级 <code>~/.claude/skills/</code>（仅你本机生效）。此外 Claude Code 还会自动加载<strong>内置 Skill</strong> 和<strong>已安装插件提供的 Skill</strong>，完整四级作用域见 <a class="link" href="#41-skills-%e7%9a%84%e5%ad%98%e6%94%be%e4%bd%8d%e7%bd%ae" >4.1 节</a>。</li>
 <li><strong>每个 Skill 占一个独立子目录</strong>：目录名就是 Skill 的 slug，必须与 SKILL.md 里 frontmatter 的 <code>name:</code> 字段保持一致（也就是 <code>/code-review</code>、<code>/git-commit</code> 等 Slash Command 的名字）。</li>
@@ -1073,15 +1033,8 @@ Claude Code 支持在 frontmatter 里加 <code>disable-model-invocation: true</c
 <p>整个过程用户不需要知道 Skill 的存在。</p>
 <p><strong>方式二：用户显式调用</strong></p>
 <p>用户直接以 <code>/skill-name</code> 的方式触发。例如：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">/write-pr-description
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>这种方式下：</p>
+<pre tabindex="0"><code>/write-pr-description
+</code></pre><p>这种方式下：</p>
 <ul>
 <li>Skill 一定会被加载</li>
 <li>不依赖模型对 description 的匹配</li>
@@ -1089,19 +1042,10 @@ Claude Code 支持在 frontmatter 里加 <code>disable-model-invocation: true</c
 </ul>
 <h3 id="43-一个最直观的使用流程">4.3 一个最直观的使用流程
 </h3><p>假设项目下有这样一个 Skill：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">.claude/skills/
-</span></span><span class="line"><span class="cl">└── code-review/
-</span></span><span class="line"><span class="cl">    └── SKILL.md
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><code>SKILL.md</code> 写着：当用户要做 code review 时，按&quot;先读改动、再分维度、最后给优先级&quot;的流程做。</p>
+<pre tabindex="0"><code>.claude/skills/
+└── code-review/
+    └── SKILL.md
+</code></pre><p><code>SKILL.md</code> 写着：当用户要做 code review 时，按&quot;先读改动、再分维度、最后给优先级&quot;的流程做。</p>
 <p>那么任意以下输入都可能触发它：</p>
 <ul>
 <li>&ldquo;帮我 review 一下这个 PR&rdquo;</li>
@@ -1503,27 +1447,14 @@ Claude Code 支持在 frontmatter 里加 <code>disable-model-invocation: true</c
 </h5><blockquote>
 <p>Skill 里 bundled 的脚本（<code>scripts/foo.py</code>）从来都不是 Tool。它只是一个普通文件，由 <code>Bash</code> 这个 Tool 去执行它。</p></blockquote>
 <p>模型跑一个 Skill 脚本时，真实的调用链是：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span><span class="lnt">7
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="err">模型决定要跑</span> <span class="n">scripts</span><span class="o">/</span><span class="n">check</span><span class="o">.</span><span class="n">py</span>
-</span></span><span class="line"><span class="cl">    <span class="err">↓</span>
-</span></span><span class="line"><span class="cl"><span class="err">模型发出一次</span> <span class="n">tool_use</span><span class="err">，调用的是</span> <span class="n">Bash</span> <span class="err">这个</span> <span class="n">Tool</span>
-</span></span><span class="line"><span class="cl">    <span class="err">↓</span>
-</span></span><span class="line"><span class="cl"><span class="n">Bash</span> <span class="n">Tool</span> <span class="err">执行命令</span> <span class="err">`</span><span class="n">python</span> <span class="n">scripts</span><span class="o">/</span><span class="n">check</span><span class="o">.</span><span class="n">py</span><span class="err">`</span>
-</span></span><span class="line"><span class="cl">    <span class="err">↓</span>
-</span></span><span class="line"><span class="cl"><span class="err">脚本</span> <span class="n">stdout</span> <span class="err">作为</span> <span class="n">tool_result</span> <span class="err">回到模型</span>
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>整条链路里<strong>只有一个 Tool 参与（Bash）</strong>。脚本只是 Bash 的&quot;参数&quot;，<strong>不是和 Bash 平级的另一个 Tool</strong>。</p>
+<pre tabindex="0"><code>模型决定要跑 scripts/check.py
+    ↓
+模型发出一次 tool_use，调用的是 Bash 这个 Tool
+    ↓
+Bash Tool 执行命令 `python scripts/check.py`
+    ↓
+脚本 stdout 作为 tool_result 回到模型
+</code></pre><p>整条链路里<strong>只有一个 Tool 参与（Bash）</strong>。脚本只是 Bash 的&quot;参数&quot;，<strong>不是和 Bash 平级的另一个 Tool</strong>。</p>
 <h5 id="严格对比tool-vs-skill-里的脚本">严格对比：Tool vs Skill 里的脚本
 </h5><div class="table-wrapper"><table>
   <thead>
@@ -1761,49 +1692,25 @@ Claude Code 支持在 frontmatter 里加 <code>disable-model-invocation: true</c
 <li>在 Claude API / claude.ai 里：&ldquo;Skill 脚本跑在哪&rdquo; = &ldquo;code execution tool 跑在哪&rdquo; = <strong>Anthropic 沙箱</strong></li>
 </ul>
 <h5 id="一张图把tool-vs-skill-代码的运行位置对齐">一张图把&quot;Tool vs Skill 代码&quot;的运行位置对齐
-</h5><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="err">┌────────────────────────────────────────────────────────────────┐</span>
-</span></span><span class="line"><span class="cl"><span class="err">│</span> <span class="err">模型（云端推理服务）</span>                                             <span class="err">│</span>
-</span></span><span class="line"><span class="cl"><span class="err">│</span>   <span class="err">↓</span> <span class="n">tool_use</span>                                                    <span class="err">│</span>
-</span></span><span class="line"><span class="cl"><span class="err">└─────────────────────────────────┬───────────────────────────────┘</span>
-</span></span><span class="line"><span class="cl">                                  <span class="err">│</span>
-</span></span><span class="line"><span class="cl">       <span class="err">┌──────────────┬───────────┼───────────┬──────────────┐</span>
-</span></span><span class="line"><span class="cl">       <span class="err">▼</span>              <span class="err">▼</span>           <span class="err">▼</span>           <span class="err">▼</span>              <span class="err">▼</span>
-</span></span><span class="line"><span class="cl"><span class="err">┌──────────┐</span>   <span class="err">┌──────────┐</span>  <span class="err">┌─────────┐</span>  <span class="err">┌─────────┐</span>  <span class="err">┌─────────┐</span>
-</span></span><span class="line"><span class="cl"><span class="err">│</span> <span class="err">本地函数</span>  <span class="err">│</span>   <span class="err">│</span> <span class="n">HTTP</span> <span class="n">API</span> <span class="err">│</span>  <span class="err">│</span>  <span class="n">MCP</span>    <span class="err">│</span>  <span class="err">│</span> <span class="err">内置</span>    <span class="err">│</span>  <span class="err">│</span> <span class="err">沙箱</span> <span class="n">VM</span> <span class="err">│</span>
-</span></span><span class="line"><span class="cl"><span class="err">│</span> <span class="k">tool</span>      <span class="err">│</span>   <span class="err">│</span> <span class="k">tool</span>     <span class="err">│</span>  <span class="err">│</span> <span class="n">server</span>  <span class="err">│</span>  <span class="err">│</span> <span class="k">tool</span>    <span class="err">│</span>  <span class="err">│</span>         <span class="err">│</span>
-</span></span><span class="line"><span class="cl"><span class="err">│</span>           <span class="err">│</span>   <span class="err">│</span>          <span class="err">│</span>  <span class="err">│</span> <span class="k">tool</span>    <span class="err">│</span>  <span class="err">│</span> <span class="p">(</span><span class="n">Bash</span><span class="p">)</span> <span class="err">│</span>  <span class="err">│</span>         <span class="err">│</span>
-</span></span><span class="line"><span class="cl"><span class="err">│</span> <span class="n">agent</span> <span class="err">进</span>  <span class="err">│</span>   <span class="err">│</span> <span class="err">远程服务</span> <span class="err">│</span>  <span class="err">│</span> <span class="err">独立进程│</span>  <span class="err">│</span> <span class="n">CLI</span> <span class="err">进程│</span>  <span class="err">│</span><span class="n">Anthropic</span><span class="err">│</span>
-</span></span><span class="line"><span class="cl"><span class="err">│</span> <span class="err">程内</span>      <span class="err">│</span>   <span class="err">│</span> <span class="err">器</span>       <span class="err">│</span>  <span class="err">│</span> <span class="p">(</span><span class="err">本</span><span class="o">/</span><span class="err">远</span><span class="p">)</span> <span class="err">│</span>  <span class="err">│</span>         <span class="err">│</span>  <span class="err">│</span> <span class="err">托管</span>    <span class="err">│</span>
-</span></span><span class="line"><span class="cl"><span class="err">└──────────┘</span>   <span class="err">└──────────┘</span>  <span class="err">└─────────┘</span>  <span class="err">└────┬────┘</span>  <span class="err">└────┬────┘</span>
-</span></span><span class="line"><span class="cl">                                               <span class="err">│</span>            <span class="err">│</span>
-</span></span><span class="line"><span class="cl">                                  <span class="n">Skill</span> <span class="err">脚本附在这里</span> <span class="err">───────┘</span>
-</span></span><span class="line"><span class="cl">                                  <span class="err">（</span><span class="n">Skill</span> <span class="err">没有自己的运行进程，</span>
-</span></span><span class="line"><span class="cl">                                   <span class="err">它是某个</span> <span class="n">Tool</span> <span class="err">的</span><span class="s2">&#34;参数&#34;</span><span class="err">）</span>
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h5 id="为什么这个区分在-agent-开发里很重要">为什么这个区分在 agent 开发里很重要
+</h5><pre tabindex="0"><code>┌────────────────────────────────────────────────────────────────┐
+│ 模型（云端推理服务）                                             │
+│   ↓ tool_use                                                    │
+└─────────────────────────────────┬───────────────────────────────┘
+                                  │
+       ┌──────────────┬───────────┼───────────┬──────────────┐
+       ▼              ▼           ▼           ▼              ▼
+┌──────────┐   ┌──────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐
+│ 本地函数  │   │ HTTP API │  │  MCP    │  │ 内置    │  │ 沙箱 VM │
+│ tool      │   │ tool     │  │ server  │  │ tool    │  │         │
+│           │   │          │  │ tool    │  │ (Bash) │  │         │
+│ agent 进  │   │ 远程服务 │  │ 独立进程│  │ CLI 进程│  │Anthropic│
+│ 程内      │   │ 器       │  │ (本/远) │  │         │  │ 托管    │
+└──────────┘   └──────────┘  └─────────┘  └────┬────┘  └────┬────┘
+                                               │            │
+                                  Skill 脚本附在这里 ───────┘
+                                  （Skill 没有自己的运行进程，
+                                   它是某个 Tool 的&#34;参数&#34;）
+</code></pre><h5 id="为什么这个区分在-agent-开发里很重要">为什么这个区分在 agent 开发里很重要
 </h5><p><strong>1. 决定了 Skill 能不能跨 surface</strong></p>
 <p>如果你的 Skill 脚本依赖：</p>
 <ul>
@@ -2649,23 +2556,12 @@ Claude Code 支持在 frontmatter 里加 <code>disable-model-invocation: true</c
 <h4 id="626-渐进式披露是-react-循环里的一个子行为">6.2.6 渐进式披露是 ReAct 循环里的一个子行为
 </h4><p>渐进式披露不是独立的 Agent 范式，而是<strong>ReAct 循环里的一个子行为</strong>。</p>
 <p>模型在 ReAct 的 Thought 阶段判断需要某个 Skill，然后在 Action 阶段用 bash 读取 SKILL.md——&ldquo;读文件&quot;本身就是一次 tool call，文件内容作为 Observation 返回，模型再基于这份内容决定下一步：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">Thought: 这个任务需要 code-review skill
-</span></span><span class="line"><span class="cl">Action: bash(&#34;cat .claude/skills/code-review/SKILL.md&#34;)
-</span></span><span class="line"><span class="cl">Observation: [SKILL.md 完整内容]
-</span></span><span class="line"><span class="cl">Thought: 按照 skill 指引，我应该先检查...
-</span></span><span class="line"><span class="cl">Action: [真正执行任务的工具调用]
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p>换句话说：渐进式披露 = 把&quot;获取完整工具说明&quot;本身也作为 ReAct 循环里的一个 Action，而不是把所有说明预先塞进 system prompt。它是在 ReAct 框架内做的上下文管理优化，而不是一种新的 Agent 模式。</p>
+<pre tabindex="0"><code>Thought: 这个任务需要 code-review skill
+Action: bash(&#34;cat .claude/skills/code-review/SKILL.md&#34;)
+Observation: [SKILL.md 完整内容]
+Thought: 按照 skill 指引，我应该先检查...
+Action: [真正执行任务的工具调用]
+</code></pre><p>换句话说：渐进式披露 = 把&quot;获取完整工具说明&quot;本身也作为 ReAct 循环里的一个 Action，而不是把所有说明预先塞进 system prompt。它是在 ReAct 框架内做的上下文管理优化，而不是一种新的 Agent 模式。</p>
 <h4 id="627-一个关键澄清多轮循环中挑选的表述">6.2.7 一个关键澄清：&ldquo;多轮循环中挑选&quot;的表述
 </h4><p>严格来说，Skill 的选择发生在<strong>每一轮独立决策</strong>，而非&quot;跨多轮演进&rdquo;：</p>
 <ul>

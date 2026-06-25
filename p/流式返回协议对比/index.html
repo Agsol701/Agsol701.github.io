@@ -1,28 +1,37 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
     <head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="流式返回协议对比 概述 流式返回（Streaming Response）是指服务端将数据分块逐步发送给客户端，而不是等待全部处理完成后一次性返回。这种方式特别适合长耗时任务、实时数据推送等场景。\n常见流式协议 1. SSE (Server-Sent Events) 基本信息 协议类型：基于 HTTP 的单向推送协议 标准：W3C HTML5 标准 数据格式：纯文本，每行以 data: 开头 传输方式：长连接 请求示例 1 2 3 4 GET /stream HTTP/1.1 Host: example.com Accept: text/event-stream Cache-Control: no-cache 响应示例 1 2 3 4 5 6 7 8 HTTP/1.1 200 OK Content-Type: text/event-stream Cache-Control: no-cache Connection: keep-alive data: {&#34;message&#34;: &#34;Hello&#34;} data: {&#34;message&#34;: &#34;World&#34;} data: {&#34;message&#34;: &#34;!&#34;} 特点 特性 说明 方向 服务端 → 客户端（单向） 重连 自动重连，支持 Last-Event-ID 编码 UTF-8 纯文本 事件类型 支持自定义事件类型 event: 浏览器支持 原生支持（除 IE） 优点 实现简单，基于标准 HTTP 浏览器原生支持，无需额外库 自动重连机制 文本格式，易于调试 缺点 单向通信，客户端无法主动发送数据 只支持文本，二进制数据需编码 请求大小限制（GET 请求） 适用场景 实时通知、消息推送 聊天应用（服务端推送） 实时数据更新（股票、日志） AI 对话流式输出 2. WebSocket 基本信息 协议类型：全双工通信协议 标准：RFC 6455 数据格式：二进制或文本 传输方式：TCP 长连接 握手示例 1 2 3 4 5 6 GET /chat HTTP/1.1 Host: example.com Upgrade: websocket Connection: Upgrade Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw== Sec-WebSocket-Version: 13 帧格式 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 0 1 2 3 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 +-+-+-+-+-------+-+-------------+-------------------------------+ |F|R|R|R| opcode|M| Payload len | Extended payload length | |I|S|S|S| (4) |A| (7) | (16/64) | |N|V|V|V| |S| | (if payload len==126/127) | | |1|2|3| |K| | | +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - + | Extended payload length continued, if payload len == 127 | + - - - - - - - - - - - - - - - +-------------------------------+ | |Masking-key, if MASK set to 1 | +-------------------------------+-------------------------------+ | Masking-key (continued) | Payload Data | +-------------------------------- - - - - - - - - - - - - - - - + : Payload Data continued ... : + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - + | Payload Data continued ... | +---------------------------------------------------------------+ 特点 特性 说明 方向 双向全双工 连接 单一 TCP 连接 开销 低（头部仅 2-14 字节） 数据类型 文本/二进制 子协议 支持 STOMP、MQTT 等 优点 双向实时通信 低延迟、低开销 支持二进制数据 可扩展子协议 缺点 需要维护连接状态 需要处理心跳和重连 代理服务器可能不支持 实现相对复杂 适用场景 实时聊天应用 在线协作（多人编辑） 实时游戏 股票/交易行情推送 3. HTTP Chunked Transfer Encoding 基本信息 协议类型：HTTP/1.1 传输编码 标准：RFC 7230 数据格式：分块传输 传输方式：HTTP 长连接 响应示例 1 2 3 4 5 6 7 8 9 10 11 12 HTTP/1.1 200 OK Content-Type: application/json Transfer-Encoding: chunked 4\\r\\n Hell\\r\\n 6\\r\\n o Worl\\r\\n 2\\r\\n d!\\r\\n 0\\r\\n \\r\\n 特点 特性 说明 方向 服务端 → 客户端 分块 每块前标注大小（十六进制） 结束 0 长度块表示结束 兼容性 HTTP/1.1 标准 优点 标准协议，广泛支持 无需预先知道内容长度 可用于大文件传输 缺点 单向传输 客户端断开后服务端可能继续处理 格式相对复杂 适用场景 大文件下载 动态生成内容 API 流式响应（如 OpenAI API） 4. gRPC Streaming 基本信息 协议类型：基于 HTTP/2 的 RPC 框架 标准：gRPC Protocol 数据格式：Protocol Buffers 传输方式：HTTP/2 多路复用 Proto 定义 1 2 3 4 5 6 7 8 9 10 service ChatService { // 客户端流式 rpc SendMessage (stream Message) returns (Response); // 服务端流式 rpc GetMessages (Request) returns (stream Message); // 双向流式 rpc Chat (stream Message) returns (stream Message); } 特点 特性 说明 方向 单向/双向流式 协议 HTTP/2 序列化 Protocol Buffers 多路复用 单连接多流 优点 高性能（二进制、HTTP/2） 强类型（IDL 定义） 支持多种流式模式 内置负载均衡、认证 缺点 学习曲线较陡 需要代码生成 调试相对困难 浏览器支持需 gRPC-Web 适用场景 微服务间通信 高性能 API 需要强类型的流式接口 多语言环境 5. MQTT 基本信息 协议类型：发布/订阅消息协议 标准：ISO/IEC 20922 (MQTT 3.1.1) 数据格式：二进制 传输方式：TCP 消息格式 1 2 3 4 5 6 Fixed Header (1-2 bytes) └─ Message Type + Flags Variable Header (0-4 bytes) └─ Topic Name / Packet Identifier Payload (0 bytes or more) └─ Application Data 特点 特性 说明 模式 发布/订阅 QoS 3 级（0/1/2） 开销 极小（最小 2 字节） 连接 持久会话 优点 超低开销 QoS 保证 离线消息支持 适合 IoT 场景 缺点 非标准 HTTP 需要代理服务器 不适合浏览器直接使用 适用场景 IoT 设备通信 传感器数据采集 实时监控 消息队列 6. Server-Sent Events (SSE) - 补充 Python Flask 实现 1 2 3 4 5 6 7 8 9 10 11 from flask import Flask, Response app = Flask(__name__) @app.route(&#39;/stream&#39;) def stream(): def generate(): for i in range(10): yield f&#34;data: {i}\\n\\n&#34; time.sleep(1) return Response(generate(), mimetype=&#39;text/event-stream&#39;) JavaScript 客户端 1 2 3 4 5 6 7 8 9 const eventSource = new EventSource(&#39;/stream&#39;); eventSource.onmessage = (event) =&gt; { console.log(event.data); }; eventSource.onerror = (error) =&gt; { console.error(&#39;Connection error:&#39;, error); }; 协议对比总结 对比表 协议 方向 协议层 数据格式 浏览器支持 复杂度 适用场景 SSE 单向 HTTP 文本 ✅ 原生 ⭐ 低 实时推送、AI 对话 WebSocket 双向 TCP 文本/二进制 ✅ 原生 ⭐⭐⭐ 高 实时聊天、协作 Chunked 单向 HTTP 任意 ✅ 原生 ⭐⭐ 中 大文件、API 流式 gRPC 单向/双向 HTTP/2 Protobuf ❌ 需 gRPC-Web ⭐⭐⭐⭐ 很高 微服务、高性能 API MQTT 发布/订阅 TCP 二进制 ❌ 需 MQTT.js ⭐⭐ 中 IoT、传感器 选择建议 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 需要双向通信？ ┌────┴────┐ 是 否 │ │ WebSocket ┌───┴───┐ │ 需要高性能/强类型？ │ ┌───┴───┐ │ 是 否 │ │ │ gRPC SSE Chunked │ 浏览器原生？ │ ┌────┴────┐ 是 否 │ │ SSE Chunked 客户端断开行为对比 协议 客户端断开后服务端行为 检测时机 SSE 立即终止（下次 yield 失败） 写入时 WebSocket 立即终止（连接关闭） 写入/读取时 Chunked 立即终止（下次 chunk 失败） 写入时 gRPC 立即终止（流关闭） 写入/读取时 MQTT 会话保留，离线消息存储 连接断开时 最佳实践 1. 连接管理 实现心跳机制检测连接状态 处理异常断开和自动重连 设置合理的超时时间 2. 错误处理 1 2 3 4 5 6 try: for data in stream_generator(): yield data except (ConnectionError, BrokenPipeError): logger.info(&#34;Client disconnected&#34;) # 清理资源 3. 性能优化 使用缓冲区减少写入次数 控制数据块大小 考虑压缩（如 gzip） 4. 安全性 使用 HTTPS/WSS 实现认证和授权 防止 DDoS 攻击 参考资源 SSE 规范 WebSocket 规范 gRPC 文档 MQTT 规范 HTTP/1.1 规范 核心概念解释 长连接 vs 短连接 短连接（Short Connection） 定义：每次通信都需要建立新的连接，通信完成后立即关闭连接。\n">
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="流式返回协议对比 概述 流式返回（Streaming Response）是指服务端将数据分块逐步发送给客户端，而不是等待全部处理完成后一次性返回。这种方式特别适合长耗时任务、实时数据推送等场景。\n常见流式协议 1. SSE (Server-Sent Events) 基本信息 协议类型：基于 HTTP 的单向推送协议 标准：W3C HTML5 标准 数据格式：纯文本，每行以 data: 开头 传输方式：长连接 请求示例 1 2 3 4 GET /stream HTTP/1.1 Host: example.com Accept: text/event-stream Cache-Control: no-cache 响应示例 1 2 3 4 5 6 7 8 HTTP/1.1 200 OK Content-Type: text/event-stream Cache-Control: no-cache Connection: keep-alive data: {&#34;message&#34;: &#34;Hello&#34;} data: {&#34;message&#34;: &#34;World&#34;} data: {&#34;message&#34;: &#34;!&#34;} 特点 特性 说明 方向 服务端 → 客户端（单向） 重连 自动重连，支持 Last-Event-ID 编码 UTF-8 纯文本 事件类型 支持自定义事件类型 event: 浏览器支持 原生支持（除 IE） 优点 实现简单，基于标准 HTTP 浏览器原生支持，无需额外库 自动重连机制 文本格式，易于调试 缺点 单向通信，客户端无法主动发送数据 只支持文本，二进制数据需编码 请求大小限制（GET 请求） 适用场景 实时通知、消息推送 聊天应用（服务端推送） 实时数据更新（股票、日志） AI 对话流式输出 2. WebSocket 基本信息 协议类型：全双工通信协议 标准：RFC 6455 数据格式：二进制或文本 传输方式：TCP 长连接 握手示例 1 2 3 4 5 6 GET /chat HTTP/1.1 Host: example.com Upgrade: websocket Connection: Upgrade Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw== Sec-WebSocket-Version: 13 帧格式 0 1 2 3 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 +-+-+-+-+-------+-+-------------+-------------------------------+ |F|R|R|R| opcode|M| Payload len | Extended payload length | |I|S|S|S| (4) |A| (7) | (16/64) | |N|V|V|V| |S| | (if payload len==126/127) | | |1|2|3| |K| | | +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - + | Extended payload length continued, if payload len == 127 | + - - - - - - - - - - - - - - - +-------------------------------+ | |Masking-key, if MASK set to 1 | +-------------------------------+-------------------------------+ | Masking-key (continued) | Payload Data | +-------------------------------- - - - - - - - - - - - - - - - + : Payload Data continued ... : + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - + | Payload Data continued ... | +---------------------------------------------------------------+ 特点 特性 说明 方向 双向全双工 连接 单一 TCP 连接 开销 低（头部仅 2-14 字节） 数据类型 文本/二进制 子协议 支持 STOMP、MQTT 等 优点 双向实时通信 低延迟、低开销 支持二进制数据 可扩展子协议 缺点 需要维护连接状态 需要处理心跳和重连 代理服务器可能不支持 实现相对复杂 适用场景 实时聊天应用 在线协作（多人编辑） 实时游戏 股票/交易行情推送 3. HTTP Chunked Transfer Encoding 基本信息 协议类型：HTTP/1.1 传输编码 标准：RFC 7230 数据格式：分块传输 传输方式：HTTP 长连接 响应示例 1 2 3 4 5 6 7 8 9 10 11 12 HTTP/1.1 200 OK Content-Type: application/json Transfer-Encoding: chunked 4\\r\\n Hell\\r\\n 6\\r\\n o Worl\\r\\n 2\\r\\n d!\\r\\n 0\\r\\n \\r\\n 特点 特性 说明 方向 服务端 → 客户端 分块 每块前标注大小（十六进制） 结束 0 长度块表示结束 兼容性 HTTP/1.1 标准 优点 标准协议，广泛支持 无需预先知道内容长度 可用于大文件传输 缺点 单向传输 客户端断开后服务端可能继续处理 格式相对复杂 适用场景 大文件下载 动态生成内容 API 流式响应（如 OpenAI API） 4. gRPC Streaming 基本信息 协议类型：基于 HTTP/2 的 RPC 框架 标准：gRPC Protocol 数据格式：Protocol Buffers 传输方式：HTTP/2 多路复用 Proto 定义 1 2 3 4 5 6 7 8 9 10 service ChatService { // 客户端流式 rpc SendMessage (stream Message) returns (Response); // 服务端流式 rpc GetMessages (Request) returns (stream Message); // 双向流式 rpc Chat (stream Message) returns (stream Message); } 特点 特性 说明 方向 单向/双向流式 协议 HTTP/2 序列化 Protocol Buffers 多路复用 单连接多流 优点 高性能（二进制、HTTP/2） 强类型（IDL 定义） 支持多种流式模式 内置负载均衡、认证 缺点 学习曲线较陡 需要代码生成 调试相对困难 浏览器支持需 gRPC-Web 适用场景 微服务间通信 高性能 API 需要强类型的流式接口 多语言环境 5. MQTT 基本信息 协议类型：发布/订阅消息协议 标准：ISO/IEC 20922 (MQTT 3.1.1) 数据格式：二进制 传输方式：TCP 消息格式 Fixed Header (1-2 bytes) └─ Message Type + Flags Variable Header (0-4 bytes) └─ Topic Name / Packet Identifier Payload (0 bytes or more) └─ Application Data 特点 特性 说明 模式 发布/订阅 QoS 3 级（0/1/2） 开销 极小（最小 2 字节） 连接 持久会话 优点 超低开销 QoS 保证 离线消息支持 适合 IoT 场景 缺点 非标准 HTTP 需要代理服务器 不适合浏览器直接使用 适用场景 IoT 设备通信 传感器数据采集 实时监控 消息队列 6. Server-Sent Events (SSE) - 补充 Python Flask 实现 1 2 3 4 5 6 7 8 9 10 11 from flask import Flask, Response app = Flask(__name__) @app.route(&#39;/stream&#39;) def stream(): def generate(): for i in range(10): yield f&#34;data: {i}\\n\\n&#34; time.sleep(1) return Response(generate(), mimetype=&#39;text/event-stream&#39;) JavaScript 客户端 1 2 3 4 5 6 7 8 9 const eventSource = new EventSource(&#39;/stream&#39;); eventSource.onmessage = (event) =&gt; { console.log(event.data); }; eventSource.onerror = (error) =&gt; { console.error(&#39;Connection error:&#39;, error); }; 协议对比总结 对比表 协议 方向 协议层 数据格式 浏览器支持 复杂度 适用场景 SSE 单向 HTTP 文本 ✅ 原生 ⭐ 低 实时推送、AI 对话 WebSocket 双向 TCP 文本/二进制 ✅ 原生 ⭐⭐⭐ 高 实时聊天、协作 Chunked 单向 HTTP 任意 ✅ 原生 ⭐⭐ 中 大文件、API 流式 gRPC 单向/双向 HTTP/2 Protobuf ❌ 需 gRPC-Web ⭐⭐⭐⭐ 很高 微服务、高性能 API MQTT 发布/订阅 TCP 二进制 ❌ 需 MQTT.js ⭐⭐ 中 IoT、传感器 选择建议 需要双向通信？ ┌────┴────┐ 是 否 │ │ WebSocket ┌───┴───┐ │ 需要高性能/强类型？ │ ┌───┴───┐ │ 是 否 │ │ │ gRPC SSE Chunked │ 浏览器原生？ │ ┌────┴────┐ 是 否 │ │ SSE Chunked 客户端断开行为对比 协议 客户端断开后服务端行为 检测时机 SSE 立即终止（下次 yield 失败） 写入时 WebSocket 立即终止（连接关闭） 写入/读取时 Chunked 立即终止（下次 chunk 失败） 写入时 gRPC 立即终止（流关闭） 写入/读取时 MQTT 会话保留，离线消息存储 连接断开时 最佳实践 1. 连接管理 实现心跳机制检测连接状态 处理异常断开和自动重连 设置合理的超时时间 2. 错误处理 1 2 3 4 5 6 try: for data in stream_generator(): yield data except (ConnectionError, BrokenPipeError): logger.info(&#34;Client disconnected&#34;) # 清理资源 3. 性能优化 使用缓冲区减少写入次数 控制数据块大小 考虑压缩（如 gzip） 4. 安全性 使用 HTTPS/WSS 实现认证和授权 防止 DDoS 攻击 参考资源 SSE 规范 WebSocket 规范 gRPC 文档 MQTT 规范 HTTP/1.1 规范 核心概念解释 长连接 vs 短连接 短连接（Short Connection） 定义：每次通信都需要建立新的连接，通信完成后立即关闭连接。\n">
 <title>流式返回协议对比</title>
 
 <link rel='canonical' href='https://Agsol701.github.io/p/%E6%B5%81%E5%BC%8F%E8%BF%94%E5%9B%9E%E5%8D%8F%E8%AE%AE%E5%AF%B9%E6%AF%94/'>
 
 <link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-        const pre = el.parentElement;
-        const div = document.createElement('div');
-        div.className = 'mermaid';
-        div.textContent = el.textContent;
-        pre.replaceWith(div);
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
     });
 </script><meta property='og:title' content="流式返回协议对比">
-<meta property='og:description' content="流式返回协议对比 概述 流式返回（Streaming Response）是指服务端将数据分块逐步发送给客户端，而不是等待全部处理完成后一次性返回。这种方式特别适合长耗时任务、实时数据推送等场景。\n常见流式协议 1. SSE (Server-Sent Events) 基本信息 协议类型：基于 HTTP 的单向推送协议 标准：W3C HTML5 标准 数据格式：纯文本，每行以 data: 开头 传输方式：长连接 请求示例 1 2 3 4 GET /stream HTTP/1.1 Host: example.com Accept: text/event-stream Cache-Control: no-cache 响应示例 1 2 3 4 5 6 7 8 HTTP/1.1 200 OK Content-Type: text/event-stream Cache-Control: no-cache Connection: keep-alive data: {&#34;message&#34;: &#34;Hello&#34;} data: {&#34;message&#34;: &#34;World&#34;} data: {&#34;message&#34;: &#34;!&#34;} 特点 特性 说明 方向 服务端 → 客户端（单向） 重连 自动重连，支持 Last-Event-ID 编码 UTF-8 纯文本 事件类型 支持自定义事件类型 event: 浏览器支持 原生支持（除 IE） 优点 实现简单，基于标准 HTTP 浏览器原生支持，无需额外库 自动重连机制 文本格式，易于调试 缺点 单向通信，客户端无法主动发送数据 只支持文本，二进制数据需编码 请求大小限制（GET 请求） 适用场景 实时通知、消息推送 聊天应用（服务端推送） 实时数据更新（股票、日志） AI 对话流式输出 2. WebSocket 基本信息 协议类型：全双工通信协议 标准：RFC 6455 数据格式：二进制或文本 传输方式：TCP 长连接 握手示例 1 2 3 4 5 6 GET /chat HTTP/1.1 Host: example.com Upgrade: websocket Connection: Upgrade Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw== Sec-WebSocket-Version: 13 帧格式 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 0 1 2 3 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 +-+-+-+-+-------+-+-------------+-------------------------------+ |F|R|R|R| opcode|M| Payload len | Extended payload length | |I|S|S|S| (4) |A| (7) | (16/64) | |N|V|V|V| |S| | (if payload len==126/127) | | |1|2|3| |K| | | +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - + | Extended payload length continued, if payload len == 127 | + - - - - - - - - - - - - - - - +-------------------------------+ | |Masking-key, if MASK set to 1 | +-------------------------------+-------------------------------+ | Masking-key (continued) | Payload Data | +-------------------------------- - - - - - - - - - - - - - - - + : Payload Data continued ... : + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - + | Payload Data continued ... | +---------------------------------------------------------------+ 特点 特性 说明 方向 双向全双工 连接 单一 TCP 连接 开销 低（头部仅 2-14 字节） 数据类型 文本/二进制 子协议 支持 STOMP、MQTT 等 优点 双向实时通信 低延迟、低开销 支持二进制数据 可扩展子协议 缺点 需要维护连接状态 需要处理心跳和重连 代理服务器可能不支持 实现相对复杂 适用场景 实时聊天应用 在线协作（多人编辑） 实时游戏 股票/交易行情推送 3. HTTP Chunked Transfer Encoding 基本信息 协议类型：HTTP/1.1 传输编码 标准：RFC 7230 数据格式：分块传输 传输方式：HTTP 长连接 响应示例 1 2 3 4 5 6 7 8 9 10 11 12 HTTP/1.1 200 OK Content-Type: application/json Transfer-Encoding: chunked 4\\r\\n Hell\\r\\n 6\\r\\n o Worl\\r\\n 2\\r\\n d!\\r\\n 0\\r\\n \\r\\n 特点 特性 说明 方向 服务端 → 客户端 分块 每块前标注大小（十六进制） 结束 0 长度块表示结束 兼容性 HTTP/1.1 标准 优点 标准协议，广泛支持 无需预先知道内容长度 可用于大文件传输 缺点 单向传输 客户端断开后服务端可能继续处理 格式相对复杂 适用场景 大文件下载 动态生成内容 API 流式响应（如 OpenAI API） 4. gRPC Streaming 基本信息 协议类型：基于 HTTP/2 的 RPC 框架 标准：gRPC Protocol 数据格式：Protocol Buffers 传输方式：HTTP/2 多路复用 Proto 定义 1 2 3 4 5 6 7 8 9 10 service ChatService { // 客户端流式 rpc SendMessage (stream Message) returns (Response); // 服务端流式 rpc GetMessages (Request) returns (stream Message); // 双向流式 rpc Chat (stream Message) returns (stream Message); } 特点 特性 说明 方向 单向/双向流式 协议 HTTP/2 序列化 Protocol Buffers 多路复用 单连接多流 优点 高性能（二进制、HTTP/2） 强类型（IDL 定义） 支持多种流式模式 内置负载均衡、认证 缺点 学习曲线较陡 需要代码生成 调试相对困难 浏览器支持需 gRPC-Web 适用场景 微服务间通信 高性能 API 需要强类型的流式接口 多语言环境 5. MQTT 基本信息 协议类型：发布/订阅消息协议 标准：ISO/IEC 20922 (MQTT 3.1.1) 数据格式：二进制 传输方式：TCP 消息格式 1 2 3 4 5 6 Fixed Header (1-2 bytes) └─ Message Type + Flags Variable Header (0-4 bytes) └─ Topic Name / Packet Identifier Payload (0 bytes or more) └─ Application Data 特点 特性 说明 模式 发布/订阅 QoS 3 级（0/1/2） 开销 极小（最小 2 字节） 连接 持久会话 优点 超低开销 QoS 保证 离线消息支持 适合 IoT 场景 缺点 非标准 HTTP 需要代理服务器 不适合浏览器直接使用 适用场景 IoT 设备通信 传感器数据采集 实时监控 消息队列 6. Server-Sent Events (SSE) - 补充 Python Flask 实现 1 2 3 4 5 6 7 8 9 10 11 from flask import Flask, Response app = Flask(__name__) @app.route(&#39;/stream&#39;) def stream(): def generate(): for i in range(10): yield f&#34;data: {i}\\n\\n&#34; time.sleep(1) return Response(generate(), mimetype=&#39;text/event-stream&#39;) JavaScript 客户端 1 2 3 4 5 6 7 8 9 const eventSource = new EventSource(&#39;/stream&#39;); eventSource.onmessage = (event) =&gt; { console.log(event.data); }; eventSource.onerror = (error) =&gt; { console.error(&#39;Connection error:&#39;, error); }; 协议对比总结 对比表 协议 方向 协议层 数据格式 浏览器支持 复杂度 适用场景 SSE 单向 HTTP 文本 ✅ 原生 ⭐ 低 实时推送、AI 对话 WebSocket 双向 TCP 文本/二进制 ✅ 原生 ⭐⭐⭐ 高 实时聊天、协作 Chunked 单向 HTTP 任意 ✅ 原生 ⭐⭐ 中 大文件、API 流式 gRPC 单向/双向 HTTP/2 Protobuf ❌ 需 gRPC-Web ⭐⭐⭐⭐ 很高 微服务、高性能 API MQTT 发布/订阅 TCP 二进制 ❌ 需 MQTT.js ⭐⭐ 中 IoT、传感器 选择建议 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 需要双向通信？ ┌────┴────┐ 是 否 │ │ WebSocket ┌───┴───┐ │ 需要高性能/强类型？ │ ┌───┴───┐ │ 是 否 │ │ │ gRPC SSE Chunked │ 浏览器原生？ │ ┌────┴────┐ 是 否 │ │ SSE Chunked 客户端断开行为对比 协议 客户端断开后服务端行为 检测时机 SSE 立即终止（下次 yield 失败） 写入时 WebSocket 立即终止（连接关闭） 写入/读取时 Chunked 立即终止（下次 chunk 失败） 写入时 gRPC 立即终止（流关闭） 写入/读取时 MQTT 会话保留，离线消息存储 连接断开时 最佳实践 1. 连接管理 实现心跳机制检测连接状态 处理异常断开和自动重连 设置合理的超时时间 2. 错误处理 1 2 3 4 5 6 try: for data in stream_generator(): yield data except (ConnectionError, BrokenPipeError): logger.info(&#34;Client disconnected&#34;) # 清理资源 3. 性能优化 使用缓冲区减少写入次数 控制数据块大小 考虑压缩（如 gzip） 4. 安全性 使用 HTTPS/WSS 实现认证和授权 防止 DDoS 攻击 参考资源 SSE 规范 WebSocket 规范 gRPC 文档 MQTT 规范 HTTP/1.1 规范 核心概念解释 长连接 vs 短连接 短连接（Short Connection） 定义：每次通信都需要建立新的连接，通信完成后立即关闭连接。\n">
+<meta property='og:description' content="流式返回协议对比 概述 流式返回（Streaming Response）是指服务端将数据分块逐步发送给客户端，而不是等待全部处理完成后一次性返回。这种方式特别适合长耗时任务、实时数据推送等场景。\n常见流式协议 1. SSE (Server-Sent Events) 基本信息 协议类型：基于 HTTP 的单向推送协议 标准：W3C HTML5 标准 数据格式：纯文本，每行以 data: 开头 传输方式：长连接 请求示例 1 2 3 4 GET /stream HTTP/1.1 Host: example.com Accept: text/event-stream Cache-Control: no-cache 响应示例 1 2 3 4 5 6 7 8 HTTP/1.1 200 OK Content-Type: text/event-stream Cache-Control: no-cache Connection: keep-alive data: {&#34;message&#34;: &#34;Hello&#34;} data: {&#34;message&#34;: &#34;World&#34;} data: {&#34;message&#34;: &#34;!&#34;} 特点 特性 说明 方向 服务端 → 客户端（单向） 重连 自动重连，支持 Last-Event-ID 编码 UTF-8 纯文本 事件类型 支持自定义事件类型 event: 浏览器支持 原生支持（除 IE） 优点 实现简单，基于标准 HTTP 浏览器原生支持，无需额外库 自动重连机制 文本格式，易于调试 缺点 单向通信，客户端无法主动发送数据 只支持文本，二进制数据需编码 请求大小限制（GET 请求） 适用场景 实时通知、消息推送 聊天应用（服务端推送） 实时数据更新（股票、日志） AI 对话流式输出 2. WebSocket 基本信息 协议类型：全双工通信协议 标准：RFC 6455 数据格式：二进制或文本 传输方式：TCP 长连接 握手示例 1 2 3 4 5 6 GET /chat HTTP/1.1 Host: example.com Upgrade: websocket Connection: Upgrade Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw== Sec-WebSocket-Version: 13 帧格式 0 1 2 3 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 +-+-+-+-+-------+-+-------------+-------------------------------+ |F|R|R|R| opcode|M| Payload len | Extended payload length | |I|S|S|S| (4) |A| (7) | (16/64) | |N|V|V|V| |S| | (if payload len==126/127) | | |1|2|3| |K| | | +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - + | Extended payload length continued, if payload len == 127 | + - - - - - - - - - - - - - - - +-------------------------------+ | |Masking-key, if MASK set to 1 | +-------------------------------+-------------------------------+ | Masking-key (continued) | Payload Data | +-------------------------------- - - - - - - - - - - - - - - - + : Payload Data continued ... : + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - + | Payload Data continued ... | +---------------------------------------------------------------+ 特点 特性 说明 方向 双向全双工 连接 单一 TCP 连接 开销 低（头部仅 2-14 字节） 数据类型 文本/二进制 子协议 支持 STOMP、MQTT 等 优点 双向实时通信 低延迟、低开销 支持二进制数据 可扩展子协议 缺点 需要维护连接状态 需要处理心跳和重连 代理服务器可能不支持 实现相对复杂 适用场景 实时聊天应用 在线协作（多人编辑） 实时游戏 股票/交易行情推送 3. HTTP Chunked Transfer Encoding 基本信息 协议类型：HTTP/1.1 传输编码 标准：RFC 7230 数据格式：分块传输 传输方式：HTTP 长连接 响应示例 1 2 3 4 5 6 7 8 9 10 11 12 HTTP/1.1 200 OK Content-Type: application/json Transfer-Encoding: chunked 4\\r\\n Hell\\r\\n 6\\r\\n o Worl\\r\\n 2\\r\\n d!\\r\\n 0\\r\\n \\r\\n 特点 特性 说明 方向 服务端 → 客户端 分块 每块前标注大小（十六进制） 结束 0 长度块表示结束 兼容性 HTTP/1.1 标准 优点 标准协议，广泛支持 无需预先知道内容长度 可用于大文件传输 缺点 单向传输 客户端断开后服务端可能继续处理 格式相对复杂 适用场景 大文件下载 动态生成内容 API 流式响应（如 OpenAI API） 4. gRPC Streaming 基本信息 协议类型：基于 HTTP/2 的 RPC 框架 标准：gRPC Protocol 数据格式：Protocol Buffers 传输方式：HTTP/2 多路复用 Proto 定义 1 2 3 4 5 6 7 8 9 10 service ChatService { // 客户端流式 rpc SendMessage (stream Message) returns (Response); // 服务端流式 rpc GetMessages (Request) returns (stream Message); // 双向流式 rpc Chat (stream Message) returns (stream Message); } 特点 特性 说明 方向 单向/双向流式 协议 HTTP/2 序列化 Protocol Buffers 多路复用 单连接多流 优点 高性能（二进制、HTTP/2） 强类型（IDL 定义） 支持多种流式模式 内置负载均衡、认证 缺点 学习曲线较陡 需要代码生成 调试相对困难 浏览器支持需 gRPC-Web 适用场景 微服务间通信 高性能 API 需要强类型的流式接口 多语言环境 5. MQTT 基本信息 协议类型：发布/订阅消息协议 标准：ISO/IEC 20922 (MQTT 3.1.1) 数据格式：二进制 传输方式：TCP 消息格式 Fixed Header (1-2 bytes) └─ Message Type + Flags Variable Header (0-4 bytes) └─ Topic Name / Packet Identifier Payload (0 bytes or more) └─ Application Data 特点 特性 说明 模式 发布/订阅 QoS 3 级（0/1/2） 开销 极小（最小 2 字节） 连接 持久会话 优点 超低开销 QoS 保证 离线消息支持 适合 IoT 场景 缺点 非标准 HTTP 需要代理服务器 不适合浏览器直接使用 适用场景 IoT 设备通信 传感器数据采集 实时监控 消息队列 6. Server-Sent Events (SSE) - 补充 Python Flask 实现 1 2 3 4 5 6 7 8 9 10 11 from flask import Flask, Response app = Flask(__name__) @app.route(&#39;/stream&#39;) def stream(): def generate(): for i in range(10): yield f&#34;data: {i}\\n\\n&#34; time.sleep(1) return Response(generate(), mimetype=&#39;text/event-stream&#39;) JavaScript 客户端 1 2 3 4 5 6 7 8 9 const eventSource = new EventSource(&#39;/stream&#39;); eventSource.onmessage = (event) =&gt; { console.log(event.data); }; eventSource.onerror = (error) =&gt; { console.error(&#39;Connection error:&#39;, error); }; 协议对比总结 对比表 协议 方向 协议层 数据格式 浏览器支持 复杂度 适用场景 SSE 单向 HTTP 文本 ✅ 原生 ⭐ 低 实时推送、AI 对话 WebSocket 双向 TCP 文本/二进制 ✅ 原生 ⭐⭐⭐ 高 实时聊天、协作 Chunked 单向 HTTP 任意 ✅ 原生 ⭐⭐ 中 大文件、API 流式 gRPC 单向/双向 HTTP/2 Protobuf ❌ 需 gRPC-Web ⭐⭐⭐⭐ 很高 微服务、高性能 API MQTT 发布/订阅 TCP 二进制 ❌ 需 MQTT.js ⭐⭐ 中 IoT、传感器 选择建议 需要双向通信？ ┌────┴────┐ 是 否 │ │ WebSocket ┌───┴───┐ │ 需要高性能/强类型？ │ ┌───┴───┐ │ 是 否 │ │ │ gRPC SSE Chunked │ 浏览器原生？ │ ┌────┴────┐ 是 否 │ │ SSE Chunked 客户端断开行为对比 协议 客户端断开后服务端行为 检测时机 SSE 立即终止（下次 yield 失败） 写入时 WebSocket 立即终止（连接关闭） 写入/读取时 Chunked 立即终止（下次 chunk 失败） 写入时 gRPC 立即终止（流关闭） 写入/读取时 MQTT 会话保留，离线消息存储 连接断开时 最佳实践 1. 连接管理 实现心跳机制检测连接状态 处理异常断开和自动重连 设置合理的超时时间 2. 错误处理 1 2 3 4 5 6 try: for data in stream_generator(): yield data except (ConnectionError, BrokenPipeError): logger.info(&#34;Client disconnected&#34;) # 清理资源 3. 性能优化 使用缓冲区减少写入次数 控制数据块大小 考虑压缩（如 gzip） 4. 安全性 使用 HTTPS/WSS 实现认证和授权 防止 DDoS 攻击 参考资源 SSE 规范 WebSocket 规范 gRPC 文档 MQTT 规范 HTTP/1.1 规范 核心概念解释 长连接 vs 短连接 短连接（Short Connection） 定义：每次通信都需要建立新的连接，通信完成后立即关闭连接。\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/%E6%B5%81%E5%BC%8F%E8%BF%94%E5%9B%9E%E5%8D%8F%E8%AE%AE%E5%AF%B9%E6%AF%94/'>
 <meta property='og:site_name' content='Agsol Blog'>
 <meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='python' /><meta property='article:tag' content='streaming' /><meta property='article:tag' content='sse' /><meta property='article:tag' content='websocket' /><meta property='article:published_time' content='2026-03-20T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-03-20T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="流式返回协议对比">
-<meta name="twitter:description" content="流式返回协议对比 概述 流式返回（Streaming Response）是指服务端将数据分块逐步发送给客户端，而不是等待全部处理完成后一次性返回。这种方式特别适合长耗时任务、实时数据推送等场景。\n常见流式协议 1. SSE (Server-Sent Events) 基本信息 协议类型：基于 HTTP 的单向推送协议 标准：W3C HTML5 标准 数据格式：纯文本，每行以 data: 开头 传输方式：长连接 请求示例 1 2 3 4 GET /stream HTTP/1.1 Host: example.com Accept: text/event-stream Cache-Control: no-cache 响应示例 1 2 3 4 5 6 7 8 HTTP/1.1 200 OK Content-Type: text/event-stream Cache-Control: no-cache Connection: keep-alive data: {&#34;message&#34;: &#34;Hello&#34;} data: {&#34;message&#34;: &#34;World&#34;} data: {&#34;message&#34;: &#34;!&#34;} 特点 特性 说明 方向 服务端 → 客户端（单向） 重连 自动重连，支持 Last-Event-ID 编码 UTF-8 纯文本 事件类型 支持自定义事件类型 event: 浏览器支持 原生支持（除 IE） 优点 实现简单，基于标准 HTTP 浏览器原生支持，无需额外库 自动重连机制 文本格式，易于调试 缺点 单向通信，客户端无法主动发送数据 只支持文本，二进制数据需编码 请求大小限制（GET 请求） 适用场景 实时通知、消息推送 聊天应用（服务端推送） 实时数据更新（股票、日志） AI 对话流式输出 2. WebSocket 基本信息 协议类型：全双工通信协议 标准：RFC 6455 数据格式：二进制或文本 传输方式：TCP 长连接 握手示例 1 2 3 4 5 6 GET /chat HTTP/1.1 Host: example.com Upgrade: websocket Connection: Upgrade Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw== Sec-WebSocket-Version: 13 帧格式 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 0 1 2 3 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 +-+-+-+-+-------+-+-------------+-------------------------------+ |F|R|R|R| opcode|M| Payload len | Extended payload length | |I|S|S|S| (4) |A| (7) | (16/64) | |N|V|V|V| |S| | (if payload len==126/127) | | |1|2|3| |K| | | +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - + | Extended payload length continued, if payload len == 127 | + - - - - - - - - - - - - - - - +-------------------------------+ | |Masking-key, if MASK set to 1 | +-------------------------------+-------------------------------+ | Masking-key (continued) | Payload Data | +-------------------------------- - - - - - - - - - - - - - - - + : Payload Data continued ... : + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - + | Payload Data continued ... | +---------------------------------------------------------------+ 特点 特性 说明 方向 双向全双工 连接 单一 TCP 连接 开销 低（头部仅 2-14 字节） 数据类型 文本/二进制 子协议 支持 STOMP、MQTT 等 优点 双向实时通信 低延迟、低开销 支持二进制数据 可扩展子协议 缺点 需要维护连接状态 需要处理心跳和重连 代理服务器可能不支持 实现相对复杂 适用场景 实时聊天应用 在线协作（多人编辑） 实时游戏 股票/交易行情推送 3. HTTP Chunked Transfer Encoding 基本信息 协议类型：HTTP/1.1 传输编码 标准：RFC 7230 数据格式：分块传输 传输方式：HTTP 长连接 响应示例 1 2 3 4 5 6 7 8 9 10 11 12 HTTP/1.1 200 OK Content-Type: application/json Transfer-Encoding: chunked 4\\r\\n Hell\\r\\n 6\\r\\n o Worl\\r\\n 2\\r\\n d!\\r\\n 0\\r\\n \\r\\n 特点 特性 说明 方向 服务端 → 客户端 分块 每块前标注大小（十六进制） 结束 0 长度块表示结束 兼容性 HTTP/1.1 标准 优点 标准协议，广泛支持 无需预先知道内容长度 可用于大文件传输 缺点 单向传输 客户端断开后服务端可能继续处理 格式相对复杂 适用场景 大文件下载 动态生成内容 API 流式响应（如 OpenAI API） 4. gRPC Streaming 基本信息 协议类型：基于 HTTP/2 的 RPC 框架 标准：gRPC Protocol 数据格式：Protocol Buffers 传输方式：HTTP/2 多路复用 Proto 定义 1 2 3 4 5 6 7 8 9 10 service ChatService { // 客户端流式 rpc SendMessage (stream Message) returns (Response); // 服务端流式 rpc GetMessages (Request) returns (stream Message); // 双向流式 rpc Chat (stream Message) returns (stream Message); } 特点 特性 说明 方向 单向/双向流式 协议 HTTP/2 序列化 Protocol Buffers 多路复用 单连接多流 优点 高性能（二进制、HTTP/2） 强类型（IDL 定义） 支持多种流式模式 内置负载均衡、认证 缺点 学习曲线较陡 需要代码生成 调试相对困难 浏览器支持需 gRPC-Web 适用场景 微服务间通信 高性能 API 需要强类型的流式接口 多语言环境 5. MQTT 基本信息 协议类型：发布/订阅消息协议 标准：ISO/IEC 20922 (MQTT 3.1.1) 数据格式：二进制 传输方式：TCP 消息格式 1 2 3 4 5 6 Fixed Header (1-2 bytes) └─ Message Type + Flags Variable Header (0-4 bytes) └─ Topic Name / Packet Identifier Payload (0 bytes or more) └─ Application Data 特点 特性 说明 模式 发布/订阅 QoS 3 级（0/1/2） 开销 极小（最小 2 字节） 连接 持久会话 优点 超低开销 QoS 保证 离线消息支持 适合 IoT 场景 缺点 非标准 HTTP 需要代理服务器 不适合浏览器直接使用 适用场景 IoT 设备通信 传感器数据采集 实时监控 消息队列 6. Server-Sent Events (SSE) - 补充 Python Flask 实现 1 2 3 4 5 6 7 8 9 10 11 from flask import Flask, Response app = Flask(__name__) @app.route(&#39;/stream&#39;) def stream(): def generate(): for i in range(10): yield f&#34;data: {i}\\n\\n&#34; time.sleep(1) return Response(generate(), mimetype=&#39;text/event-stream&#39;) JavaScript 客户端 1 2 3 4 5 6 7 8 9 const eventSource = new EventSource(&#39;/stream&#39;); eventSource.onmessage = (event) =&gt; { console.log(event.data); }; eventSource.onerror = (error) =&gt; { console.error(&#39;Connection error:&#39;, error); }; 协议对比总结 对比表 协议 方向 协议层 数据格式 浏览器支持 复杂度 适用场景 SSE 单向 HTTP 文本 ✅ 原生 ⭐ 低 实时推送、AI 对话 WebSocket 双向 TCP 文本/二进制 ✅ 原生 ⭐⭐⭐ 高 实时聊天、协作 Chunked 单向 HTTP 任意 ✅ 原生 ⭐⭐ 中 大文件、API 流式 gRPC 单向/双向 HTTP/2 Protobuf ❌ 需 gRPC-Web ⭐⭐⭐⭐ 很高 微服务、高性能 API MQTT 发布/订阅 TCP 二进制 ❌ 需 MQTT.js ⭐⭐ 中 IoT、传感器 选择建议 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 需要双向通信？ ┌────┴────┐ 是 否 │ │ WebSocket ┌───┴───┐ │ 需要高性能/强类型？ │ ┌───┴───┐ │ 是 否 │ │ │ gRPC SSE Chunked │ 浏览器原生？ │ ┌────┴────┐ 是 否 │ │ SSE Chunked 客户端断开行为对比 协议 客户端断开后服务端行为 检测时机 SSE 立即终止（下次 yield 失败） 写入时 WebSocket 立即终止（连接关闭） 写入/读取时 Chunked 立即终止（下次 chunk 失败） 写入时 gRPC 立即终止（流关闭） 写入/读取时 MQTT 会话保留，离线消息存储 连接断开时 最佳实践 1. 连接管理 实现心跳机制检测连接状态 处理异常断开和自动重连 设置合理的超时时间 2. 错误处理 1 2 3 4 5 6 try: for data in stream_generator(): yield data except (ConnectionError, BrokenPipeError): logger.info(&#34;Client disconnected&#34;) # 清理资源 3. 性能优化 使用缓冲区减少写入次数 控制数据块大小 考虑压缩（如 gzip） 4. 安全性 使用 HTTPS/WSS 实现认证和授权 防止 DDoS 攻击 参考资源 SSE 规范 WebSocket 规范 gRPC 文档 MQTT 规范 HTTP/1.1 规范 核心概念解释 长连接 vs 短连接 短连接（Short Connection） 定义：每次通信都需要建立新的连接，通信完成后立即关闭连接。\n">
+<meta name="twitter:description" content="流式返回协议对比 概述 流式返回（Streaming Response）是指服务端将数据分块逐步发送给客户端，而不是等待全部处理完成后一次性返回。这种方式特别适合长耗时任务、实时数据推送等场景。\n常见流式协议 1. SSE (Server-Sent Events) 基本信息 协议类型：基于 HTTP 的单向推送协议 标准：W3C HTML5 标准 数据格式：纯文本，每行以 data: 开头 传输方式：长连接 请求示例 1 2 3 4 GET /stream HTTP/1.1 Host: example.com Accept: text/event-stream Cache-Control: no-cache 响应示例 1 2 3 4 5 6 7 8 HTTP/1.1 200 OK Content-Type: text/event-stream Cache-Control: no-cache Connection: keep-alive data: {&#34;message&#34;: &#34;Hello&#34;} data: {&#34;message&#34;: &#34;World&#34;} data: {&#34;message&#34;: &#34;!&#34;} 特点 特性 说明 方向 服务端 → 客户端（单向） 重连 自动重连，支持 Last-Event-ID 编码 UTF-8 纯文本 事件类型 支持自定义事件类型 event: 浏览器支持 原生支持（除 IE） 优点 实现简单，基于标准 HTTP 浏览器原生支持，无需额外库 自动重连机制 文本格式，易于调试 缺点 单向通信，客户端无法主动发送数据 只支持文本，二进制数据需编码 请求大小限制（GET 请求） 适用场景 实时通知、消息推送 聊天应用（服务端推送） 实时数据更新（股票、日志） AI 对话流式输出 2. WebSocket 基本信息 协议类型：全双工通信协议 标准：RFC 6455 数据格式：二进制或文本 传输方式：TCP 长连接 握手示例 1 2 3 4 5 6 GET /chat HTTP/1.1 Host: example.com Upgrade: websocket Connection: Upgrade Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw== Sec-WebSocket-Version: 13 帧格式 0 1 2 3 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 +-+-+-+-+-------+-+-------------+-------------------------------+ |F|R|R|R| opcode|M| Payload len | Extended payload length | |I|S|S|S| (4) |A| (7) | (16/64) | |N|V|V|V| |S| | (if payload len==126/127) | | |1|2|3| |K| | | +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - + | Extended payload length continued, if payload len == 127 | + - - - - - - - - - - - - - - - +-------------------------------+ | |Masking-key, if MASK set to 1 | +-------------------------------+-------------------------------+ | Masking-key (continued) | Payload Data | +-------------------------------- - - - - - - - - - - - - - - - + : Payload Data continued ... : + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - + | Payload Data continued ... | +---------------------------------------------------------------+ 特点 特性 说明 方向 双向全双工 连接 单一 TCP 连接 开销 低（头部仅 2-14 字节） 数据类型 文本/二进制 子协议 支持 STOMP、MQTT 等 优点 双向实时通信 低延迟、低开销 支持二进制数据 可扩展子协议 缺点 需要维护连接状态 需要处理心跳和重连 代理服务器可能不支持 实现相对复杂 适用场景 实时聊天应用 在线协作（多人编辑） 实时游戏 股票/交易行情推送 3. HTTP Chunked Transfer Encoding 基本信息 协议类型：HTTP/1.1 传输编码 标准：RFC 7230 数据格式：分块传输 传输方式：HTTP 长连接 响应示例 1 2 3 4 5 6 7 8 9 10 11 12 HTTP/1.1 200 OK Content-Type: application/json Transfer-Encoding: chunked 4\\r\\n Hell\\r\\n 6\\r\\n o Worl\\r\\n 2\\r\\n d!\\r\\n 0\\r\\n \\r\\n 特点 特性 说明 方向 服务端 → 客户端 分块 每块前标注大小（十六进制） 结束 0 长度块表示结束 兼容性 HTTP/1.1 标准 优点 标准协议，广泛支持 无需预先知道内容长度 可用于大文件传输 缺点 单向传输 客户端断开后服务端可能继续处理 格式相对复杂 适用场景 大文件下载 动态生成内容 API 流式响应（如 OpenAI API） 4. gRPC Streaming 基本信息 协议类型：基于 HTTP/2 的 RPC 框架 标准：gRPC Protocol 数据格式：Protocol Buffers 传输方式：HTTP/2 多路复用 Proto 定义 1 2 3 4 5 6 7 8 9 10 service ChatService { // 客户端流式 rpc SendMessage (stream Message) returns (Response); // 服务端流式 rpc GetMessages (Request) returns (stream Message); // 双向流式 rpc Chat (stream Message) returns (stream Message); } 特点 特性 说明 方向 单向/双向流式 协议 HTTP/2 序列化 Protocol Buffers 多路复用 单连接多流 优点 高性能（二进制、HTTP/2） 强类型（IDL 定义） 支持多种流式模式 内置负载均衡、认证 缺点 学习曲线较陡 需要代码生成 调试相对困难 浏览器支持需 gRPC-Web 适用场景 微服务间通信 高性能 API 需要强类型的流式接口 多语言环境 5. MQTT 基本信息 协议类型：发布/订阅消息协议 标准：ISO/IEC 20922 (MQTT 3.1.1) 数据格式：二进制 传输方式：TCP 消息格式 Fixed Header (1-2 bytes) └─ Message Type + Flags Variable Header (0-4 bytes) └─ Topic Name / Packet Identifier Payload (0 bytes or more) └─ Application Data 特点 特性 说明 模式 发布/订阅 QoS 3 级（0/1/2） 开销 极小（最小 2 字节） 连接 持久会话 优点 超低开销 QoS 保证 离线消息支持 适合 IoT 场景 缺点 非标准 HTTP 需要代理服务器 不适合浏览器直接使用 适用场景 IoT 设备通信 传感器数据采集 实时监控 消息队列 6. Server-Sent Events (SSE) - 补充 Python Flask 实现 1 2 3 4 5 6 7 8 9 10 11 from flask import Flask, Response app = Flask(__name__) @app.route(&#39;/stream&#39;) def stream(): def generate(): for i in range(10): yield f&#34;data: {i}\\n\\n&#34; time.sleep(1) return Response(generate(), mimetype=&#39;text/event-stream&#39;) JavaScript 客户端 1 2 3 4 5 6 7 8 9 const eventSource = new EventSource(&#39;/stream&#39;); eventSource.onmessage = (event) =&gt; { console.log(event.data); }; eventSource.onerror = (error) =&gt; { console.error(&#39;Connection error:&#39;, error); }; 协议对比总结 对比表 协议 方向 协议层 数据格式 浏览器支持 复杂度 适用场景 SSE 单向 HTTP 文本 ✅ 原生 ⭐ 低 实时推送、AI 对话 WebSocket 双向 TCP 文本/二进制 ✅ 原生 ⭐⭐⭐ 高 实时聊天、协作 Chunked 单向 HTTP 任意 ✅ 原生 ⭐⭐ 中 大文件、API 流式 gRPC 单向/双向 HTTP/2 Protobuf ❌ 需 gRPC-Web ⭐⭐⭐⭐ 很高 微服务、高性能 API MQTT 发布/订阅 TCP 二进制 ❌ 需 MQTT.js ⭐⭐ 中 IoT、传感器 选择建议 需要双向通信？ ┌────┴────┐ 是 否 │ │ WebSocket ┌───┴───┐ │ 需要高性能/强类型？ │ ┌───┴───┐ │ 是 否 │ │ │ gRPC SSE Chunked │ 浏览器原生？ │ ┌────┴────┐ 是 否 │ │ SSE Chunked 客户端断开行为对比 协议 客户端断开后服务端行为 检测时机 SSE 立即终止（下次 yield 失败） 写入时 WebSocket 立即终止（连接关闭） 写入/读取时 Chunked 立即终止（下次 chunk 失败） 写入时 gRPC 立即终止（流关闭） 写入/读取时 MQTT 会话保留，离线消息存储 连接断开时 最佳实践 1. 连接管理 实现心跳机制检测连接状态 处理异常断开和自动重连 设置合理的超时时间 2. 错误处理 1 2 3 4 5 6 try: for data in stream_generator(): yield data except (ConnectionError, BrokenPipeError): logger.info(&#34;Client disconnected&#34;) # 清理资源 3. 性能优化 使用缓冲区减少写入次数 控制数据块大小 考虑压缩（如 gzip） 4. 安全性 使用 HTTPS/WSS 实现认证和授权 防止 DDoS 攻击 参考资源 SSE 规范 WebSocket 规范 gRPC 文档 MQTT 规范 HTTP/1.1 规范 核心概念解释 长连接 vs 短连接 短连接（Short Connection） 定义：每次通信都需要建立新的连接，通信完成后立即关闭连接。\n">
     <link rel="shortcut icon" href="/favicon.ico" />
 
     </head>
@@ -540,49 +549,25 @@
 </span></span></code></pre></td></tr></table>
 </div>
 </div><h4 id="帧格式">帧格式
-</h4><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span><span class="lnt">18
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="mi">0</span>                   <span class="mi">1</span>                   <span class="mi">2</span>                   <span class="mi">3</span>
-</span></span><span class="line"><span class="cl"><span class="mi">0</span> <span class="mi">1</span> <span class="mi">2</span> <span class="mi">3</span> <span class="mi">4</span> <span class="mi">5</span> <span class="mi">6</span> <span class="mi">7</span> <span class="mi">8</span> <span class="mi">9</span> <span class="mi">0</span> <span class="mi">1</span> <span class="mi">2</span> <span class="mi">3</span> <span class="mi">4</span> <span class="mi">5</span> <span class="mi">6</span> <span class="mi">7</span> <span class="mi">8</span> <span class="mi">9</span> <span class="mi">0</span> <span class="mi">1</span> <span class="mi">2</span> <span class="mi">3</span> <span class="mi">4</span> <span class="mi">5</span> <span class="mi">6</span> <span class="mi">7</span> <span class="mi">8</span> <span class="mi">9</span> <span class="mi">0</span> <span class="mi">1</span>
-</span></span><span class="line"><span class="cl"><span class="o">+-+-+-+-+-------+-+-------------+-------------------------------+</span>
-</span></span><span class="line"><span class="cl"><span class="o">|</span><span class="n">F</span><span class="o">|</span><span class="n">R</span><span class="o">|</span><span class="n">R</span><span class="o">|</span><span class="n">R</span><span class="o">|</span> <span class="n">opcode</span><span class="o">|</span><span class="n">M</span><span class="o">|</span> <span class="n">Payload</span> <span class="n">len</span> <span class="o">|</span>    <span class="n">Extended</span> <span class="n">payload</span> <span class="n">length</span>    <span class="o">|</span>
-</span></span><span class="line"><span class="cl"><span class="o">|</span><span class="n">I</span><span class="o">|</span><span class="n">S</span><span class="o">|</span><span class="n">S</span><span class="o">|</span><span class="n">S</span><span class="o">|</span>  <span class="p">(</span><span class="mi">4</span><span class="p">)</span>  <span class="o">|</span><span class="n">A</span><span class="o">|</span>     <span class="p">(</span><span class="mi">7</span><span class="p">)</span>     <span class="o">|</span>             <span class="p">(</span><span class="mi">16</span><span class="o">/</span><span class="mi">64</span><span class="p">)</span>           <span class="o">|</span>
-</span></span><span class="line"><span class="cl"><span class="o">|</span><span class="n">N</span><span class="o">|</span><span class="n">V</span><span class="o">|</span><span class="n">V</span><span class="o">|</span><span class="n">V</span><span class="o">|</span>       <span class="o">|</span><span class="n">S</span><span class="o">|</span>             <span class="o">|</span>   <span class="p">(</span><span class="k">if</span> <span class="n">payload</span> <span class="n">len</span><span class="o">==</span><span class="mi">126</span><span class="o">/</span><span class="mi">127</span><span class="p">)</span>   <span class="o">|</span>
-</span></span><span class="line"><span class="cl"><span class="o">|</span> <span class="o">|</span><span class="mi">1</span><span class="o">|</span><span class="mi">2</span><span class="o">|</span><span class="mi">3</span><span class="o">|</span>       <span class="o">|</span><span class="n">K</span><span class="o">|</span>             <span class="o">|</span>                               <span class="o">|</span>
-</span></span><span class="line"><span class="cl"><span class="o">+-+-+-+-+-------+-+-------------+</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">+</span>
-</span></span><span class="line"><span class="cl"><span class="o">|</span>     <span class="n">Extended</span> <span class="n">payload</span> <span class="n">length</span> <span class="n">continued</span><span class="p">,</span> <span class="k">if</span> <span class="n">payload</span> <span class="n">len</span> <span class="o">==</span> <span class="mi">127</span>  <span class="o">|</span>
-</span></span><span class="line"><span class="cl"><span class="o">+</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">+-------------------------------+</span>
-</span></span><span class="line"><span class="cl"><span class="o">|</span>                               <span class="o">|</span><span class="n">Masking</span><span class="o">-</span><span class="n">key</span><span class="p">,</span> <span class="k">if</span> <span class="n">MASK</span> <span class="n">set</span> <span class="n">to</span> <span class="mi">1</span>  <span class="o">|</span>
-</span></span><span class="line"><span class="cl"><span class="o">+-------------------------------+-------------------------------+</span>
-</span></span><span class="line"><span class="cl"><span class="o">|</span> <span class="n">Masking</span><span class="o">-</span><span class="n">key</span> <span class="p">(</span><span class="n">continued</span><span class="p">)</span>       <span class="o">|</span>           <span class="n">Payload</span> <span class="n">Data</span>         <span class="o">|</span>
-</span></span><span class="line"><span class="cl"><span class="o">+--------------------------------</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">+</span>
-</span></span><span class="line"><span class="cl"><span class="p">:</span>                     <span class="n">Payload</span> <span class="n">Data</span> <span class="n">continued</span> <span class="o">...</span>                <span class="p">:</span>
-</span></span><span class="line"><span class="cl"><span class="o">+</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">-</span> <span class="o">+</span>
-</span></span><span class="line"><span class="cl"><span class="o">|</span>                     <span class="n">Payload</span> <span class="n">Data</span> <span class="n">continued</span> <span class="o">...</span>                <span class="o">|</span>
-</span></span><span class="line"><span class="cl"><span class="o">+---------------------------------------------------------------+</span>
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h4 id="特点-1">特点
+</h4><pre tabindex="0"><code>0                   1                   2                   3
+0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-------+-+-------------+-------------------------------+
+|F|R|R|R| opcode|M| Payload len |    Extended payload length    |
+|I|S|S|S|  (4)  |A|     (7)     |             (16/64)           |
+|N|V|V|V|       |S|             |   (if payload len==126/127)   |
+| |1|2|3|       |K|             |                               |
++-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - +
+|     Extended payload length continued, if payload len == 127  |
++ - - - - - - - - - - - - - - - +-------------------------------+
+|                               |Masking-key, if MASK set to 1  |
++-------------------------------+-------------------------------+
+| Masking-key (continued)       |           Payload Data         |
++-------------------------------- - - - - - - - - - - - - - - - +
+:                     Payload Data continued ...                :
++ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
+|                     Payload Data continued ...                |
++---------------------------------------------------------------+
+</code></pre><h4 id="特点-1">特点
 </h4><div class="table-wrapper"><table>
   <thead>
       <tr>
@@ -813,25 +798,13 @@
 <li><strong>传输方式</strong>：TCP</li>
 </ul>
 <h4 id="消息格式">消息格式
-</h4><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-gdscript3" data-lang="gdscript3"><span class="line"><span class="cl"><span class="n">Fixed</span> <span class="n">Header</span> <span class="p">(</span><span class="mi">1</span><span class="o">-</span><span class="mi">2</span> <span class="n">bytes</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">  <span class="err">└─</span> <span class="n">Message</span> <span class="n">Type</span> <span class="o">+</span> <span class="n">Flags</span>
-</span></span><span class="line"><span class="cl"><span class="n">Variable</span> <span class="n">Header</span> <span class="p">(</span><span class="mi">0</span><span class="o">-</span><span class="mi">4</span> <span class="n">bytes</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">  <span class="err">└─</span> <span class="n">Topic</span> <span class="n">Name</span> <span class="o">/</span> <span class="n">Packet</span> <span class="n">Identifier</span>
-</span></span><span class="line"><span class="cl"><span class="n">Payload</span> <span class="p">(</span><span class="mi">0</span> <span class="n">bytes</span> <span class="ow">or</span> <span class="n">more</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">  <span class="err">└─</span> <span class="n">Application</span> <span class="n">Data</span>
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h4 id="特点-4">特点
+</h4><pre tabindex="0"><code>Fixed Header (1-2 bytes)
+  └─ Message Type + Flags
+Variable Header (0-4 bytes)
+  └─ Topic Name / Packet Identifier
+Payload (0 bytes or more)
+  └─ Application Data
+</code></pre><h4 id="特点-4">特点
 </h4><div class="table-wrapper"><table>
   <thead>
       <tr>
@@ -998,47 +971,24 @@
   </tbody>
 </table></div>
 <h3 id="选择建议">选择建议
-</h3><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span><span class="lnt">15
-</span><span class="lnt">16
-</span><span class="lnt">17
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">                    需要双向通信？
-</span></span><span class="line"><span class="cl">                    ┌────┴────┐
-</span></span><span class="line"><span class="cl">                   是         否
-</span></span><span class="line"><span class="cl">                   │          │
-</span></span><span class="line"><span class="cl">              WebSocket   ┌───┴───┐
-</span></span><span class="line"><span class="cl">                   │    需要高性能/强类型？
-</span></span><span class="line"><span class="cl">                   │    ┌───┴───┐
-</span></span><span class="line"><span class="cl">                   │   是      否
-</span></span><span class="line"><span class="cl">                   │   │        │
-</span></span><span class="line"><span class="cl">                gRPC  SSE   Chunked
-</span></span><span class="line"><span class="cl">                       │
-</span></span><span class="line"><span class="cl">                   浏览器原生？
-</span></span><span class="line"><span class="cl">                       │
-</span></span><span class="line"><span class="cl">                  ┌────┴────┐
-</span></span><span class="line"><span class="cl">                 是        否
-</span></span><span class="line"><span class="cl">                 │         │
-</span></span><span class="line"><span class="cl">               SSE      Chunked
-</span></span></code></pre></td></tr></table>
-</div>
-</div><hr>
+</h3><pre tabindex="0"><code>                    需要双向通信？
+                    ┌────┴────┐
+                   是         否
+                   │          │
+              WebSocket   ┌───┴───┐
+                   │    需要高性能/强类型？
+                   │    ┌───┴───┐
+                   │   是      否
+                   │   │        │
+                gRPC  SSE   Chunked
+                       │
+                   浏览器原生？
+                       │
+                  ┌────┴────┐
+                 是        否
+                 │         │
+               SSE      Chunked
+</code></pre><hr>
 <h2 id="客户端断开行为对比">客户端断开行为对比
 </h2><div class="table-wrapper"><table>
   <thead>
@@ -1135,39 +1085,20 @@
 </h3><h4 id="短连接short-connection">短连接（Short Connection）
 </h4><p><strong>定义</strong>：每次通信都需要建立新的连接，通信完成后立即关闭连接。</p>
 <p><strong>工作流程</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">客户端              服务端
-</span></span><span class="line"><span class="cl">  │                   │
-</span></span><span class="line"><span class="cl">  │ ── TCP 握手 ────→ │  建立连接
-</span></span><span class="line"><span class="cl">  │                   │
-</span></span><span class="line"><span class="cl">  │ ── 发送请求 ────→ │
-</span></span><span class="line"><span class="cl">  │ ←── 返回响应 ──── │
-</span></span><span class="line"><span class="cl">  │                   │
-</span></span><span class="line"><span class="cl">  │ ── 关闭连接 ────→ │  连接断开
-</span></span><span class="line"><span class="cl">  │                   │
-</span></span><span class="line"><span class="cl">  │ ── TCP 握手 ────→ │  下次请求重新建立
-</span></span><span class="line"><span class="cl">  │ ── 发送请求 ────→ │
-</span></span><span class="line"><span class="cl">  │ ←── 返回响应 ──── │
-</span></span><span class="line"><span class="cl">  │ ── 关闭连接 ────→ │
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>特点</strong>：</p>
+<pre tabindex="0"><code>客户端              服务端
+  │                   │
+  │ ── TCP 握手 ────→ │  建立连接
+  │                   │
+  │ ── 发送请求 ────→ │
+  │ ←── 返回响应 ──── │
+  │                   │
+  │ ── 关闭连接 ────→ │  连接断开
+  │                   │
+  │ ── TCP 握手 ────→ │  下次请求重新建立
+  │ ── 发送请求 ────→ │
+  │ ←── 返回响应 ──── │
+  │ ── 关闭连接 ────→ │
+</code></pre><p><strong>特点</strong>：</p>
 <ul>
 <li>每次请求都需要完整的 TCP 三次握手</li>
 <li>请求完成后立即断开连接</li>
@@ -1196,41 +1127,21 @@
 <h4 id="长连接long-connection--keep-alive">长连接（Long Connection / Keep-Alive）
 </h4><p><strong>定义</strong>：建立连接后，保持连接状态，可以多次发送请求和接收响应。</p>
 <p><strong>工作流程</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
-</span><span class="lnt"> 2
-</span><span class="lnt"> 3
-</span><span class="lnt"> 4
-</span><span class="lnt"> 5
-</span><span class="lnt"> 6
-</span><span class="lnt"> 7
-</span><span class="lnt"> 8
-</span><span class="lnt"> 9
-</span><span class="lnt">10
-</span><span class="lnt">11
-</span><span class="lnt">12
-</span><span class="lnt">13
-</span><span class="lnt">14
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">客户端              服务端
-</span></span><span class="line"><span class="cl">  │                   │
-</span></span><span class="line"><span class="cl">  │ ── TCP 握手 ────→ │  建立连接（只一次）
-</span></span><span class="line"><span class="cl">  │                   │
-</span></span><span class="line"><span class="cl">  │ ── 发送请求1 ───→ │
-</span></span><span class="line"><span class="cl">  │ ←── 返回响应1 ─── │
-</span></span><span class="line"><span class="cl">  │                   │
-</span></span><span class="line"><span class="cl">  │ ── 发送请求2 ───→ │  复用同一连接
-</span></span><span class="line"><span class="cl">  │ ←── 返回响应2 ─── │
-</span></span><span class="line"><span class="cl">  │                   │
-</span></span><span class="line"><span class="cl">  │ ── 发送请求3 ───→ │
-</span></span><span class="line"><span class="cl">  │ ←── 返回响应3 ─── │
-</span></span><span class="line"><span class="cl">  │                   │
-</span></span><span class="line"><span class="cl">  │ ── 关闭连接 ────→ │  连接断开
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>特点</strong>：</p>
+<pre tabindex="0"><code>客户端              服务端
+  │                   │
+  │ ── TCP 握手 ────→ │  建立连接（只一次）
+  │                   │
+  │ ── 发送请求1 ───→ │
+  │ ←── 返回响应1 ─── │
+  │                   │
+  │ ── 发送请求2 ───→ │  复用同一连接
+  │ ←── 返回响应2 ─── │
+  │                   │
+  │ ── 发送请求3 ───→ │
+  │ ←── 返回响应3 ─── │
+  │                   │
+  │ ── 关闭连接 ────→ │  连接断开
+</code></pre><p><strong>特点</strong>：</p>
 <ul>
 <li>一次建立连接，多次复用</li>
 <li>通过 <code>Connection: keep-alive</code> 头部标识</li>
@@ -1315,15 +1226,8 @@
 </h3><h4 id="单工simplex">单工（Simplex）
 </h4><p><strong>定义</strong>：数据只能沿一个方向传输，不能反向传输。</p>
 <p><strong>示意图</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">发送端 ───────────────→ 接收端
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>特点</strong>：</p>
+<pre tabindex="0"><code>发送端 ───────────────→ 接收端
+</code></pre><p><strong>特点</strong>：</p>
 <ul>
 <li>单向通信</li>
 <li>发送方只能发送，接收方只能接收</li>
@@ -1339,17 +1243,9 @@
 <h4 id="半双工half-duplex">半双工（Half-Duplex）
 </h4><p><strong>定义</strong>：数据可以双向传输，但不能同时进行，同一时间只能有一个方向。</p>
 <p><strong>示意图</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">发送端 ←──────────────→ 接收端
-</span></span><span class="line"><span class="cl">   (同一时间只能单向)
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>特点</strong>：</p>
+<pre tabindex="0"><code>发送端 ←──────────────→ 接收端
+   (同一时间只能单向)
+</code></pre><p><strong>特点</strong>：</p>
 <ul>
 <li>双向通信</li>
 <li>但不能同时收发</li>
@@ -1366,17 +1262,9 @@
 <h4 id="全双工full-duplex">全双工（Full-Duplex）
 </h4><p><strong>定义</strong>：数据可以同时双向传输。</p>
 <p><strong>示意图</strong>：</p>
-<div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">发送端 ←──────────────→ 接收端
-</span></span><span class="line"><span class="cl">   (可以同时双向传输)
-</span></span></code></pre></td></tr></table>
-</div>
-</div><p><strong>特点</strong>：</p>
+<pre tabindex="0"><code>发送端 ←──────────────→ 接收端
+   (可以同时双向传输)
+</code></pre><p><strong>特点</strong>：</p>
 <ul>
 <li>双向同时通信</li>
 <li>无需切换方向</li>
@@ -1487,55 +1375,23 @@
 <hr>
 <h3 id="实际应用示例">实际应用示例
 </h3><h4 id="场景-1传统网页浏览短连接--单工">场景 1：传统网页浏览（短连接 + 单工）
-</h4><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">浏览器 ──[请求]──→ 服务器
-</span></span><span class="line"><span class="cl">浏览器 ←──[响应]─── 服务器
-</span></span><span class="line"><span class="cl">连接关闭
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h4 id="场景-2在线聊天长连接--全双工">场景 2：在线聊天（长连接 + 全双工）
-</h4><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">客户端 ←──[消息1]─── 服务器
-</span></span><span class="line"><span class="cl">客户端 ──[消息2]──→ 服务器
-</span></span><span class="line"><span class="cl">客户端 ←──[消息3]─── 服务器
-</span></span><span class="line"><span class="cl">客户端 ──[消息4]──→ 服务器
-</span></span><span class="line"><span class="cl">连接保持...
-</span></span></code></pre></td></tr></table>
-</div>
-</div><h4 id="场景-3ai-对话流式输出长连接--单工">场景 3：AI 对话流式输出（长连接 + 单工）
-</h4><div class="highlight"><div class="chroma">
-<table class="lntable"><tr><td class="lntd">
-<pre tabindex="0" class="chroma"><code><span class="lnt">1
-</span><span class="lnt">2
-</span><span class="lnt">3
-</span><span class="lnt">4
-</span><span class="lnt">5
-</span><span class="lnt">6
-</span></code></pre></td>
-<td class="lntd">
-<pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">客户端 ──[请求]──→ 服务器
-</span></span><span class="line"><span class="cl">客户端 ←──[token1]── 服务器
-</span></span><span class="line"><span class="cl">客户端 ←──[token2]── 服务器
-</span></span><span class="line"><span class="cl">客户端 ←──[token3]── 服务器
-</span></span><span class="line"><span class="cl">...
-</span></span><span class="line"><span class="cl">连接关闭
-</span></span></code></pre></td></tr></table>
-</div>
-</div><hr>
+</h4><pre tabindex="0"><code>浏览器 ──[请求]──→ 服务器
+浏览器 ←──[响应]─── 服务器
+连接关闭
+</code></pre><h4 id="场景-2在线聊天长连接--全双工">场景 2：在线聊天（长连接 + 全双工）
+</h4><pre tabindex="0"><code>客户端 ←──[消息1]─── 服务器
+客户端 ──[消息2]──→ 服务器
+客户端 ←──[消息3]─── 服务器
+客户端 ──[消息4]──→ 服务器
+连接保持...
+</code></pre><h4 id="场景-3ai-对话流式输出长连接--单工">场景 3：AI 对话流式输出（长连接 + 单工）
+</h4><pre tabindex="0"><code>客户端 ──[请求]──→ 服务器
+客户端 ←──[token1]── 服务器
+客户端 ←──[token2]── 服务器
+客户端 ←──[token3]── 服务器
+...
+连接关闭
+</code></pre><hr>
 <h3 id="总结">总结
 </h3><ul>
 <li><strong>长连接 vs 短连接</strong>：关注连接的复用方式和生命周期</li>
