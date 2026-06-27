@@ -30,7 +30,7 @@
 <meta property='og:description' content="写在前面 当任务变复杂时，Agent 不能只靠&quot;下一步做什么&quot;的局部判断——它需要先把目标拆成可执行步骤，再根据工具结果动态调整计划。这就是 Planning（规划） 能力。\n本文将从底层原理到工程实现，结合 LangChain 1.3+ / LangGraph 1.2+ 源码，深入剖析 Agent Planning 的核心机制。\n一、Planning 解决什么问题 1.1 复杂任务需要拆解 1 帮我分析这份需求，查公司已有接口规范，设计 Application Programming Interface（API，应用程序编程接口），并给出测试用例。 这个任务至少包含：理解需求 → 检索规范 → 设计接口 → 生成测试用例 → 检查风险。每个步骤之间存在依赖关系和上下文传递。\n1.2 没有 Planning 的 Agent 会怎样 问题 表现 漏步骤 跳过&quot;检索规范&quot;直接设计接口 顺序错误 先写测试用例再设计接口 工具调用混乱 反复调用同一工具 无法解释进度 用户不知道当前在做什么 失败不可恢复 一步出错整个任务崩溃 1.3 Planning 的本质定义 Planning 是 Agent 在执行前/执行中对&quot;做什么、按什么顺序做、如何应对变化&quot;进行结构化决策的过程。\n从控制论角度看，Planning 是一个 前馈控制(Feedforward Control) + 反馈控制(Feedback Control) 的混合系统：\n┌─────────────────────────────────────────────────────────┐ │ Planning System │ │ │ │ ┌──────────┐ ┌──────────┐ ┌──────────┐ │ │ │ 目标分解 │───▶│ 步骤排序 │───▶│ 资源分配 │ 前馈控制 │ │ └──────────┘ └──────────┘ └──────────┘ │ │ ▲ │ │ │ │ ┌──────────┐ ▼ │ │ └──────────│ 计划修正 │◀────── 执行反馈 反馈控制 │ │ └──────────┘ │ └─────────────────────────────────────────────────────────┘ 二、Planning 的学术基础与范式演进 2.1 从 CoT 到 Planning 的演进路径 Chain-of-Thought（CoT，链式思维） │ 线性推理，不可回溯 ▼ ReAct（Reasoning + Acting） │ 推理与行动交替，有外部反馈 ▼ PS/PS+（Plan-and-Solve / Plan-and-Solve Plus） │ 先规划后执行，两阶段分离 ▼ Tree of Thoughts（ToT，思维树） │ 多路径搜索，可回溯 ▼ LATS（Language Agent Tree Search） 结合 Monte Carlo Tree Search（MCTS，蒙特卡洛树搜索），规划+行动+推理统一 2.2 CoT：线性推理的起点 核心思想：通过在 Prompt 中加入 &ldquo;Let&rsquo;s think step by step&rdquo;，引导 Large Language Model（LLM，大语言模型）生成中间推理步骤，而非直接输出最终答案。\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/ai-agent-planning-%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
 <meta property='og:site_name' content='Agsol Blog'>
-<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='planning' /><meta property='article:tag' content='langchain' /><meta property='article:tag' content='langgraph' /><meta property='article:published_time' content='2026-05-18T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-18T00:00:00&#43;00:00'/>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:published_time' content='2026-05-16T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-05-16T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="AI Agent Planning 深度解析：原理、实现机制、工程实践与高频面试题">
 <meta name="twitter:description" content="写在前面 当任务变复杂时，Agent 不能只靠&quot;下一步做什么&quot;的局部判断——它需要先把目标拆成可执行步骤，再根据工具结果动态调整计划。这就是 Planning（规划） 能力。\n本文将从底层原理到工程实现，结合 LangChain 1.3+ / LangGraph 1.2+ 源码，深入剖析 Agent Planning 的核心机制。\n一、Planning 解决什么问题 1.1 复杂任务需要拆解 1 帮我分析这份需求，查公司已有接口规范，设计 Application Programming Interface（API，应用程序编程接口），并给出测试用例。 这个任务至少包含：理解需求 → 检索规范 → 设计接口 → 生成测试用例 → 检查风险。每个步骤之间存在依赖关系和上下文传递。\n1.2 没有 Planning 的 Agent 会怎样 问题 表现 漏步骤 跳过&quot;检索规范&quot;直接设计接口 顺序错误 先写测试用例再设计接口 工具调用混乱 反复调用同一工具 无法解释进度 用户不知道当前在做什么 失败不可恢复 一步出错整个任务崩溃 1.3 Planning 的本质定义 Planning 是 Agent 在执行前/执行中对&quot;做什么、按什么顺序做、如何应对变化&quot;进行结构化决策的过程。\n从控制论角度看，Planning 是一个 前馈控制(Feedforward Control) + 反馈控制(Feedback Control) 的混合系统：\n┌─────────────────────────────────────────────────────────┐ │ Planning System │ │ │ │ ┌──────────┐ ┌──────────┐ ┌──────────┐ │ │ │ 目标分解 │───▶│ 步骤排序 │───▶│ 资源分配 │ 前馈控制 │ │ └──────────┘ └──────────┘ └──────────┘ │ │ ▲ │ │ │ │ ┌──────────┐ ▼ │ │ └──────────│ 计划修正 │◀────── 执行反馈 反馈控制 │ │ └──────────┘ │ └─────────────────────────────────────────────────────────┘ 二、Planning 的学术基础与范式演进 2.1 从 CoT 到 Planning 的演进路径 Chain-of-Thought（CoT，链式思维） │ 线性推理，不可回溯 ▼ ReAct（Reasoning + Acting） │ 推理与行动交替，有外部反馈 ▼ PS/PS+（Plan-and-Solve / Plan-and-Solve Plus） │ 先规划后执行，两阶段分离 ▼ Tree of Thoughts（ToT，思维树） │ 多路径搜索，可回溯 ▼ LATS（Language Agent Tree Search） 结合 Monte Carlo Tree Search（MCTS，蒙特卡洛树搜索），规划+行动+推理统一 2.2 CoT：线性推理的起点 核心思想：通过在 Prompt 中加入 &ldquo;Let&rsquo;s think step by step&rdquo;，引导 Large Language Model（LLM，大语言模型）生成中间推理步骤，而非直接输出最终答案。\n">
     <link rel="shortcut icon" href="/favicon.ico" />
@@ -417,7 +417,7 @@
   <path d="M3 11h16" />
   <path d="M18 16.496v1.504l1 1" />
 </svg>
-                <time class="article-time--published">May 18, 2026</time>
+                <time class="article-time--published">May 16, 2026</time>
             </div>
         
 
@@ -3347,12 +3347,6 @@ Pregel 执行器:
         
             <a href="/tags/agent/">Agent</a>
         
-            <a href="/tags/planning/">Planning</a>
-        
-            <a href="/tags/langchain/">Langchain</a>
-        
-            <a href="/tags/langgraph/">Langgraph</a>
-        
     </section>
 
 
@@ -3373,12 +3367,12 @@ Pregel 执行器:
             
                 
 <article class="">
-    <a href="/p/ai-agent-memory-%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90%E5%8E%9F%E7%90%86%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%B8%8E-langchain-1.0-%E6%BA%90%E7%A0%81%E5%89%96%E6%9E%90/">
+    <a href="/p/multica-%E9%A1%B9%E7%9B%AE%E8%A7%A3%E6%9E%90%E9%83%A8%E7%BD%B2%E4%BD%BF%E7%94%A8%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1%E4%B8%8E%E6%8A%80%E6%9C%AF%E4%BA%AE%E7%82%B9/">
         
         
 
         <div class="article-details">
-            <h2 class="article-title">AI Agent Memory 深度解析：原理、实现机制与 LangChain 1.0&#43; 源码剖析</h2>
+            <h2 class="article-title">Multica 项目解析：部署、使用、架构设计与技术亮点</h2>
         </div>
     </a>
 </article>
@@ -3386,12 +3380,12 @@ Pregel 执行器:
             
                 
 <article class="">
-    <a href="/p/ai-agent-loop-%E4%B8%8E-react-%E6%A8%A1%E5%BC%8F%E8%AF%A6%E8%A7%A3%E6%80%9D%E8%80%83%E8%A1%8C%E5%8A%A8%E8%A7%82%E5%AF%9F%E5%81%9C%E6%AD%A2%E6%9D%A1%E4%BB%B6%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-skills%E6%A6%82%E5%BF%B5%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F%E5%BC%80%E5%8F%91%E6%96%B9%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/">
         
         
 
         <div class="article-details">
-            <h2 class="article-title">AI Agent Loop 与 ReAct 模式详解：思考、行动、观察、停止条件与高频面试题</h2>
+            <h2 class="article-title">什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题</h2>
         </div>
     </a>
 </article>
@@ -3399,12 +3393,12 @@ Pregel 执行器:
             
                 
 <article class="">
-    <a href="/p/ai-agent-prompt-engineering%E6%8C%87%E4%BB%A4%E5%88%86%E5%B1%82%E8%BE%93%E5%87%BA%E7%BA%A6%E6%9D%9F%E4%BB%BB%E5%8A%A1%E6%8B%86%E8%A7%A3%E5%8F%8D%E5%B9%BB%E8%A7%89%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+    <a href="/p/ai-agent-%E5%AE%89%E5%85%A8%E4%BD%93%E7%B3%BBprompt-injectiontool-injection%E6%9D%83%E9%99%90%E6%8E%A7%E5%88%B6%E5%AE%A1%E6%89%B9%E5%AE%A1%E8%AE%A1%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
         
         
 
         <div class="article-details">
-            <h2 class="article-title">AI Agent Prompt Engineering：指令分层、输出约束、任务拆解、反幻觉与高频面试题</h2>
+            <h2 class="article-title">AI Agent 安全体系：Prompt Injection、Tool Injection、权限控制、审批审计与高频面试题</h2>
         </div>
     </a>
 </article>
@@ -3412,12 +3406,12 @@ Pregel 执行器:
             
                 
 <article class="">
-    <a href="/p/ai-agent-tool-calling-%E8%AF%A6%E8%A7%A3/">
+    <a href="/p/ai-agent-%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7%E4%B8%8E%E8%AF%84%E4%BC%B0trace%E6%8C%87%E6%A0%87%E5%9B%9E%E6%94%BE%E6%B5%8B%E8%AF%95%E9%9B%86%E7%BA%BF%E4%B8%8A%E5%8F%8D%E9%A6%88%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
         
         
 
         <div class="article-details">
-            <h2 class="article-title">AI Agent Tool Calling 详解</h2>
+            <h2 class="article-title">AI Agent 可观测性与评估：Trace、指标、回放、测试集、线上反馈与高频面试题</h2>
         </div>
     </a>
 </article>
@@ -3425,12 +3419,12 @@ Pregel 执行器:
             
                 
 <article class="">
-    <a href="/p/ai-agent-workflow-%E4%B8%8E%E7%8A%B6%E6%80%81%E6%9C%BA%E6%B7%B1%E5%85%A5%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5%E4%B8%8E%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90/">
+    <a href="/p/%E7%94%9F%E4%BA%A7%E7%BA%A7-ai-agent-%E6%9E%B6%E6%9E%84%E6%9C%8D%E5%8A%A1%E6%8B%86%E5%88%86%E9%98%9F%E5%88%97%E7%BC%93%E5%AD%98%E7%8A%B6%E6%80%81%E5%AD%98%E5%82%A8%E7%81%B0%E5%BA%A6%E5%8F%91%E5%B8%83%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
         
         
 
         <div class="article-details">
-            <h2 class="article-title">AI Agent Workflow 与状态机：深入实现原理、工程实践与源码解析</h2>
+            <h2 class="article-title">生产级 AI Agent 架构：服务拆分、队列、缓存、状态存储、灰度发布与高频面试题</h2>
         </div>
     </a>
 </article>
