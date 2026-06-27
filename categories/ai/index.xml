@@ -24926,9 +24926,211 @@ State.summaries = [s1, s2, s3]
 </description>
         </item>
         <item>
+        <title>生产级 AI Agent 架构：服务拆分、队列、缓存、状态存储、灰度发布与高频面试题</title>
+        <link>https://Agsol701.github.io/p/%E7%94%9F%E4%BA%A7%E7%BA%A7-ai-agent-%E6%9E%B6%E6%9E%84%E6%9C%8D%E5%8A%A1%E6%8B%86%E5%88%86%E9%98%9F%E5%88%97%E7%BC%93%E5%AD%98%E7%8A%B6%E6%80%81%E5%AD%98%E5%82%A8%E7%81%B0%E5%BA%A6%E5%8F%91%E5%B8%83%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/</link>
+        <pubDate>Mon, 18 May 2026 00:00:00 +0000</pubDate>
+        
+        <guid>https://Agsol701.github.io/p/%E7%94%9F%E4%BA%A7%E7%BA%A7-ai-agent-%E6%9E%B6%E6%9E%84%E6%9C%8D%E5%8A%A1%E6%8B%86%E5%88%86%E9%98%9F%E5%88%97%E7%BC%93%E5%AD%98%E7%8A%B6%E6%80%81%E5%AD%98%E5%82%A8%E7%81%B0%E5%BA%A6%E5%8F%91%E5%B8%83%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/</guid>
+        <description>&lt;h1 id=&#34;写在前面&#34;&gt;写在前面
+&lt;/h1&gt;&lt;p&gt;Demo 级 Agent 可以写在一个脚本里。&lt;/p&gt;
+&lt;p&gt;生产级 Agent 需要处理并发、权限、状态、成本、失败恢复、可观测性和灰度发布。&lt;/p&gt;
+&lt;h1 id=&#34;一生产级-agent-的整体架构&#34;&gt;一、生产级 Agent 的整体架构
+&lt;/h1&gt;&lt;h2 id=&#34;11-基本组件&#34;&gt;1.1 基本组件
+&lt;/h2&gt;&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart TD
+    U[用户入口] --&amp;gt; API[Agent API]
+    API --&amp;gt; ORCH[Orchestrator]
+    ORCH --&amp;gt; LLM[LLM Gateway]
+    ORCH --&amp;gt; TOOL[Tool Gateway]
+    ORCH --&amp;gt; STATE[State Store]
+    ORCH --&amp;gt; MEM[Memory Store]
+    TOOL --&amp;gt; BUS[业务系统]
+    ORCH --&amp;gt; OBS[Trace and Metrics]
+    ORCH --&amp;gt; QUEUE[Task Queue]
+&lt;/code&gt;&lt;/pre&gt;&lt;h2 id=&#34;12-组件职责&#34;&gt;1.2 组件职责
+&lt;/h2&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;组件&lt;/th&gt;
+          &lt;th&gt;职责&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Agent Application Programming Interface（API，应用程序编程接口）&lt;/td&gt;
+          &lt;td&gt;接收请求、鉴权、返回结果&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Orchestrator&lt;/td&gt;
+          &lt;td&gt;控制 Agent Loop 和工作流&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Large Language Model（LLM，大语言模型）Gateway&lt;/td&gt;
+          &lt;td&gt;统一模型调用、限流和降级&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Tool Gateway&lt;/td&gt;
+          &lt;td&gt;管理工具调用、权限和审计&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;State Store&lt;/td&gt;
+          &lt;td&gt;保存任务状态&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Memory Store&lt;/td&gt;
+          &lt;td&gt;保存长期记忆&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Task Queue&lt;/td&gt;
+          &lt;td&gt;处理异步任务&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Observability&lt;/td&gt;
+          &lt;td&gt;记录 trace、指标和日志&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h1 id=&#34;二llm-gateway&#34;&gt;二、LLM Gateway
+&lt;/h1&gt;&lt;h2 id=&#34;21-为什么需要统一网关&#34;&gt;2.1 为什么需要统一网关
+&lt;/h2&gt;&lt;p&gt;统一 LLM Gateway 可以处理：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;模型路由&lt;/li&gt;
+&lt;li&gt;限流&lt;/li&gt;
+&lt;li&gt;重试&lt;/li&gt;
+&lt;li&gt;降级&lt;/li&gt;
+&lt;li&gt;成本统计&lt;/li&gt;
+&lt;li&gt;prompt 版本&lt;/li&gt;
+&lt;li&gt;安全过滤&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;22-模型路由&#34;&gt;2.2 模型路由
+&lt;/h2&gt;&lt;p&gt;不同任务可以使用不同模型：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;任务&lt;/th&gt;
+          &lt;th&gt;模型策略&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;简单分类&lt;/td&gt;
+          &lt;td&gt;低成本模型&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;工具参数生成&lt;/td&gt;
+          &lt;td&gt;稳定模型&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;长报告生成&lt;/td&gt;
+          &lt;td&gt;长上下文模型&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;高风险决策&lt;/td&gt;
+          &lt;td&gt;更强模型加验证&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;h1 id=&#34;三tool-gateway&#34;&gt;三、Tool Gateway
+&lt;/h1&gt;&lt;h2 id=&#34;31-工具统一入口&#34;&gt;3.1 工具统一入口
+&lt;/h2&gt;&lt;p&gt;Tool Gateway 负责：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;参数校验&lt;/li&gt;
+&lt;li&gt;权限校验&lt;/li&gt;
+&lt;li&gt;超时控制&lt;/li&gt;
+&lt;li&gt;重试策略&lt;/li&gt;
+&lt;li&gt;审计日志&lt;/li&gt;
+&lt;li&gt;返回结构标准化&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;32-工具不要直接暴露给模型&#34;&gt;3.2 工具不要直接暴露给模型
+&lt;/h2&gt;&lt;p&gt;模型只生成调用意图和参数，真正执行必须通过程序侧网关。&lt;/p&gt;
+&lt;h1 id=&#34;四状态和存储&#34;&gt;四、状态和存储
+&lt;/h1&gt;&lt;h2 id=&#34;41-state-store&#34;&gt;4.1 State Store
+&lt;/h2&gt;&lt;p&gt;State Store 保存当前任务执行状态。&lt;/p&gt;
+&lt;p&gt;适合使用：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Redis 保存短期状态&lt;/li&gt;
+&lt;li&gt;MySQL 或 PostgreSQL 保存持久任务记录&lt;/li&gt;
+&lt;li&gt;对象存储保存大文件和中间产物&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;42-memory-store&#34;&gt;4.2 Memory Store
+&lt;/h2&gt;&lt;p&gt;Memory Store 保存长期记忆，可以结合：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;关系数据库&lt;/li&gt;
+&lt;li&gt;向量数据库&lt;/li&gt;
+&lt;li&gt;文档数据库&lt;/li&gt;
+&lt;li&gt;权限系统&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;五异步任务&#34;&gt;五、异步任务
+&lt;/h1&gt;&lt;h2 id=&#34;51-为什么需要队列&#34;&gt;5.1 为什么需要队列
+&lt;/h2&gt;&lt;p&gt;长任务不应该阻塞请求线程。&lt;/p&gt;
+&lt;p&gt;适合放入队列：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;批量文档处理&lt;/li&gt;
+&lt;li&gt;报告生成&lt;/li&gt;
+&lt;li&gt;多工具串行执行&lt;/li&gt;
+&lt;li&gt;大规模评估&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;52-队列设计要点&#34;&gt;5.2 队列设计要点
+&lt;/h2&gt;&lt;p&gt;需要关注：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;幂等&lt;/li&gt;
+&lt;li&gt;重试&lt;/li&gt;
+&lt;li&gt;死信队列&lt;/li&gt;
+&lt;li&gt;超时&lt;/li&gt;
+&lt;li&gt;任务取消&lt;/li&gt;
+&lt;li&gt;进度查询&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;六灰度与回滚&#34;&gt;六、灰度与回滚
+&lt;/h1&gt;&lt;h2 id=&#34;61-需要灰度的内容&#34;&gt;6.1 需要灰度的内容
+&lt;/h2&gt;&lt;p&gt;Agent 中这些内容都可能需要灰度：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;模型版本&lt;/li&gt;
+&lt;li&gt;prompt 版本&lt;/li&gt;
+&lt;li&gt;工具 schema&lt;/li&gt;
+&lt;li&gt;工作流规则&lt;/li&gt;
+&lt;li&gt;memory 策略&lt;/li&gt;
+&lt;li&gt;rerank 策略&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;62-回滚能力&#34;&gt;6.2 回滚能力
+&lt;/h2&gt;&lt;p&gt;上线前要能快速回滚到旧版本。&lt;/p&gt;
+&lt;p&gt;没有回滚能力，不适合频繁调整 Agent 行为。&lt;/p&gt;
+&lt;h1 id=&#34;七成本控制&#34;&gt;七、成本控制
+&lt;/h1&gt;&lt;h2 id=&#34;71-成本来源&#34;&gt;7.1 成本来源
+&lt;/h2&gt;&lt;p&gt;Agent 成本包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;模型输入 token&lt;/li&gt;
+&lt;li&gt;模型输出 token&lt;/li&gt;
+&lt;li&gt;embedding&lt;/li&gt;
+&lt;li&gt;rerank&lt;/li&gt;
+&lt;li&gt;工具 API&lt;/li&gt;
+&lt;li&gt;存储和日志&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;72-优化方式&#34;&gt;7.2 优化方式
+&lt;/h2&gt;&lt;p&gt;常见优化：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;缓存工具结果&lt;/li&gt;
+&lt;li&gt;压缩上下文&lt;/li&gt;
+&lt;li&gt;简单任务用小模型&lt;/li&gt;
+&lt;li&gt;限制最大轮次&lt;/li&gt;
+&lt;li&gt;批量处理&lt;/li&gt;
+&lt;li&gt;失败快速停止&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id=&#34;八常见面试题&#34;&gt;八、常见面试题
+&lt;/h1&gt;&lt;h2 id=&#34;81-生产级-agent-和-demo-最大区别是什么&#34;&gt;8.1 生产级 Agent 和 Demo 最大区别是什么？
+&lt;/h2&gt;&lt;p&gt;生产级 Agent 需要处理权限、状态、失败恢复、可观测性、成本、并发、灰度和回滚。&lt;/p&gt;
+&lt;h2 id=&#34;82-为什么需要-llm-gateway&#34;&gt;8.2 为什么需要 LLM Gateway？
+&lt;/h2&gt;&lt;p&gt;LLM Gateway 可以统一处理模型路由、限流、重试、降级、成本统计和 prompt 版本管理。&lt;/p&gt;
+&lt;h2 id=&#34;83-为什么需要-tool-gateway&#34;&gt;8.3 为什么需要 Tool Gateway？
+&lt;/h2&gt;&lt;p&gt;Tool Gateway 可以在程序侧强制执行参数校验、权限控制、超时、审计和返回结构标准化。&lt;/p&gt;
+&lt;h2 id=&#34;84-长任务为什么要异步化&#34;&gt;8.4 长任务为什么要异步化？
+&lt;/h2&gt;&lt;p&gt;长任务会阻塞请求并增加失败风险。异步队列可以支持重试、进度查询、取消和断点恢复。&lt;/p&gt;
+&lt;h2 id=&#34;85-agent-成本怎么控制&#34;&gt;8.5 Agent 成本怎么控制？
+&lt;/h2&gt;&lt;p&gt;可以通过模型分层、上下文压缩、缓存、最大轮次限制、批量处理和失败快速停止来控制成本。&lt;/p&gt;
+</description>
+        </item>
+        <item>
         <title>什么是 AI Agent：核心概念、运行流程、架构组成、常见模式与高频面试题</title>
         <link>https://Agsol701.github.io/p/%E4%BB%80%E4%B9%88%E6%98%AF-ai-agent%E6%A0%B8%E5%BF%83%E6%A6%82%E5%BF%B5%E8%BF%90%E8%A1%8C%E6%B5%81%E7%A8%8B%E6%9E%B6%E6%9E%84%E7%BB%84%E6%88%90%E5%B8%B8%E8%A7%81%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/</link>
-        <pubDate>Mon, 18 May 2026 00:00:00 +0000</pubDate>
+        <pubDate>Sun, 10 May 2026 00:00:00 +0000</pubDate>
         
         <guid>https://Agsol701.github.io/p/%E4%BB%80%E4%B9%88%E6%98%AF-ai-agent%E6%A0%B8%E5%BF%83%E6%A6%82%E5%BF%B5%E8%BF%90%E8%A1%8C%E6%B5%81%E7%A8%8B%E6%9E%B6%E6%9E%84%E7%BB%84%E6%88%90%E5%B8%B8%E8%A7%81%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/</guid>
         <description>&lt;h1 id=&#34;写在前面&#34;&gt;写在前面
@@ -25137,208 +25339,6 @@ State.summaries = [s1, s2, s3]
 &lt;/h2&gt;&lt;p&gt;因为 Agent 任务通常是多步骤的。状态用于记录已完成动作、工具结果、中间变量和等待事项，避免重复执行或丢失上下文。&lt;/p&gt;
 &lt;h2 id=&#34;85-为什么生产环境中的-agent-不能完全自由行动&#34;&gt;8.5 为什么生产环境中的 Agent 不能完全自由行动？
 &lt;/h2&gt;&lt;p&gt;因为它可能访问敏感数据、调用高风险工具或产生错误操作。生产环境需要权限、审批、审计、执行上限和降级策略。&lt;/p&gt;
-</description>
-        </item>
-        <item>
-        <title>生产级 AI Agent 架构：服务拆分、队列、缓存、状态存储、灰度发布与高频面试题</title>
-        <link>https://Agsol701.github.io/p/%E7%94%9F%E4%BA%A7%E7%BA%A7-ai-agent-%E6%9E%B6%E6%9E%84%E6%9C%8D%E5%8A%A1%E6%8B%86%E5%88%86%E9%98%9F%E5%88%97%E7%BC%93%E5%AD%98%E7%8A%B6%E6%80%81%E5%AD%98%E5%82%A8%E7%81%B0%E5%BA%A6%E5%8F%91%E5%B8%83%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/</link>
-        <pubDate>Mon, 18 May 2026 00:00:00 +0000</pubDate>
-        
-        <guid>https://Agsol701.github.io/p/%E7%94%9F%E4%BA%A7%E7%BA%A7-ai-agent-%E6%9E%B6%E6%9E%84%E6%9C%8D%E5%8A%A1%E6%8B%86%E5%88%86%E9%98%9F%E5%88%97%E7%BC%93%E5%AD%98%E7%8A%B6%E6%80%81%E5%AD%98%E5%82%A8%E7%81%B0%E5%BA%A6%E5%8F%91%E5%B8%83%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/</guid>
-        <description>&lt;h1 id=&#34;写在前面&#34;&gt;写在前面
-&lt;/h1&gt;&lt;p&gt;Demo 级 Agent 可以写在一个脚本里。&lt;/p&gt;
-&lt;p&gt;生产级 Agent 需要处理并发、权限、状态、成本、失败恢复、可观测性和灰度发布。&lt;/p&gt;
-&lt;h1 id=&#34;一生产级-agent-的整体架构&#34;&gt;一、生产级 Agent 的整体架构
-&lt;/h1&gt;&lt;h2 id=&#34;11-基本组件&#34;&gt;1.1 基本组件
-&lt;/h2&gt;&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart TD
-    U[用户入口] --&amp;gt; API[Agent API]
-    API --&amp;gt; ORCH[Orchestrator]
-    ORCH --&amp;gt; LLM[LLM Gateway]
-    ORCH --&amp;gt; TOOL[Tool Gateway]
-    ORCH --&amp;gt; STATE[State Store]
-    ORCH --&amp;gt; MEM[Memory Store]
-    TOOL --&amp;gt; BUS[业务系统]
-    ORCH --&amp;gt; OBS[Trace and Metrics]
-    ORCH --&amp;gt; QUEUE[Task Queue]
-&lt;/code&gt;&lt;/pre&gt;&lt;h2 id=&#34;12-组件职责&#34;&gt;1.2 组件职责
-&lt;/h2&gt;&lt;table&gt;
-  &lt;thead&gt;
-      &lt;tr&gt;
-          &lt;th&gt;组件&lt;/th&gt;
-          &lt;th&gt;职责&lt;/th&gt;
-      &lt;/tr&gt;
-  &lt;/thead&gt;
-  &lt;tbody&gt;
-      &lt;tr&gt;
-          &lt;td&gt;Agent Application Programming Interface（API，应用程序编程接口）&lt;/td&gt;
-          &lt;td&gt;接收请求、鉴权、返回结果&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;Orchestrator&lt;/td&gt;
-          &lt;td&gt;控制 Agent Loop 和工作流&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;Large Language Model（LLM，大语言模型）Gateway&lt;/td&gt;
-          &lt;td&gt;统一模型调用、限流和降级&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;Tool Gateway&lt;/td&gt;
-          &lt;td&gt;管理工具调用、权限和审计&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;State Store&lt;/td&gt;
-          &lt;td&gt;保存任务状态&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;Memory Store&lt;/td&gt;
-          &lt;td&gt;保存长期记忆&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;Task Queue&lt;/td&gt;
-          &lt;td&gt;处理异步任务&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;Observability&lt;/td&gt;
-          &lt;td&gt;记录 trace、指标和日志&lt;/td&gt;
-      &lt;/tr&gt;
-  &lt;/tbody&gt;
-&lt;/table&gt;
-&lt;h1 id=&#34;二llm-gateway&#34;&gt;二、LLM Gateway
-&lt;/h1&gt;&lt;h2 id=&#34;21-为什么需要统一网关&#34;&gt;2.1 为什么需要统一网关
-&lt;/h2&gt;&lt;p&gt;统一 LLM Gateway 可以处理：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;模型路由&lt;/li&gt;
-&lt;li&gt;限流&lt;/li&gt;
-&lt;li&gt;重试&lt;/li&gt;
-&lt;li&gt;降级&lt;/li&gt;
-&lt;li&gt;成本统计&lt;/li&gt;
-&lt;li&gt;prompt 版本&lt;/li&gt;
-&lt;li&gt;安全过滤&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;22-模型路由&#34;&gt;2.2 模型路由
-&lt;/h2&gt;&lt;p&gt;不同任务可以使用不同模型：&lt;/p&gt;
-&lt;table&gt;
-  &lt;thead&gt;
-      &lt;tr&gt;
-          &lt;th&gt;任务&lt;/th&gt;
-          &lt;th&gt;模型策略&lt;/th&gt;
-      &lt;/tr&gt;
-  &lt;/thead&gt;
-  &lt;tbody&gt;
-      &lt;tr&gt;
-          &lt;td&gt;简单分类&lt;/td&gt;
-          &lt;td&gt;低成本模型&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;工具参数生成&lt;/td&gt;
-          &lt;td&gt;稳定模型&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;长报告生成&lt;/td&gt;
-          &lt;td&gt;长上下文模型&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-          &lt;td&gt;高风险决策&lt;/td&gt;
-          &lt;td&gt;更强模型加验证&lt;/td&gt;
-      &lt;/tr&gt;
-  &lt;/tbody&gt;
-&lt;/table&gt;
-&lt;h1 id=&#34;三tool-gateway&#34;&gt;三、Tool Gateway
-&lt;/h1&gt;&lt;h2 id=&#34;31-工具统一入口&#34;&gt;3.1 工具统一入口
-&lt;/h2&gt;&lt;p&gt;Tool Gateway 负责：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;参数校验&lt;/li&gt;
-&lt;li&gt;权限校验&lt;/li&gt;
-&lt;li&gt;超时控制&lt;/li&gt;
-&lt;li&gt;重试策略&lt;/li&gt;
-&lt;li&gt;审计日志&lt;/li&gt;
-&lt;li&gt;返回结构标准化&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;32-工具不要直接暴露给模型&#34;&gt;3.2 工具不要直接暴露给模型
-&lt;/h2&gt;&lt;p&gt;模型只生成调用意图和参数，真正执行必须通过程序侧网关。&lt;/p&gt;
-&lt;h1 id=&#34;四状态和存储&#34;&gt;四、状态和存储
-&lt;/h1&gt;&lt;h2 id=&#34;41-state-store&#34;&gt;4.1 State Store
-&lt;/h2&gt;&lt;p&gt;State Store 保存当前任务执行状态。&lt;/p&gt;
-&lt;p&gt;适合使用：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Redis 保存短期状态&lt;/li&gt;
-&lt;li&gt;MySQL 或 PostgreSQL 保存持久任务记录&lt;/li&gt;
-&lt;li&gt;对象存储保存大文件和中间产物&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;42-memory-store&#34;&gt;4.2 Memory Store
-&lt;/h2&gt;&lt;p&gt;Memory Store 保存长期记忆，可以结合：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;关系数据库&lt;/li&gt;
-&lt;li&gt;向量数据库&lt;/li&gt;
-&lt;li&gt;文档数据库&lt;/li&gt;
-&lt;li&gt;权限系统&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h1 id=&#34;五异步任务&#34;&gt;五、异步任务
-&lt;/h1&gt;&lt;h2 id=&#34;51-为什么需要队列&#34;&gt;5.1 为什么需要队列
-&lt;/h2&gt;&lt;p&gt;长任务不应该阻塞请求线程。&lt;/p&gt;
-&lt;p&gt;适合放入队列：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;批量文档处理&lt;/li&gt;
-&lt;li&gt;报告生成&lt;/li&gt;
-&lt;li&gt;多工具串行执行&lt;/li&gt;
-&lt;li&gt;大规模评估&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;52-队列设计要点&#34;&gt;5.2 队列设计要点
-&lt;/h2&gt;&lt;p&gt;需要关注：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;幂等&lt;/li&gt;
-&lt;li&gt;重试&lt;/li&gt;
-&lt;li&gt;死信队列&lt;/li&gt;
-&lt;li&gt;超时&lt;/li&gt;
-&lt;li&gt;任务取消&lt;/li&gt;
-&lt;li&gt;进度查询&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h1 id=&#34;六灰度与回滚&#34;&gt;六、灰度与回滚
-&lt;/h1&gt;&lt;h2 id=&#34;61-需要灰度的内容&#34;&gt;6.1 需要灰度的内容
-&lt;/h2&gt;&lt;p&gt;Agent 中这些内容都可能需要灰度：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;模型版本&lt;/li&gt;
-&lt;li&gt;prompt 版本&lt;/li&gt;
-&lt;li&gt;工具 schema&lt;/li&gt;
-&lt;li&gt;工作流规则&lt;/li&gt;
-&lt;li&gt;memory 策略&lt;/li&gt;
-&lt;li&gt;rerank 策略&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;62-回滚能力&#34;&gt;6.2 回滚能力
-&lt;/h2&gt;&lt;p&gt;上线前要能快速回滚到旧版本。&lt;/p&gt;
-&lt;p&gt;没有回滚能力，不适合频繁调整 Agent 行为。&lt;/p&gt;
-&lt;h1 id=&#34;七成本控制&#34;&gt;七、成本控制
-&lt;/h1&gt;&lt;h2 id=&#34;71-成本来源&#34;&gt;7.1 成本来源
-&lt;/h2&gt;&lt;p&gt;Agent 成本包括：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;模型输入 token&lt;/li&gt;
-&lt;li&gt;模型输出 token&lt;/li&gt;
-&lt;li&gt;embedding&lt;/li&gt;
-&lt;li&gt;rerank&lt;/li&gt;
-&lt;li&gt;工具 API&lt;/li&gt;
-&lt;li&gt;存储和日志&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id=&#34;72-优化方式&#34;&gt;7.2 优化方式
-&lt;/h2&gt;&lt;p&gt;常见优化：&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;缓存工具结果&lt;/li&gt;
-&lt;li&gt;压缩上下文&lt;/li&gt;
-&lt;li&gt;简单任务用小模型&lt;/li&gt;
-&lt;li&gt;限制最大轮次&lt;/li&gt;
-&lt;li&gt;批量处理&lt;/li&gt;
-&lt;li&gt;失败快速停止&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h1 id=&#34;八常见面试题&#34;&gt;八、常见面试题
-&lt;/h1&gt;&lt;h2 id=&#34;81-生产级-agent-和-demo-最大区别是什么&#34;&gt;8.1 生产级 Agent 和 Demo 最大区别是什么？
-&lt;/h2&gt;&lt;p&gt;生产级 Agent 需要处理权限、状态、失败恢复、可观测性、成本、并发、灰度和回滚。&lt;/p&gt;
-&lt;h2 id=&#34;82-为什么需要-llm-gateway&#34;&gt;8.2 为什么需要 LLM Gateway？
-&lt;/h2&gt;&lt;p&gt;LLM Gateway 可以统一处理模型路由、限流、重试、降级、成本统计和 prompt 版本管理。&lt;/p&gt;
-&lt;h2 id=&#34;83-为什么需要-tool-gateway&#34;&gt;8.3 为什么需要 Tool Gateway？
-&lt;/h2&gt;&lt;p&gt;Tool Gateway 可以在程序侧强制执行参数校验、权限控制、超时、审计和返回结构标准化。&lt;/p&gt;
-&lt;h2 id=&#34;84-长任务为什么要异步化&#34;&gt;8.4 长任务为什么要异步化？
-&lt;/h2&gt;&lt;p&gt;长任务会阻塞请求并增加失败风险。异步队列可以支持重试、进度查询、取消和断点恢复。&lt;/p&gt;
-&lt;h2 id=&#34;85-agent-成本怎么控制&#34;&gt;8.5 Agent 成本怎么控制？
-&lt;/h2&gt;&lt;p&gt;可以通过模型分层、上下文压缩、缓存、最大轮次限制、批量处理和失败快速停止来控制成本。&lt;/p&gt;
 </description>
         </item>
         <item>
