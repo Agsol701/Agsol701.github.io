@@ -1,0 +1,2395 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 Codex 不是一个&quot;只会回答代码问题的聊天框&quot;。\n更准确地说，它是一套面向软件工程任务的 Agent（智能体）系统：它能读代码、改文件、跑命令、调用外部工具、遵守项目规则，也能把重复流程沉淀成 Skills（技能）或 Plugins（插件）。\n很多人第一次配置 Codex 时，会把这些东西混在一起：\nAGENTS.md .codex/config.toml .codex/agents/ Hooks MCP（Model Context Protocol，模型上下文协议） Skills Plugins Subagents Sandbox（沙箱）和 Approval（审批） 它们都能影响 Codex 的行为，但不是同一层东西。\n这篇文章把 Codex 的使用体系拆开讲：先看整体架构，再看每个配置面应该放什么，最后整理常见面试题。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 CLI（Command Line Interface，命令行界面）、IDE（Integrated Development Environment，集成开发环境）、MCP、SDK（Software Development Kit，软件开发工具包）、TOML（Tom&rsquo;s Obvious Minimal Language）。\n一、Codex 是什么 1.1 一句话定义 Codex 是 OpenAI 面向软件开发场景的编码 Agent。\n它的核心能力不是&quot;生成一段代码&quot;，而是围绕一个真实工程目录完成一轮工作：\n理解用户目标 读取项目上下文 遵守项目长期规则 修改文件 执行命令 调用外部工具 运行测试或检查 总结改动和风险 从使用者视角看，Codex 像一个能进入你项目目录工作的协作者。\n从系统视角看，Codex 是模型、工具、配置、权限、上下文和扩展机制组合起来的 Agent 运行时。\n1.2 Codex 不是单一配置文件 很多人会问：&ldquo;Codex 里有没有类似 Claude Code 的 .claude/？&rdquo;\n">
+<title>Codex 使用指南：架构、配置、Hooks、Skills、MCP 与常见面试题</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/codex-%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97%E6%9E%B6%E6%9E%84%E9%85%8D%E7%BD%AEhooksskillsmcp-%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><style>.mermaid { text-align: center; }</style>
+<script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
+    });
+</script><meta property='og:title' content="Codex 使用指南：架构、配置、Hooks、Skills、MCP 与常见面试题">
+<meta property='og:description' content="写在前面 Codex 不是一个&quot;只会回答代码问题的聊天框&quot;。\n更准确地说，它是一套面向软件工程任务的 Agent（智能体）系统：它能读代码、改文件、跑命令、调用外部工具、遵守项目规则，也能把重复流程沉淀成 Skills（技能）或 Plugins（插件）。\n很多人第一次配置 Codex 时，会把这些东西混在一起：\nAGENTS.md .codex/config.toml .codex/agents/ Hooks MCP（Model Context Protocol，模型上下文协议） Skills Plugins Subagents Sandbox（沙箱）和 Approval（审批） 它们都能影响 Codex 的行为，但不是同一层东西。\n这篇文章把 Codex 的使用体系拆开讲：先看整体架构，再看每个配置面应该放什么，最后整理常见面试题。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 CLI（Command Line Interface，命令行界面）、IDE（Integrated Development Environment，集成开发环境）、MCP、SDK（Software Development Kit，软件开发工具包）、TOML（Tom&rsquo;s Obvious Minimal Language）。\n一、Codex 是什么 1.1 一句话定义 Codex 是 OpenAI 面向软件开发场景的编码 Agent。\n它的核心能力不是&quot;生成一段代码&quot;，而是围绕一个真实工程目录完成一轮工作：\n理解用户目标 读取项目上下文 遵守项目长期规则 修改文件 执行命令 调用外部工具 运行测试或检查 总结改动和风险 从使用者视角看，Codex 像一个能进入你项目目录工作的协作者。\n从系统视角看，Codex 是模型、工具、配置、权限、上下文和扩展机制组合起来的 Agent 运行时。\n1.2 Codex 不是单一配置文件 很多人会问：&ldquo;Codex 里有没有类似 Claude Code 的 .claude/？&rdquo;\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/codex-%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97%E6%9E%B6%E6%9E%84%E9%85%8D%E7%BD%AEhooksskillsmcp-%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='codex' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='mcp' /><meta property='article:tag' content='skills' /><meta property='article:published_time' content='2026-07-01T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-07-01T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="Codex 使用指南：架构、配置、Hooks、Skills、MCP 与常见面试题">
+<meta name="twitter:description" content="写在前面 Codex 不是一个&quot;只会回答代码问题的聊天框&quot;。\n更准确地说，它是一套面向软件工程任务的 Agent（智能体）系统：它能读代码、改文件、跑命令、调用外部工具、遵守项目规则，也能把重复流程沉淀成 Skills（技能）或 Plugins（插件）。\n很多人第一次配置 Codex 时，会把这些东西混在一起：\nAGENTS.md .codex/config.toml .codex/agents/ Hooks MCP（Model Context Protocol，模型上下文协议） Skills Plugins Subagents Sandbox（沙箱）和 Approval（审批） 它们都能影响 Codex 的行为，但不是同一层东西。\n这篇文章把 Codex 的使用体系拆开讲：先看整体架构，再看每个配置面应该放什么，最后整理常见面试题。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 CLI（Command Line Interface，命令行界面）、IDE（Integrated Development Environment，集成开发环境）、MCP、SDK（Software Development Kit，软件开发工具包）、TOML（Tom&rsquo;s Obvious Minimal Language）。\n一、Codex 是什么 1.1 一句话定义 Codex 是 OpenAI 面向软件开发场景的编码 Agent。\n它的核心能力不是&quot;生成一段代码&quot;，而是围绕一个真实工程目录完成一轮工作：\n理解用户目标 读取项目上下文 遵守项目长期规则 修改文件 执行命令 调用外部工具 运行测试或检查 总结改动和风险 从使用者视角看，Codex 像一个能进入你项目目录工作的协作者。\n从系统视角看，Codex 是模型、工具、配置、权限、上下文和扩展机制组合起来的 Agent 运行时。\n1.2 Codex 不是单一配置文件 很多人会问：&ldquo;Codex 里有没有类似 Claude Code 的 .claude/？&rdquo;\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about-me/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About Me</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ul>
+    <li><a href="#写在前面">写在前面</a></li>
+    <li><a href="#一codex-是什么">一、Codex 是什么</a>
+      <ul>
+        <li><a href="#11-一句话定义">1.1 一句话定义</a></li>
+        <li><a href="#12-codex-不是单一配置文件">1.2 Codex 不是单一配置文件</a></li>
+        <li><a href="#13-codex-的核心执行链路">1.3 Codex 的核心执行链路</a></li>
+      </ul>
+    </li>
+    <li><a href="#二codex-的技术架构">二、Codex 的技术架构</a>
+      <ul>
+        <li><a href="#21-总体架构图">2.1 总体架构图</a></li>
+        <li><a href="#22-产品入口层">2.2 产品入口层</a></li>
+        <li><a href="#23-会话编排层">2.3 会话编排层</a></li>
+        <li><a href="#24-指令与上下文层">2.4 指令与上下文层</a></li>
+        <li><a href="#25-配置与策略层">2.5 配置与策略层</a></li>
+        <li><a href="#26-模型推理层">2.6 模型推理层</a></li>
+        <li><a href="#27-工具执行层">2.7 工具执行层</a></li>
+        <li><a href="#28-权限与隔离层">2.8 权限与隔离层</a></li>
+        <li><a href="#29-扩展复用与分发层">2.9 扩展、复用与分发层</a></li>
+        <li><a href="#210-一次请求的技术流转">2.10 一次请求的技术流转</a></li>
+      </ul>
+    </li>
+    <li><a href="#三codex-的配置分层">三、Codex 的配置分层</a>
+      <ul>
+        <li><a href="#31-配置加载顺序">3.1 配置加载顺序</a></li>
+        <li><a href="#32-codexconfigtoml-适合放什么">3.2 <code>.codex/config.toml</code> 适合放什么</a></li>
+        <li><a href="#33-常用配置项">3.3 常用配置项</a></li>
+        <li><a href="#34-profile-的作用">3.4 Profile 的作用</a></li>
+      </ul>
+    </li>
+    <li><a href="#四agentsmd给-agent-的项目说明">四、<code>AGENTS.md</code>：给 Agent 的项目说明</a>
+      <ul>
+        <li><a href="#41-agentsmd-是什么">4.1 <code>AGENTS.md</code> 是什么</a></li>
+        <li><a href="#42-agentsmd-的发现规则">4.2 <code>AGENTS.md</code> 的发现规则</a></li>
+        <li><a href="#43-agentsmd-应该写什么">4.3 <code>AGENTS.md</code> 应该写什么</a></li>
+        <li><a href="#44-agentsmd-与-codexconfigtoml-的边界">4.4 <code>AGENTS.md</code> 与 <code>.codex/config.toml</code> 的边界</a></li>
+      </ul>
+    </li>
+    <li><a href="#五hooks在生命周期里插入确定性脚本">五、Hooks：在生命周期里插入确定性脚本</a>
+      <ul>
+        <li><a href="#51-hooks-是什么">5.1 Hooks 是什么</a></li>
+        <li><a href="#52-hooks-的常见事件">5.2 Hooks 的常见事件</a></li>
+        <li><a href="#53-在-configtoml-中配置-hooks">5.3 在 <code>config.toml</code> 中配置 Hooks</a></li>
+        <li><a href="#54-hooks-适合做什么">5.4 Hooks 适合做什么</a></li>
+      </ul>
+    </li>
+    <li><a href="#六mcp连接外部工具和上下文">六、MCP：连接外部工具和上下文</a>
+      <ul>
+        <li><a href="#61-mcp-是什么">6.1 MCP 是什么</a></li>
+        <li><a href="#62-mcp-在-configtoml-中怎么配">6.2 MCP 在 <code>config.toml</code> 中怎么配</a></li>
+        <li><a href="#63-mcp-与普通命令的区别">6.3 MCP 与普通命令的区别</a></li>
+        <li><a href="#64-skills-与-mcp-的组合">6.4 Skills 与 MCP 的组合</a></li>
+      </ul>
+    </li>
+    <li><a href="#七skillsplugins-与-subagents">七、Skills、Plugins 与 Subagents</a>
+      <ul>
+        <li><a href="#71-skills-是什么">7.1 Skills 是什么</a></li>
+        <li><a href="#72-skill-应该放在哪里">7.2 Skill 应该放在哪里</a></li>
+        <li><a href="#73-skill-适合写什么">7.3 Skill 适合写什么</a></li>
+        <li><a href="#74-plugins-是什么">7.4 Plugins 是什么</a></li>
+        <li><a href="#75-subagents-是什么">7.5 Subagents 是什么</a></li>
+      </ul>
+    </li>
+    <li><a href="#八codex-的安全模型sandboxapproval-与-rules">八、Codex 的安全模型：Sandbox、Approval 与 Rules</a>
+      <ul>
+        <li><a href="#81-sandbox-控制能访问什么">8.1 Sandbox 控制能访问什么</a></li>
+        <li><a href="#82-approval-控制什么时候问人">8.2 Approval 控制什么时候问人</a></li>
+        <li><a href="#83-rules-与企业约束">8.3 Rules 与企业约束</a></li>
+        <li><a href="#84-推荐的权限组合">8.4 推荐的权限组合</a></li>
+      </ul>
+    </li>
+    <li><a href="#九一个推荐的项目目录结构">九、一个推荐的项目目录结构</a>
+      <ul>
+        <li><a href="#91-最小可用结构">9.1 最小可用结构</a></li>
+        <li><a href="#92-加上-hooks">9.2 加上 Hooks</a></li>
+        <li><a href="#93-加上自定义-agent">9.3 加上自定义 Agent</a></li>
+        <li><a href="#94-加上官方仓库级-skills">9.4 加上官方仓库级 Skills</a></li>
+        <li><a href="#95-一个完整示例">9.5 一个完整示例</a></li>
+      </ul>
+    </li>
+    <li><a href="#十从-claude-code-迁移到-codex-时怎么映射">十、从 Claude Code 迁移到 Codex 时怎么映射</a>
+      <ul>
+        <li><a href="#101-常见映射表">10.1 常见映射表</a></li>
+        <li><a href="#102-权限迁移怎么做">10.2 权限迁移怎么做</a></li>
+        <li><a href="#103-skill-迁移怎么做">10.3 Skill 迁移怎么做</a></li>
+      </ul>
+    </li>
+    <li><a href="#十一最佳实践">十一、最佳实践</a>
+      <ul>
+        <li><a href="#111-先写-agentsmd">11.1 先写 <code>AGENTS.md</code></a></li>
+        <li><a href="#112-再写-codexconfigtoml">11.2 再写 <code>.codex/config.toml</code></a></li>
+        <li><a href="#113-重复流程沉淀成-skill">11.3 重复流程沉淀成 Skill</a></li>
+        <li><a href="#114-需要外部系统时再接-mcp">11.4 需要外部系统时再接 MCP</a></li>
+        <li><a href="#115-能确定性执行的规则交给-hooks">11.5 能确定性执行的规则交给 Hooks</a></li>
+        <li><a href="#116-不要滥用-subagents">11.6 不要滥用 Subagents</a></li>
+        <li><a href="#117-建议的搭建顺序">11.7 建议的搭建顺序</a></li>
+      </ul>
+    </li>
+    <li><a href="#十二常见高频面试题">十二、常见高频面试题</a>
+      <ul>
+        <li><a href="#121-agentsmd-和-codexconfigtoml-的区别是什么">12.1 <code>AGENTS.md</code> 和 <code>.codex/config.toml</code> 的区别是什么？</a></li>
+        <li><a href="#122-hooks-和-agentsmd-都能约束-codex为什么还需要-hooks">12.2 Hooks 和 <code>AGENTS.md</code> 都能约束 Codex，为什么还需要 Hooks？</a></li>
+        <li><a href="#123-skillspluginsmcp-三者有什么区别">12.3 Skills、Plugins、MCP 三者有什么区别？</a></li>
+        <li><a href="#124-codexskills-和-agentsskills-应该用哪个">12.4 <code>.codex/skills</code> 和 <code>.agents/skills</code> 应该用哪个？</a></li>
+        <li><a href="#125-mcp-和-web-搜索有什么区别">12.5 MCP 和 Web 搜索有什么区别？</a></li>
+        <li><a href="#126-subagents-什么时候值得用">12.6 Subagents 什么时候值得用？</a></li>
+        <li><a href="#127-codex-的安全边界应该怎么设计">12.7 Codex 的安全边界应该怎么设计？</a></li>
+        <li><a href="#128-从-claude-code-迁移到-codex最容易错在哪里">12.8 从 Claude Code 迁移到 Codex，最容易错在哪里？</a></li>
+      </ul>
+    </li>
+    <li><a href="#十三附录进一步阅读">十三、附录：进一步阅读</a>
+      <ul>
+        <li><a href="#131-官方文档一手来源">13.1 官方文档（一手来源）</a></li>
+        <li><a href="#132-本博客相关文章">13.2 本博客相关文章</a></li>
+        <li><a href="#133-一句话总结">13.3 一句话总结</a></li>
+      </ul>
+    </li>
+  </ul>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/ai/" >
+                Ai
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/codex-%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97%E6%9E%B6%E6%9E%84%E9%85%8D%E7%BD%AEhooksskillsmcp-%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/">Codex 使用指南：架构、配置、Hooks、Skills、MCP 与常见面试题</a>
+        </h2>
+    
+        
+
+        
+            
+            <div class="article-source">source: codex-architecture-and-usage</div>
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">Jul 01, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h2 id="写在前面">写在前面
+</h2><p>Codex 不是一个&quot;只会回答代码问题的聊天框&quot;。</p>
+<p>更准确地说，它是一套面向软件工程任务的 Agent（智能体）系统：它能读代码、改文件、跑命令、调用外部工具、遵守项目规则，也能把重复流程沉淀成 Skills（技能）或 Plugins（插件）。</p>
+<p>很多人第一次配置 Codex 时，会把这些东西混在一起：</p>
+<ul>
+<li><code>AGENTS.md</code></li>
+<li><code>.codex/config.toml</code></li>
+<li><code>.codex/agents/</code></li>
+<li>Hooks</li>
+<li>MCP（Model Context Protocol，模型上下文协议）</li>
+<li>Skills</li>
+<li>Plugins</li>
+<li>Subagents</li>
+<li>Sandbox（沙箱）和 Approval（审批）</li>
+</ul>
+<p>它们都能影响 Codex 的行为，但不是同一层东西。</p>
+<p>这篇文章把 Codex 的使用体系拆开讲：先看整体架构，再看每个配置面应该放什么，最后整理常见面试题。</p>
+<blockquote>
+<p>文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 CLI（Command Line Interface，命令行界面）、IDE（Integrated Development Environment，集成开发环境）、MCP、SDK（Software Development Kit，软件开发工具包）、TOML（Tom&rsquo;s Obvious Minimal Language）。</p></blockquote>
+<hr>
+<h2 id="一codex-是什么">一、Codex 是什么
+</h2><h3 id="11-一句话定义">1.1 一句话定义
+</h3><p>Codex 是 OpenAI 面向软件开发场景的编码 Agent。</p>
+<p>它的核心能力不是&quot;生成一段代码&quot;，而是围绕一个真实工程目录完成一轮工作：</p>
+<ul>
+<li>理解用户目标</li>
+<li>读取项目上下文</li>
+<li>遵守项目长期规则</li>
+<li>修改文件</li>
+<li>执行命令</li>
+<li>调用外部工具</li>
+<li>运行测试或检查</li>
+<li>总结改动和风险</li>
+</ul>
+<p>从使用者视角看，Codex 像一个能进入你项目目录工作的协作者。</p>
+<p>从系统视角看，Codex 是模型、工具、配置、权限、上下文和扩展机制组合起来的 Agent 运行时。</p>
+<h3 id="12-codex-不是单一配置文件">1.2 Codex 不是单一配置文件
+</h3><p>很多人会问：&ldquo;Codex 里有没有类似 Claude Code 的 <code>.claude/</code>？&rdquo;</p>
+<p>答案是：有相近能力，但不是一个完全同名、完全同构的目录。</p>
+<p>Codex 更像是把不同职责拆到了多个面。常见文件位置如下：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>需求</th>
+          <th>推荐文件路径</th>
+          <th>说明</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>全局长期说明</td>
+          <td><code>~/.codex/AGENTS.md</code></td>
+          <td>个人默认工作约定，所有项目都可继承</td>
+      </tr>
+      <tr>
+          <td>项目长期说明</td>
+          <td><code>&lt;repo&gt;/AGENTS.md</code></td>
+          <td>当前仓库的项目约定；子目录可继续放 <code>&lt;repo&gt;/&lt;subdir&gt;/AGENTS.md</code></td>
+      </tr>
+      <tr>
+          <td>项目局部覆盖说明</td>
+          <td><code>&lt;repo&gt;/&lt;subdir&gt;/AGENTS.override.md</code></td>
+          <td>覆盖同目录普通 <code>AGENTS.md</code>，适合临时或局部强规则</td>
+      </tr>
+      <tr>
+          <td>用户级配置</td>
+          <td><code>~/.codex/config.toml</code></td>
+          <td>个人默认模型、审批、MCP、Hooks、特性开关等</td>
+      </tr>
+      <tr>
+          <td>项目级配置</td>
+          <td><code>&lt;repo&gt;/.codex/config.toml</code></td>
+          <td>当前仓库专属的沙箱、审批、MCP、Hooks、模型默认值等</td>
+      </tr>
+      <tr>
+          <td>全局 Hooks 配置</td>
+          <td><code>~/.codex/hooks.json</code> 或 <code>~/.codex/config.toml</code></td>
+          <td>对所有项目生效的生命周期脚本配置</td>
+      </tr>
+      <tr>
+          <td>项目 Hooks 配置</td>
+          <td><code>&lt;repo&gt;/.codex/hooks.json</code> 或 <code>&lt;repo&gt;/.codex/config.toml</code></td>
+          <td>当前仓库生效的生命周期脚本配置</td>
+      </tr>
+      <tr>
+          <td>项目 Hooks 脚本</td>
+          <td><code>&lt;repo&gt;/.codex/hooks/&lt;script&gt;</code></td>
+          <td>推荐存放位置；实际路径由 Hooks 配置里的 <code>command</code> 决定</td>
+      </tr>
+      <tr>
+          <td>项目 Codex 说明文档</td>
+          <td><code>&lt;repo&gt;/.codex/README.md</code></td>
+          <td>可选的人类可读说明；适合记录迁移备忘、配置说明、无法结构化进 <code>config.toml</code> 的约束</td>
+      </tr>
+      <tr>
+          <td>全局自定义子 Agent</td>
+          <td><code>~/.codex/agents/&lt;name&gt;.toml</code></td>
+          <td>个人可复用的 Subagent 定义</td>
+      </tr>
+      <tr>
+          <td>项目自定义子 Agent</td>
+          <td><code>&lt;repo&gt;/.codex/agents/&lt;name&gt;.toml</code></td>
+          <td>当前仓库专用的 Subagent 定义</td>
+      </tr>
+      <tr>
+          <td>MCP 配置</td>
+          <td><code>~/.codex/config.toml</code> 或 <code>&lt;repo&gt;/.codex/config.toml</code></td>
+          <td>在 <code>[mcp_servers.&lt;name&gt;]</code> 中配置外部工具和上下文</td>
+      </tr>
+      <tr>
+          <td>官方仓库级 Skills</td>
+          <td><code>&lt;repo&gt;/.agents/skills/&lt;skill-name&gt;/SKILL.md</code></td>
+          <td>按官方仓库级 Skill 发现位置组织</td>
+      </tr>
+      <tr>
+          <td>迁移保留 Skills</td>
+          <td><code>&lt;repo&gt;/.codex/skills/&lt;skill-name&gt;/SKILL.md</code></td>
+          <td>可作为迁移目录或本地组织目录；是否自动发现取决于当前 Codex 环境</td>
+      </tr>
+      <tr>
+          <td>可安装分发包</td>
+          <td>插件目录内的 <code>.codex-plugin/plugin.json</code></td>
+          <td>Plugin 用于打包分发 Skills、命令、工具、Hooks、MCP 配置等</td>
+      </tr>
+      <tr>
+          <td>企业强制约束</td>
+          <td><code>requirements.toml</code> 或管理员托管配置</td>
+          <td>用于组织级强制策略，优先级通常高于个人和项目配置</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>所以，理解 Codex 的关键不是背某一个目录，而是理解&quot;什么规则该放在哪一层&quot;。</p>
+<h3 id="13-codex-的核心执行链路">1.3 Codex 的核心执行链路
+</h3><p>一次 Codex 任务大致可以理解成下面这条链路：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户请求
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">加载全局与项目指令（AGENTS.md）
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">加载配置层（config.toml、profile、CLI 参数）
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">选择模型、权限、沙箱、工具和扩展
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">必要时加载 Skills / Plugins / MCP / Subagents
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">读文件、改文件、跑命令、调用工具
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">Hooks 在生命周期节点插入确定性脚本
+</span></span><span class="line"><span class="cl">  ↓
+</span></span><span class="line"><span class="cl">返回结果、风险、验证情况
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里有两个点很重要。</p>
+<p>第一，<code>AGENTS.md</code> 更偏&quot;给 Agent 的项目说明&quot;；<code>.codex/config.toml</code> 更偏&quot;Codex 客户端怎么运行&quot;。</p>
+<p>第二，MCP、Skills、Plugins、Hooks 并不是互相替代的关系，而是不同层面的扩展机制。</p>
+<hr>
+<h2 id="二codex-的技术架构">二、Codex 的技术架构
+</h2><h3 id="21-总体架构图">2.1 总体架构图
+</h3><p>从技术产品架构看，Codex 可以拆成九层。</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span><span class="lnt">28
+</span><span class="lnt">29
+</span><span class="lnt">30
+</span><span class="lnt">31
+</span><span class="lnt">32
+</span><span class="lnt">33
+</span><span class="lnt">34
+</span><span class="lnt">35
+</span><span class="lnt">36
+</span><span class="lnt">37
+</span><span class="lnt">38
+</span><span class="lnt">39
+</span><span class="lnt">40
+</span><span class="lnt">41
+</span><span class="lnt">42
+</span><span class="lnt">43
+</span><span class="lnt">44
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">┌────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│ 产品入口层                                  │
+</span></span><span class="line"><span class="cl">│ CLI / IDE Extension / Codex App / Web       │
+</span></span><span class="line"><span class="cl">└────────────────────────────────────────────┘
+</span></span><span class="line"><span class="cl">                    ↓
+</span></span><span class="line"><span class="cl">┌────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│ 会话编排层                                  │
+</span></span><span class="line"><span class="cl">│ turn loop / task state / planning / resume  │
+</span></span><span class="line"><span class="cl">└────────────────────────────────────────────┘
+</span></span><span class="line"><span class="cl">                    ↓
+</span></span><span class="line"><span class="cl">┌────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│ 指令与上下文层                              │
+</span></span><span class="line"><span class="cl">│ AGENTS.md / prompt / files / memories       │
+</span></span><span class="line"><span class="cl">└────────────────────────────────────────────┘
+</span></span><span class="line"><span class="cl">                    ↓
+</span></span><span class="line"><span class="cl">┌────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│ 配置与策略层                                │
+</span></span><span class="line"><span class="cl">│ config.toml / profiles / requirements       │
+</span></span><span class="line"><span class="cl">└────────────────────────────────────────────┘
+</span></span><span class="line"><span class="cl">                    ↓
+</span></span><span class="line"><span class="cl">┌────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│ 模型推理层                                  │
+</span></span><span class="line"><span class="cl">│ model / reasoning effort / summaries        │
+</span></span><span class="line"><span class="cl">└────────────────────────────────────────────┘
+</span></span><span class="line"><span class="cl">                    ↓
+</span></span><span class="line"><span class="cl">┌────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│ 工具执行层                                  │
+</span></span><span class="line"><span class="cl">│ file tools / shell / patch / browser / MCP   │
+</span></span><span class="line"><span class="cl">└────────────────────────────────────────────┘
+</span></span><span class="line"><span class="cl">                    ↓
+</span></span><span class="line"><span class="cl">┌────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│ 权限与隔离层                                │
+</span></span><span class="line"><span class="cl">│ sandbox / approvals / rules / managed config│
+</span></span><span class="line"><span class="cl">└────────────────────────────────────────────┘
+</span></span><span class="line"><span class="cl">                    ↓
+</span></span><span class="line"><span class="cl">┌────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│ 生命周期扩展层                              │
+</span></span><span class="line"><span class="cl">│ Hooks / notifications / audit scripts       │
+</span></span><span class="line"><span class="cl">└────────────────────────────────────────────┘
+</span></span><span class="line"><span class="cl">                    ↓
+</span></span><span class="line"><span class="cl">┌────────────────────────────────────────────┐
+</span></span><span class="line"><span class="cl">│ 复用与分发层                                │
+</span></span><span class="line"><span class="cl">│ Skills / Plugins / Subagents                │
+</span></span><span class="line"><span class="cl">└────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这张图不是 OpenAI 官方给出的内部服务拓扑，而是基于公开文档和本地可见能力整理出来的产品技术架构视角。</p>
+<p>它回答的是：&ldquo;Codex 这个产品为什么能从一句自然语言请求，走到真实工程目录里的文件修改、命令执行和结果验证？&rdquo;</p>
+<h3 id="22-产品入口层">2.2 产品入口层
+</h3><p>产品入口层负责把用户请求带入 Codex。</p>
+<p>常见入口包括：</p>
+<ul>
+<li>CLI：终端里的本地工程工作流</li>
+<li>IDE Extension：编辑器内的代码协作</li>
+<li>Codex App：桌面端或应用内的交互式工作</li>
+<li>Web / Cloud：托管环境里的任务执行</li>
+</ul>
+<p>这些入口的交互形态不同，但底层都要解决同一件事：把用户请求、当前工作区、配置、权限和工具能力组合成一次 Codex 会话。</p>
+<p>CLI 更贴近本地 shell 和文件系统。</p>
+<p>IDE Extension 更贴近编辑器上下文，例如当前打开文件、选区、诊断信息。</p>
+<p>App 和 Web 更偏任务管理、并行工作、远程环境和长任务。</p>
+<h3 id="23-会话编排层">2.3 会话编排层
+</h3><p>会话编排层是 Codex 产品的中枢。</p>
+<p>它负责维护一次任务的状态：</p>
+<ul>
+<li>当前用户请求是什么</li>
+<li>已经读过哪些文件</li>
+<li>已经调用过哪些工具</li>
+<li>是否需要继续探索</li>
+<li>是否需要修改文件</li>
+<li>是否需要请求权限</li>
+<li>是否需要启动 Subagents</li>
+<li>是否需要恢复上一轮会话</li>
+</ul>
+<p>从 Agent 角度看，这一层就是任务循环。</p>
+<p>模型不是一次性输出最终答案，而是在&quot;思考、调用工具、观察结果、继续决策&quot;之间循环。</p>
+<p>这也是 Codex 和普通聊天模型最大的差异之一：它不是只生成文本，而是把模型输出接到真实工具执行上，再把工具结果送回下一步推理。</p>
+<h3 id="24-指令与上下文层">2.4 指令与上下文层
+</h3><p>指令与上下文层决定 Codex &ldquo;知道什么&rdquo; 和 &ldquo;应该遵守什么&rdquo;。</p>
+<p>它包括：</p>
+<ul>
+<li>用户当前 prompt</li>
+<li>全局和项目级 <code>AGENTS.md</code></li>
+<li>当前工作目录和文件树</li>
+<li>被读取的源代码、配置、日志</li>
+<li>Skills 中按需加载的说明</li>
+<li>MCP 返回的外部资料</li>
+<li>历史会话摘要或记忆</li>
+</ul>
+<p>这一层的关键是上下文选择。</p>
+<p>Codex 不可能把整个世界都塞进模型上下文，所以它需要按任务逐步读取文件、搜索符号、加载 Skill、调用 MCP。</p>
+<p><code>AGENTS.md</code> 属于持久指令，适合写项目约定。</p>
+<p>当前 prompt 属于一次性意图，适合写这次任务的目标和约束。</p>
+<p>Skills 属于按需加载的方法包，适合写某类任务的标准流程。</p>
+<p>MCP 属于外部上下文入口，适合接入最新文档、私有系统和外部工具。</p>
+<h3 id="25-配置与策略层">2.5 配置与策略层
+</h3><p>配置与策略层决定 Codex &ldquo;用什么方式运行&rdquo;。</p>
+<p>典型输入包括：</p>
+<ul>
+<li>CLI 参数</li>
+<li><code>~/.codex/config.toml</code></li>
+<li><code>.codex/config.toml</code></li>
+<li>profile 配置</li>
+<li><code>requirements.toml</code></li>
+<li>企业托管配置</li>
+</ul>
+<p>这一层不直接描述业务逻辑，而是描述运行策略：</p>
+<ul>
+<li>用哪个模型</li>
+<li>推理强度多高</li>
+<li>能否写文件</li>
+<li>什么时候需要审批</li>
+<li>启用哪些 MCP server</li>
+<li>启用哪些 Hooks</li>
+<li>Subagents 能开多少并发</li>
+</ul>
+<p>如果把 Codex 看成一个 Agent Runtime（智能体运行时），配置与策略层就是它的控制平面。</p>
+<h3 id="26-模型推理层">2.6 模型推理层
+</h3><p>模型推理层负责理解任务、规划步骤、生成代码、判断工具结果。</p>
+<p>但在 Codex 里，模型不是孤立存在的。</p>
+<p>模型收到的输入通常已经被会话编排层整理过，包括：</p>
+<ul>
+<li>用户请求</li>
+<li>系统和开发者指令</li>
+<li><code>AGENTS.md</code> 指令链</li>
+<li>已读取文件内容</li>
+<li>工具调用结果</li>
+<li>可用工具列表</li>
+<li>当前权限状态</li>
+<li>相关 Skill 内容</li>
+</ul>
+<p>模型输出也不只是自然语言。</p>
+<p>它可能输出：</p>
+<ul>
+<li>给用户的解释</li>
+<li>对文件的编辑计划</li>
+<li>工具调用请求</li>
+<li>Subagent 委派请求</li>
+<li>对测试结果的判断</li>
+<li>最终总结</li>
+</ul>
+<p>所以 Codex 的模型层更像是被工具和状态包围的推理核心，而不是单独的文本生成器。</p>
+<h3 id="27-工具执行层">2.7 工具执行层
+</h3><p>工具执行层让模型能作用到真实环境。</p>
+<p>常见工具能力包括：</p>
+<ul>
+<li>读取文件</li>
+<li>搜索文件</li>
+<li>修改文件</li>
+<li>应用 patch</li>
+<li>执行 shell 命令</li>
+<li>调用 MCP 工具</li>
+<li>控制浏览器或桌面能力</li>
+<li>读取图片或生成截图</li>
+</ul>
+<p>工具层是 Codex 从&quot;会说&quot;变成&quot;会做&quot;的关键。</p>
+<p>但工具能力越强，风险也越高，所以工具层必须和权限与隔离层配合。</p>
+<p>例如，读文件和写文件不是同一个风险等级。</p>
+<p>运行 <code>ls</code> 和运行发布命令也不是同一个风险等级。</p>
+<h3 id="28-权限与隔离层">2.8 权限与隔离层
+</h3><p>权限与隔离层负责把工具能力关在安全边界里。</p>
+<p>它包含几类机制：</p>
+<ul>
+<li>Sandbox：限制文件系统和网络访问范围</li>
+<li>Approval：在关键动作前请求用户确认</li>
+<li>Rules：对命令和工具调用做策略判断</li>
+<li>Managed configuration：企业或管理员强制约束</li>
+<li>Hooks：在生命周期节点做检查或审计</li>
+</ul>
+<p>这一层解决的问题是：Codex 即使能调用强工具，也不能无边界地调用。</p>
+<p>一个成熟的 Codex 使用环境，应该把高风险动作变成显式审批或确定性拦截，而不是只靠模型自觉。</p>
+<h3 id="29-扩展复用与分发层">2.9 扩展、复用与分发层
+</h3><p>扩展、复用与分发层决定 Codex 能不能被团队长期使用。</p>
+<p>这一层包括：</p>
+<ul>
+<li>Hooks：扩展生命周期</li>
+<li>MCP：扩展外部工具和上下文</li>
+<li>Skills：复用任务流程</li>
+<li>Plugins：分发 Skills、MCP 和应用集成</li>
+<li>Subagents：扩展并行任务执行能力</li>
+</ul>
+<p>这些机制解决的是规模化问题。</p>
+<p>一个人临时使用 Codex，只要 prompt 写清楚就够了。</p>
+<p>一个团队长期使用 Codex，就需要把经验沉淀到 <code>AGENTS.md</code>、Skills、Hooks、MCP 和 Plugins 里。</p>
+<p>否则每次都靠口头 prompt 复述流程，效果会不稳定，也很难共享。</p>
+<h3 id="210-一次请求的技术流转">2.10 一次请求的技术流转
+</h3><p>把上面几层合起来，一次请求可以这样理解：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1. 用户从 CLI / IDE / App 发起任务
+</span></span><span class="line"><span class="cl">2. Codex 创建或恢复会话
+</span></span><span class="line"><span class="cl">3. 读取全局和项目级指令
+</span></span><span class="line"><span class="cl">4. 加载配置、权限、MCP、Hooks、Subagents 策略
+</span></span><span class="line"><span class="cl">5. 根据用户请求和 Skill 描述判断是否需要加载 Skill
+</span></span><span class="line"><span class="cl">6. 模型生成下一步动作：读文件、搜索、改代码、跑命令或调用 MCP
+</span></span><span class="line"><span class="cl">7. 权限层判断该动作是否允许，必要时请求审批
+</span></span><span class="line"><span class="cl">8. Hooks 在对应生命周期节点运行脚本
+</span></span><span class="line"><span class="cl">9. 工具层执行动作并返回观察结果
+</span></span><span class="line"><span class="cl">10. 模型基于结果继续推理，直到任务完成或需要用户输入
+</span></span><span class="line"><span class="cl">11. Codex 输出改动、验证结果、风险和后续建议
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>所以，从技术架构看，Codex 的本质不是&quot;模型 + 代码编辑器&quot;。</p>
+<p>它更像是一个面向软件工程的 Agent Runtime：入口负责交互，会话层负责任务循环，上下文层负责知识注入，模型层负责推理，工具层负责执行，权限层负责边界，扩展层负责长期复用。</p>
+<hr>
+<h2 id="三codex-的配置分层">三、Codex 的配置分层
+</h2><h3 id="31-配置加载顺序">3.1 配置加载顺序
+</h3><p>Codex 会从多个来源读取配置。</p>
+<p>官方文档给出的基本思路是：用户级配置在 <code>~/.codex/config.toml</code>，项目级覆盖可以放在仓库里的 <code>.codex/config.toml</code>。</p>
+<p>常见层级可以理解为：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>层级</th>
+          <th>示例</th>
+          <th>适合放什么</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>CLI 参数</td>
+          <td><code>codex --model ...</code>、<code>-c key=value</code></td>
+          <td>本次运行的一次性覆盖</td>
+      </tr>
+      <tr>
+          <td>项目配置</td>
+          <td><code>.codex/config.toml</code></td>
+          <td>当前仓库专属的沙箱、审批、MCP、Hooks、模型默认值</td>
+      </tr>
+      <tr>
+          <td>Profile</td>
+          <td><code>~/.codex/deep-review.config.toml</code></td>
+          <td>某类工作模式，例如深度 review</td>
+      </tr>
+      <tr>
+          <td>用户配置</td>
+          <td><code>~/.codex/config.toml</code></td>
+          <td>个人默认模型、审批方式、MCP 服务</td>
+      </tr>
+      <tr>
+          <td>系统配置</td>
+          <td><code>/etc/codex/config.toml</code></td>
+          <td>机器或组织级默认设置</td>
+      </tr>
+      <tr>
+          <td>内置默认值</td>
+          <td>Codex 自带</td>
+          <td>没有显式配置时的行为</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>项目 <code>.codex/</code> 层通常只在可信项目中加载。这个设计是为了避免打开陌生仓库时，被仓库里的配置、Hooks 或规则影响本机行为。</p>
+<p>如果项目里有 <code>.codex/README.md</code>，它通常只是人类可读的说明文档，适合记录迁移备忘、配置意图和无法放进 <code>config.toml</code> 的细粒度约束。它不是 Codex 必需文件，也不替代 <code>AGENTS.md</code> 或 <code>.codex/config.toml</code>。</p>
+<h3 id="32-codexconfigtoml-适合放什么">3.2 <code>.codex/config.toml</code> 适合放什么
+</h3><p><code>.codex/config.toml</code> 是项目级 Codex 配置。</p>
+<p>它适合放这些内容：</p>
+<ul>
+<li>默认模型</li>
+<li>推理强度</li>
+<li>沙箱模式</li>
+<li>审批策略</li>
+<li>MCP 服务</li>
+<li>Hooks 开关与配置</li>
+<li>Subagents 全局限制</li>
+<li>项目专属工具策略</li>
+</ul>
+<p>一个简化配置如下：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-toml" data-lang="toml"><span class="line"><span class="cl"><span class="c"># .codex/config.toml</span>
+</span></span><span class="line"><span class="cl"><span class="nx">model</span> <span class="p">=</span> <span class="s2">&#34;gpt-5.5&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">model_reasoning_effort</span> <span class="p">=</span> <span class="s2">&#34;high&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">approval_policy</span> <span class="p">=</span> <span class="s2">&#34;on-request&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">sandbox_mode</span> <span class="p">=</span> <span class="s2">&#34;workspace-write&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="p">[</span><span class="nx">features</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">hooks</span> <span class="p">=</span> <span class="kc">true</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="p">[</span><span class="nx">mcp_servers</span><span class="p">.</span><span class="nx">docs</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">command</span> <span class="p">=</span> <span class="s2">&#34;npx&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">args</span> <span class="p">=</span> <span class="p">[</span><span class="s2">&#34;-y&#34;</span><span class="p">,</span> <span class="s2">&#34;@some/docs-mcp&#34;</span><span class="p">]</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里要注意：<code>config.toml</code> 管的是 Codex 客户端的行为，不是项目业务配置。</p>
+<p>如果某条规则是&quot;本仓库代码风格&quot;，更适合放进 <code>AGENTS.md</code>；如果某条规则是&quot;Codex 是否能联网、是否能写文件、是否启用 Hooks&quot;，才适合放进 <code>.codex/config.toml</code>。</p>
+<h3 id="33-常用配置项">3.3 常用配置项
+</h3><p>下面是最常用的一组配置项。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>配置项</th>
+          <th>作用</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>model</code></td>
+          <td>指定 Codex 使用的模型</td>
+      </tr>
+      <tr>
+          <td><code>model_reasoning_effort</code></td>
+          <td>调整支持模型的推理强度</td>
+      </tr>
+      <tr>
+          <td><code>approval_policy</code></td>
+          <td>控制什么时候暂停并请求用户审批</td>
+      </tr>
+      <tr>
+          <td><code>sandbox_mode</code></td>
+          <td>控制命令执行时的文件系统和网络访问策略</td>
+      </tr>
+      <tr>
+          <td><code>[features] hooks</code></td>
+          <td>控制 Hooks 是否启用</td>
+      </tr>
+      <tr>
+          <td><code>[mcp_servers.&lt;name&gt;]</code></td>
+          <td>配置 MCP 服务</td>
+      </tr>
+      <tr>
+          <td><code>[agents]</code></td>
+          <td>配置 Subagents 的并发、深度等全局行为</td>
+      </tr>
+  </tbody>
+</table></div>
+<p><code>approval_policy</code> 常见值包括 <code>untrusted</code>、<code>on-request</code>、<code>never</code>，也支持更细的 granular 配置。</p>
+<p><code>sandbox_mode</code> 常见值包括：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>模式</th>
+          <th>含义</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>read-only</code></td>
+          <td>只读，适合探索和 review</td>
+      </tr>
+      <tr>
+          <td><code>workspace-write</code></td>
+          <td>允许写工作区，适合大多数开发任务</td>
+      </tr>
+      <tr>
+          <td><code>danger-full-access</code></td>
+          <td>高权限模式，只适合可信环境</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>我建议日常项目使用 <code>workspace-write</code> + <code>on-request</code>。它既能让 Codex 正常改项目文件，又不会默认把所有高风险动作放开。</p>
+<h3 id="34-profile-的作用">3.4 Profile 的作用
+</h3><p>Profile 可以理解成&quot;配置预设&quot;。</p>
+<p>例如，你平时写代码用普通配置，但做深度 review 时想换更强模型、更高推理强度、更严格权限，就可以创建：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-toml" data-lang="toml"><span class="line"><span class="cl"><span class="c"># ~/.codex/deep-review.config.toml</span>
+</span></span><span class="line"><span class="cl"><span class="nx">model</span> <span class="p">=</span> <span class="s2">&#34;gpt-5.5&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">model_reasoning_effort</span> <span class="p">=</span> <span class="s2">&#34;xhigh&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">approval_policy</span> <span class="p">=</span> <span class="s2">&#34;on-request&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">sandbox_mode</span> <span class="p">=</span> <span class="s2">&#34;read-only&#34;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>然后运行：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">codex --profile deep-review
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>Profile 的好处是：不用把所有场景塞进一个 <code>config.toml</code>，也不用每次手动写一堆 CLI 参数。</p>
+<hr>
+<h2 id="四agentsmd给-agent-的项目说明">四、<code>AGENTS.md</code>：给 Agent 的项目说明
+</h2><h3 id="41-agentsmd-是什么">4.1 <code>AGENTS.md</code> 是什么
+</h3><p><code>AGENTS.md</code> 是 Codex 的项目长期说明文件。</p>
+<p>它像一份给 Agent 看的 <code>README</code>，用于告诉 Codex：</p>
+<ul>
+<li>项目目录结构</li>
+<li>怎么安装依赖</li>
+<li>怎么运行测试</li>
+<li>代码风格</li>
+<li>分支或发布约定</li>
+<li>安全边界</li>
+<li>完成任务前必须验证什么</li>
+<li>哪些文件不要碰</li>
+</ul>
+<p>它不要求固定格式。只要 Markdown 写清楚，Codex 就能读。</p>
+<h3 id="42-agentsmd-的发现规则">4.2 <code>AGENTS.md</code> 的发现规则
+</h3><p>Codex 启动时会构建一条指令链。</p>
+<p>全局层通常在 Codex home 目录里，例如 <code>~/.codex/AGENTS.md</code>。</p>
+<p>项目层则从项目根目录一路走到当前工作目录，读取沿途的 <code>AGENTS.md</code> 或 <code>AGENTS.override.md</code>。</p>
+<p>这里最容易混淆的一点是：项目级 <code>AGENTS.md</code> 默认不放在项目 <code>.codex/</code> 目录下。</p>
+<p>也就是说：</p>
+<ul>
+<li><code>~/.codex/AGENTS.md</code> 是全局个人默认说明。</li>
+<li><code>repo/AGENTS.md</code> 是项目级长期说明。</li>
+<li><code>repo/.codex/config.toml</code> 是项目级 Codex 配置。</li>
+<li><code>repo/.codex/README.md</code> 可以写迁移说明、配置说明和本地约定汇总，但它不是 Codex 默认的项目长期说明入口。</li>
+</ul>
+<p><code>.codex/</code> 更像是 Codex 客户端配置和扩展目录；<code>AGENTS.md</code> 更像是给 Agent 看的项目协作说明。二者经常一起出现，但职责不同。</p>
+<p>这意味着你可以这样组织：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">repo/
+</span></span><span class="line"><span class="cl">  AGENTS.md
+</span></span><span class="line"><span class="cl">  backend/
+</span></span><span class="line"><span class="cl">    AGENTS.md
+</span></span><span class="line"><span class="cl">  frontend/
+</span></span><span class="line"><span class="cl">    AGENTS.md
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>当你在 <code>backend/</code> 里启动 Codex，根目录规则和 <code>backend/AGENTS.md</code> 都会影响当前任务；更靠近当前目录的规则更适合写局部约束。</p>
+<h3 id="43-agentsmd-应该写什么">4.3 <code>AGENTS.md</code> 应该写什么
+</h3><p>一个实用的 <code>AGENTS.md</code> 可以这样写：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-md" data-lang="md"><span class="line"><span class="cl"><span class="gh"># Project Instructions
+</span></span></span><span class="line"><span class="cl"><span class="gh"></span>
+</span></span><span class="line"><span class="cl"><span class="gu">## Commands
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="k">-</span> Install dependencies with <span class="sb">`pnpm install`</span>
+</span></span><span class="line"><span class="cl"><span class="k">-</span> Run tests with <span class="sb">`pnpm test`</span>
+</span></span><span class="line"><span class="cl"><span class="k">-</span> Run lint with <span class="sb">`pnpm lint`</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="gu">## Code Style
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="k">-</span> Use TypeScript strict mode.
+</span></span><span class="line"><span class="cl"><span class="k">-</span> Prefer existing components and helpers.
+</span></span><span class="line"><span class="cl"><span class="k">-</span> Do not introduce a new state library.
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="gu">## Verification
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="k">-</span> Run tests for changed packages.
+</span></span><span class="line"><span class="cl"><span class="k">-</span> Explain any test that could not be run.
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="gu">## Safety
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="k">-</span> Do not edit generated files.
+</span></span><span class="line"><span class="cl"><span class="k">-</span> Do not change public APIs without updating docs.
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>AGENTS.md</code> 的重点不是写得长，而是写得具体。</p>
+<p>好的规则是可执行、可验证的；差的规则是&quot;写高质量代码&quot;&ldquo;保持优雅&quot;&ldquo;注意安全&quot;这种空话。</p>
+<h3 id="44-agentsmd-与-codexconfigtoml-的边界">4.4 <code>AGENTS.md</code> 与 <code>.codex/config.toml</code> 的边界
+</h3><p>二者最常见的混淆是：&ldquo;到底该写到哪个文件里？&rdquo;</p>
+<p>可以用这张表判断：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>规则</th>
+          <th>放哪里</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>&ldquo;每次改后端代码都跑 <code>go test ./...</code>&rdquo;</td>
+          <td><code>AGENTS.md</code></td>
+      </tr>
+      <tr>
+          <td>&ldquo;默认使用 <code>workspace-write</code> 沙箱&rdquo;</td>
+          <td><code>.codex/config.toml</code></td>
+      </tr>
+      <tr>
+          <td>&ldquo;不要修改 <code>generated/</code> 目录&rdquo;</td>
+          <td><code>AGENTS.md</code></td>
+      </tr>
+      <tr>
+          <td>&ldquo;启用 Hooks&rdquo;</td>
+          <td><code>.codex/config.toml</code></td>
+      </tr>
+      <tr>
+          <td>&ldquo;配置 Figma MCP 服务&rdquo;</td>
+          <td><code>.codex/config.toml</code></td>
+      </tr>
+      <tr>
+          <td>&ldquo;本仓库 PR 总结要包含风险和测试&rdquo;</td>
+          <td><code>AGENTS.md</code></td>
+      </tr>
+  </tbody>
+</table></div>
+<p>一句话：人类工程约定放 <code>AGENTS.md</code>，Codex 客户端运行设置放 <code>.codex/config.toml</code>。</p>
+<hr>
+<h2 id="五hooks在生命周期里插入确定性脚本">五、Hooks：在生命周期里插入确定性脚本
+</h2><h3 id="51-hooks-是什么">5.1 Hooks 是什么
+</h3><p>Hooks 是 Codex 的生命周期扩展机制。</p>
+<p>它允许你在 Codex 的某些事件发生时运行脚本，比如：</p>
+<ul>
+<li>会话启动时加载上下文</li>
+<li>用户提交 prompt 后做检查</li>
+<li>工具调用前做策略拦截</li>
+<li>工具调用后分析结果</li>
+<li>任务停止时做总结或记录</li>
+<li>子 Agent 启动和停止时做审计</li>
+</ul>
+<p>如果说 <code>AGENTS.md</code> 是&quot;告诉模型应该怎么做&rdquo;，Hooks 就是&quot;用脚本确定性地做一件事&rdquo;。</p>
+<p>例如，禁止误贴密钥、记录审计日志、校验命令风险，这些事情更适合 Hooks，而不是只靠提示词。</p>
+<h3 id="52-hooks-的常见事件">5.2 Hooks 的常见事件
+</h3><p>Codex Hooks 支持多个事件。</p>
+<p>常见事件包括：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>事件</th>
+          <th>触发时机</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>SessionStart</code></td>
+          <td>会话启动、恢复、清空或压缩后</td>
+      </tr>
+      <tr>
+          <td><code>UserPromptSubmit</code></td>
+          <td>用户提交 prompt 后</td>
+      </tr>
+      <tr>
+          <td><code>PreToolUse</code></td>
+          <td>工具调用前</td>
+      </tr>
+      <tr>
+          <td><code>PermissionRequest</code></td>
+          <td>Codex 需要权限审批时</td>
+      </tr>
+      <tr>
+          <td><code>PostToolUse</code></td>
+          <td>工具调用后</td>
+      </tr>
+      <tr>
+          <td><code>PreCompact</code></td>
+          <td>上下文压缩前</td>
+      </tr>
+      <tr>
+          <td><code>PostCompact</code></td>
+          <td>上下文压缩后</td>
+      </tr>
+      <tr>
+          <td><code>SubagentStart</code></td>
+          <td>子 Agent 启动时</td>
+      </tr>
+      <tr>
+          <td><code>SubagentStop</code></td>
+          <td>子 Agent 停止时</td>
+      </tr>
+      <tr>
+          <td><code>Stop</code></td>
+          <td>一轮任务停止时</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>Hooks 的价值在于它是确定性的。</p>
+<p>提示词可能被模型理解得不稳定，但 Hooks 是脚本：输入是什么，输出是什么，可以测试，可以审计。</p>
+<h3 id="53-在-configtoml-中配置-hooks">5.3 在 <code>config.toml</code> 中配置 Hooks
+</h3><p>Hooks 可以写到配置里。</p>
+<p>例如，在调用 Bash 工具前运行一个策略脚本：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-toml" data-lang="toml"><span class="line"><span class="cl"><span class="c"># .codex/config.toml</span>
+</span></span><span class="line"><span class="cl"><span class="p">[</span><span class="nx">features</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">hooks</span> <span class="p">=</span> <span class="kc">true</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="p">[[</span><span class="nx">hooks</span><span class="p">.</span><span class="nx">PreToolUse</span><span class="p">]]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">matcher</span> <span class="p">=</span> <span class="s2">&#34;^Bash$&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="p">[[</span><span class="nx">hooks</span><span class="p">.</span><span class="nx">PreToolUse</span><span class="p">.</span><span class="nx">hooks</span><span class="p">]]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">type</span> <span class="p">=</span> <span class="s2">&#34;command&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">command</span> <span class="p">=</span> <span class="s1">&#39;/usr/bin/python3 &#34;$(git rev-parse --show-toplevel)/.codex/hooks/pre_tool_use_policy.py&#34;&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">timeout</span> <span class="p">=</span> <span class="mi">30</span>
+</span></span><span class="line"><span class="cl"><span class="nx">statusMessage</span> <span class="p">=</span> <span class="s2">&#34;Checking Bash command&#34;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这个配置表达的是：</p>
+<ul>
+<li>事件：<code>PreToolUse</code></li>
+<li>匹配器：只匹配 Bash 工具</li>
+<li>动作：运行一个 Python 脚本</li>
+<li>超时：30 秒</li>
+<li>状态文案：<code>Checking Bash command</code></li>
+</ul>
+<p>项目内 Hooks 脚本常放在：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">.codex/hooks/
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>但是脚本路径不要只写相对路径。Codex 可能从仓库子目录启动，因此更稳妥的方式是从 Git 根目录解析。</p>
+<h3 id="54-hooks-适合做什么">5.4 Hooks 适合做什么
+</h3><p>Hooks 适合做这些事情：</p>
+<ul>
+<li>检查命令是否包含高风险操作</li>
+<li>阻止 prompt 中出现 API Key（Application Programming Interface Key，应用程序接口密钥）</li>
+<li>将任务过程写入审计系统</li>
+<li>在任务结束时生成结构化记录</li>
+<li>在特定目录注入额外上下文</li>
+<li>对工具输出做安全扫描</li>
+</ul>
+<p>Hooks 不适合做这些事情：</p>
+<ul>
+<li>写一大段任务流程说明</li>
+<li>教 Codex 如何写博客</li>
+<li>描述项目架构</li>
+<li>代替测试框架</li>
+</ul>
+<p>任务方法放 Skills，项目规则放 <code>AGENTS.md</code>，确定性拦截和旁路自动化放 Hooks。</p>
+<hr>
+<h2 id="六mcp连接外部工具和上下文">六、MCP：连接外部工具和上下文
+</h2><h3 id="61-mcp-是什么">6.1 MCP 是什么
+</h3><p>MCP 是一套把模型连接到外部工具和上下文的协议。</p>
+<p>在 Codex 里，MCP 常用来接入：</p>
+<ul>
+<li>官方文档检索</li>
+<li>浏览器或 Playwright</li>
+<li>Figma</li>
+<li>GitHub</li>
+<li>Sentry</li>
+<li>内部知识库</li>
+<li>业务系统</li>
+</ul>
+<p>如果 Codex 只能读本地文件，它对外部事实的理解就会受限。</p>
+<p>MCP 的作用是把外部系统变成可调用工具，让 Codex 能在任务过程中获取最新或私有信息。</p>
+<h3 id="62-mcp-在-configtoml-中怎么配">6.2 MCP 在 <code>config.toml</code> 中怎么配
+</h3><p>一个 stdio 类型 MCP 服务可以这样配置：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-toml" data-lang="toml"><span class="line"><span class="cl"><span class="p">[</span><span class="nx">mcp_servers</span><span class="p">.</span><span class="nx">context7</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">command</span> <span class="p">=</span> <span class="s2">&#34;npx&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">args</span> <span class="p">=</span> <span class="p">[</span><span class="s2">&#34;-y&#34;</span><span class="p">,</span> <span class="s2">&#34;@upstash/context7-mcp&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">env_vars</span> <span class="p">=</span> <span class="p">[</span><span class="s2">&#34;LOCAL_TOKEN&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="p">[</span><span class="nx">mcp_servers</span><span class="p">.</span><span class="nx">context7</span><span class="p">.</span><span class="nx">env</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">MY_ENV_VAR</span> <span class="p">=</span> <span class="s2">&#34;MY_ENV_VALUE&#34;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>一个 HTTP 类型 MCP 服务可以这样配置：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-toml" data-lang="toml"><span class="line"><span class="cl"><span class="p">[</span><span class="nx">mcp_servers</span><span class="p">.</span><span class="nx">figma</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">url</span> <span class="p">=</span> <span class="s2">&#34;https://mcp.figma.com/mcp&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">bearer_token_env_var</span> <span class="p">=</span> <span class="s2">&#34;FIGMA_OAUTH_TOKEN&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">http_headers</span> <span class="p">=</span> <span class="p">{</span> <span class="s2">&#34;X-Figma-Region&#34;</span> <span class="p">=</span> <span class="s2">&#34;us-east-1&#34;</span> <span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>还可以限制工具：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-toml" data-lang="toml"><span class="line"><span class="cl"><span class="p">[</span><span class="nx">mcp_servers</span><span class="p">.</span><span class="nx">chrome_devtools</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">url</span> <span class="p">=</span> <span class="s2">&#34;http://localhost:3000/mcp&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">enabled_tools</span> <span class="p">=</span> <span class="p">[</span><span class="s2">&#34;open&#34;</span><span class="p">,</span> <span class="s2">&#34;screenshot&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">default_tools_approval_mode</span> <span class="p">=</span> <span class="s2">&#34;prompt&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">startup_timeout_sec</span> <span class="p">=</span> <span class="mi">20</span>
+</span></span><span class="line"><span class="cl"><span class="nx">tool_timeout_sec</span> <span class="p">=</span> <span class="mi">45</span>
+</span></span><span class="line"><span class="cl"><span class="nx">enabled</span> <span class="p">=</span> <span class="kc">true</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里最重要的是：不要把密钥直接写死在配置里。</p>
+<p>更好的方式是用环境变量，例如 <code>bearer_token_env_var</code> 或 <code>env_vars</code>。</p>
+<h3 id="63-mcp-与普通命令的区别">6.3 MCP 与普通命令的区别
+</h3><p>MCP 不是简单的&quot;让 Codex 执行一个命令&quot;。</p>
+<p>它更像是把外部系统包装成一组语义化工具。</p>
+<p>例如：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>方式</th>
+          <th>特点</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Bash 命令</td>
+          <td>灵活，但输出往往是非结构化文本</td>
+      </tr>
+      <tr>
+          <td>MCP 工具</td>
+          <td>接口更明确，权限和工具边界更可控</td>
+      </tr>
+      <tr>
+          <td>Web 搜索</td>
+          <td>适合公开网页，不适合私有系统</td>
+      </tr>
+      <tr>
+          <td>App Connector（应用连接器）</td>
+          <td>适合授权访问 Google Drive、Slack 等私有应用</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>如果任务需要稳定访问一个外部系统，优先考虑 MCP 或连接器，而不是让 Codex 每次临时拼命令。</p>
+<h3 id="64-skills-与-mcp-的组合">6.4 Skills 与 MCP 的组合
+</h3><p>Skills 和 MCP 经常一起使用。</p>
+<p>Skill 定义&quot;这类任务怎么做&quot;，MCP 提供&quot;这类任务需要调用什么外部能力&quot;。</p>
+<p>例如，写一篇技术博客的 Skill 可以要求：</p>
+<ol>
+<li>先确认主题和受众。</li>
+<li>通过 OpenAI Docs MCP 查询官方资料。</li>
+<li>根据固定模板写文章。</li>
+<li>保存到 Hugo 指定目录。</li>
+</ol>
+<p>这里 Skill 是流程，MCP 是资料来源。</p>
+<hr>
+<h2 id="七skillsplugins-与-subagents">七、Skills、Plugins 与 Subagents
+</h2><h3 id="71-skills-是什么">7.1 Skills 是什么
+</h3><p>Skills 是可复用的任务工作流。</p>
+<p>一个 Skill 通常是一个目录，核心入口是 <code>SKILL.md</code>，也可以带脚本、参考资料和模板：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">my-skill/
+</span></span><span class="line"><span class="cl">  SKILL.md
+</span></span><span class="line"><span class="cl">  scripts/
+</span></span><span class="line"><span class="cl">  references/
+</span></span><span class="line"><span class="cl">  assets/
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>SKILL.md</code> 至少需要 <code>name</code> 和 <code>description</code>。</p>
+<p>Codex 会先看到 Skill 的名称、描述和路径。当任务匹配时，再加载完整 <code>SKILL.md</code>。</p>
+<p>这就是 Skills 的核心设计：渐进式披露。</p>
+<h3 id="72-skill-应该放在哪里">7.2 Skill 应该放在哪里
+</h3><p>这里有一个很容易踩坑的点。</p>
+<p>截至本文写作时，我核对到的 OpenAI 官方 Codex Skills 文档写的是：仓库级 Skills 扫描 <code>.agents/skills</code>，用户级 Skills 可以放 <code>$HOME/.agents/skills</code>，管理员级 Skills 可以放 <code>/etc/codex/skills</code>。</p>
+<p>也就是说，官方文档里的仓库级结构是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">repo/
+</span></span><span class="line"><span class="cl">  .agents/
+</span></span><span class="line"><span class="cl">    skills/
+</span></span><span class="line"><span class="cl">      write-tech-post/
+</span></span><span class="line"><span class="cl">        SKILL.md
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>而本文所在项目中，因为从 Claude Code 的 <code>.claude/skills</code> 迁移过来，曾经生成过：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">repo/
+</span></span><span class="line"><span class="cl">  .codex/
+</span></span><span class="line"><span class="cl">    skills/
+</span></span><span class="line"><span class="cl">      write-tech-post/
+</span></span><span class="line"><span class="cl">        SKILL.md
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这可以作为迁移留档或本地组织方式，但如果希望 Codex 按官方文档自动发现仓库级 Skill，应优先同步到 <code>.agents/skills</code>，或者把 Skill 打包成 Plugin。</p>
+<p>这个边界要写清楚，否则很容易以为&quot;.codex 下有 skills 目录，Codex 就一定会扫描&quot;。</p>
+<h3 id="73-skill-适合写什么">7.3 Skill 适合写什么
+</h3><p>Skill 适合沉淀&quot;每次都差不多，但又不是简单命令&quot;的任务。</p>
+<p>例如：</p>
+<ul>
+<li>写技术博客</li>
+<li>生成 PR（Pull Request，拉取请求）描述</li>
+<li>做安全 review</li>
+<li>发布前检查</li>
+<li>从设计稿生成页面</li>
+<li>根据日志排查线上问题</li>
+<li>整理会议纪要</li>
+</ul>
+<p>一个好的 Skill 应该包含：</p>
+<ul>
+<li>触发条件</li>
+<li>不触发条件</li>
+<li>标准流程</li>
+<li>输入输出格式</li>
+<li>必须检查的事项</li>
+<li>参考资料</li>
+<li>可复用脚本</li>
+</ul>
+<p>不要把 Skill 写成一坨泛泛的提示词。</p>
+<h3 id="74-plugins-是什么">7.4 Plugins 是什么
+</h3><p>Plugins 是 Codex 的可安装分发单元。</p>
+<p>如果 Skill 只是本仓库自用，放在仓库里就够了。</p>
+<p>如果你想让多个项目、多个同事、多个环境都能安装同一组能力，就应该考虑 Plugin。</p>
+<p>Plugin 可以包含：</p>
+<ul>
+<li>Skills</li>
+<li>Apps（应用集成）</li>
+<li>MCP servers</li>
+<li>Hooks</li>
+<li>资源文件和展示资产</li>
+</ul>
+<p>可以把 Skill 理解为&quot;工作流本体&quot;，把 Plugin 理解为&quot;安装和分发包&quot;。</p>
+<h3 id="75-subagents-是什么">7.5 Subagents 是什么
+</h3><p>Subagents 是 Codex 的并行委派机制。</p>
+<p>当任务很大时，Codex 可以启动多个专门 Agent 并行工作，然后汇总结果。</p>
+<p>Codex 内置一些 Agent 类型，例如：</p>
+<ul>
+<li><code>default</code>：通用回退 Agent</li>
+<li><code>worker</code>：偏执行和修复</li>
+<li><code>explorer</code>：偏只读探索</li>
+</ul>
+<p>你也可以定义自己的 Agent。</p>
+<p>项目级自定义 Agent 放在：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">.codex/agents/
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>用户级自定义 Agent 放在：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">~/.codex/agents/
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>一个自定义 Agent 文件示例：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-toml" data-lang="toml"><span class="line"><span class="cl"><span class="c"># .codex/agents/reviewer.toml</span>
+</span></span><span class="line"><span class="cl"><span class="nx">name</span> <span class="p">=</span> <span class="s2">&#34;reviewer&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">description</span> <span class="p">=</span> <span class="s2">&#34;PR reviewer focused on correctness, security, and missing tests.&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">model_reasoning_effort</span> <span class="p">=</span> <span class="s2">&#34;high&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">sandbox_mode</span> <span class="p">=</span> <span class="s2">&#34;read-only&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">developer_instructions</span> <span class="p">=</span> <span class="s2">&#34;&#34;&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s2">Review code like an owner.
+</span></span></span><span class="line"><span class="cl"><span class="s2">Prioritize correctness, security, behavior regressions, and missing test coverage.
+</span></span></span><span class="line"><span class="cl"><span class="s2">Lead with concrete findings.
+</span></span></span><span class="line"><span class="cl"><span class="s2">&#34;&#34;&#34;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>Subagents 适合并行探索、分工 review、资料核对。</p>
+<p>但它也会增加 token、延迟和复杂度。小任务不要滥用。</p>
+<hr>
+<h2 id="八codex-的安全模型sandboxapproval-与-rules">八、Codex 的安全模型：Sandbox、Approval 与 Rules
+</h2><h3 id="81-sandbox-控制能访问什么">8.1 Sandbox 控制能访问什么
+</h3><p>Sandbox 控制 Codex 执行命令时的访问范围。</p>
+<p>最常见的是：</p>
+<ul>
+<li><code>read-only</code></li>
+<li><code>workspace-write</code></li>
+<li><code>danger-full-access</code></li>
+</ul>
+<p><code>read-only</code> 适合阅读、审查、分析。</p>
+<p><code>workspace-write</code> 适合日常开发。</p>
+<p><code>danger-full-access</code> 适合已经被外部隔离的可信环境，不适合随手打开陌生仓库时使用。</p>
+<h3 id="82-approval-控制什么时候问人">8.2 Approval 控制什么时候问人
+</h3><p>Approval 控制 Codex 什么时候暂停并请求用户确认。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-toml" data-lang="toml"><span class="line"><span class="cl"><span class="nx">approval_policy</span> <span class="p">=</span> <span class="s2">&#34;on-request&#34;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这表示 Codex 可以在需要时向用户请求审批。</p>
+<p>非交互自动化更常见的是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-toml" data-lang="toml"><span class="line"><span class="cl"><span class="nx">approval_policy</span> <span class="p">=</span> <span class="s2">&#34;never&#34;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>但 <code>never</code> 并不等于安全。它只是表示不问人；如果权限放得太大，风险会更高。</p>
+<h3 id="83-rules-与企业约束">8.3 Rules 与企业约束
+</h3><p>除了本地配置，Codex 还有更强的约束层，例如 <code>requirements.toml</code> 或企业托管配置。</p>
+<p>这类配置常用于：</p>
+<ul>
+<li>限制允许的沙箱模式</li>
+<li>限制允许的审批策略</li>
+<li>强制某些 Hooks</li>
+<li>控制网络访问</li>
+<li>设置企业级策略</li>
+</ul>
+<p>如果个人配置、项目配置和企业要求冲突，企业要求通常用于兜底和强制。</p>
+<h3 id="84-推荐的权限组合">8.4 推荐的权限组合
+</h3><p>日常工作可以从这个组合开始：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-toml" data-lang="toml"><span class="line"><span class="cl"><span class="nx">sandbox_mode</span> <span class="p">=</span> <span class="s2">&#34;workspace-write&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">approval_policy</span> <span class="p">=</span> <span class="s2">&#34;on-request&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="p">[</span><span class="nx">features</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">hooks</span> <span class="p">=</span> <span class="kc">true</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>做 review 或安全审查时，可以更保守：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-toml" data-lang="toml"><span class="line"><span class="cl"><span class="nx">sandbox_mode</span> <span class="p">=</span> <span class="s2">&#34;read-only&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">approval_policy</span> <span class="p">=</span> <span class="s2">&#34;on-request&#34;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>做完全自动化时，要把仓库、命令和运行环境都设计好，再考虑：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-toml" data-lang="toml"><span class="line"><span class="cl"><span class="nx">approval_policy</span> <span class="p">=</span> <span class="s2">&#34;never&#34;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>不要因为想省一次确认，把整个本机暴露给高权限自动化。</p>
+<hr>
+<h2 id="九一个推荐的项目目录结构">九、一个推荐的项目目录结构
+</h2><h3 id="91-最小可用结构">9.1 最小可用结构
+</h3><p>一个普通项目可以这样组织：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">repo/
+</span></span><span class="line"><span class="cl">  AGENTS.md
+</span></span><span class="line"><span class="cl">  .codex/
+</span></span><span class="line"><span class="cl">    config.toml
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这已经能覆盖大多数日常需求：</p>
+<ul>
+<li><code>AGENTS.md</code> 写项目约定</li>
+<li><code>.codex/config.toml</code> 写 Codex 行为</li>
+</ul>
+<p>注意不要把项目级 <code>AGENTS.md</code> 放进 <code>.codex/</code> 里。项目内 <code>.codex/</code> 适合放 Codex 配置、Hooks、Subagents 等文件；如果需要一份本地配置说明，可以放 <code>.codex/README.md</code>，但它只是给人读的汇总文档，不能替代根目录 <code>AGENTS.md</code>。</p>
+<h3 id="92-加上-hooks">9.2 加上 Hooks
+</h3><p>当需要命令检查、审计或自动上下文注入时，可以加：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">repo/
+</span></span><span class="line"><span class="cl">  AGENTS.md
+</span></span><span class="line"><span class="cl">  .codex/
+</span></span><span class="line"><span class="cl">    config.toml
+</span></span><span class="line"><span class="cl">    hooks/
+</span></span><span class="line"><span class="cl">      pre_tool_use_policy.py
+</span></span><span class="line"><span class="cl">      stop_summary.py
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>然后在 <code>.codex/config.toml</code> 中引用这些脚本。</p>
+<h3 id="93-加上自定义-agent">9.3 加上自定义 Agent
+</h3><p>当需要专门的 review、探索或文档研究 Agent 时，可以加：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">repo/
+</span></span><span class="line"><span class="cl">  AGENTS.md
+</span></span><span class="line"><span class="cl">  .codex/
+</span></span><span class="line"><span class="cl">    config.toml
+</span></span><span class="line"><span class="cl">    agents/
+</span></span><span class="line"><span class="cl">      reviewer.toml
+</span></span><span class="line"><span class="cl">      explorer.toml
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="94-加上官方仓库级-skills">9.4 加上官方仓库级 Skills
+</h3><p>如果要按官方 Codex 文档让仓库级 Skill 被扫描，可以使用：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">repo/
+</span></span><span class="line"><span class="cl">  .agents/
+</span></span><span class="line"><span class="cl">    skills/
+</span></span><span class="line"><span class="cl">      write-tech-post/
+</span></span><span class="line"><span class="cl">        SKILL.md
+</span></span><span class="line"><span class="cl">        references/
+</span></span><span class="line"><span class="cl">        scripts/
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果你还保留了 <code>.codex/skills</code> 作为迁移目录，建议在 README 里说明它的用途，并定期同步到 <code>.agents/skills</code> 或打包成 Plugin。</p>
+<h3 id="95-一个完整示例">9.5 一个完整示例
+</h3><p>完整一点的项目结构可能是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">repo/
+</span></span><span class="line"><span class="cl">  AGENTS.md
+</span></span><span class="line"><span class="cl">  .codex/
+</span></span><span class="line"><span class="cl">    config.toml
+</span></span><span class="line"><span class="cl">    README.md
+</span></span><span class="line"><span class="cl">    hooks/
+</span></span><span class="line"><span class="cl">      pre_tool_use_policy.py
+</span></span><span class="line"><span class="cl">      post_tool_use_review.py
+</span></span><span class="line"><span class="cl">    agents/
+</span></span><span class="line"><span class="cl">      reviewer.toml
+</span></span><span class="line"><span class="cl">      docs-researcher.toml
+</span></span><span class="line"><span class="cl">  .agents/
+</span></span><span class="line"><span class="cl">    skills/
+</span></span><span class="line"><span class="cl">      write-tech-post/
+</span></span><span class="line"><span class="cl">        SKILL.md
+</span></span><span class="line"><span class="cl">        references/
+</span></span><span class="line"><span class="cl">        examples/
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>其中：</p>
+<ul>
+<li><code>AGENTS.md</code> 是项目说明。</li>
+<li><code>.codex/config.toml</code> 是 Codex 配置。</li>
+<li><code>.codex/hooks/</code> 是 Hooks 脚本。</li>
+<li><code>.codex/agents/</code> 是自定义 Agent。</li>
+<li><code>.agents/skills/</code> 是官方文档描述的仓库级 Skill 位置。</li>
+<li><code>.codex/README.md</code> 可以记录本仓库 Codex 迁移说明、配置说明和本地约定，但它不替代 <code>AGENTS.md</code>。</li>
+</ul>
+<hr>
+<h2 id="十从-claude-code-迁移到-codex-时怎么映射">十、从 Claude Code 迁移到 Codex 时怎么映射
+</h2><h3 id="101-常见映射表">10.1 常见映射表
+</h3><p>如果你已经有 <code>.claude/</code>，迁移到 Codex 时可以先这样映射：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>Claude Code</th>
+          <th>Codex</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>CLAUDE.md</code></td>
+          <td><code>AGENTS.md</code></td>
+      </tr>
+      <tr>
+          <td><code>.claude/settings.json</code></td>
+          <td><code>.codex/config.toml</code> + <code>.codex/README.md</code></td>
+      </tr>
+      <tr>
+          <td><code>.claude/skills/&lt;name&gt;/SKILL.md</code></td>
+          <td><code>.agents/skills/&lt;name&gt;/SKILL.md</code> 或 Plugin</td>
+      </tr>
+      <tr>
+          <td><code>.claude/commands/</code></td>
+          <td>Skill 或命令类 Plugin</td>
+      </tr>
+      <tr>
+          <td>Claude Hooks</td>
+          <td>Codex Hooks</td>
+      </tr>
+      <tr>
+          <td>Claude MCP 配置</td>
+          <td>Codex <code>[mcp_servers]</code></td>
+      </tr>
+      <tr>
+          <td>Subagents</td>
+          <td><code>.codex/agents/*.toml</code></td>
+      </tr>
+  </tbody>
+</table></div>
+<p>注意：迁移不是简单复制目录名。</p>
+<p>尤其是 Claude 的 <code>settings.json</code> 里常有逐命令 allow/deny 规则，而 Codex 的权限模型主要由 sandbox、approval、rules、hooks 和 requirements 共同表达。</p>
+<h3 id="102-权限迁移怎么做">10.2 权限迁移怎么做
+</h3><p>Claude 里如果有类似：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;permissions&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;allow&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;Bash(git:*)&#34;</span><span class="p">,</span> <span class="s2">&#34;Read(**)&#34;</span><span class="p">,</span> <span class="s2">&#34;Edit(**)&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;deny&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;Bash(rm:*)&#34;</span><span class="p">,</span> <span class="s2">&#34;Read(**/*.key)&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>迁移到 Codex 时不要机械写成某个不存在的一比一配置。</p>
+<p>更稳的做法是分层迁移：</p>
+<ol>
+<li>用 <code>sandbox_mode</code> 和 <code>approval_policy</code> 表达总体权限。</li>
+<li>用 <code>AGENTS.md</code> 记录希望 Codex 长期遵守的安全约束。</li>
+<li>用 <code>.codex/README.md</code> 记录迁移备忘、配置说明和无法结构化进 <code>config.toml</code> 的说明性内容。</li>
+<li>用 Hooks 对高风险命令做确定性检查。</li>
+<li>如果是企业要求，用 <code>requirements.toml</code> 或托管配置强制执行。</li>
+</ol>
+<h3 id="103-skill-迁移怎么做">10.3 Skill 迁移怎么做
+</h3><p>Claude Skill 的 <code>SKILL.md</code> 通常可以复用大部分内容。</p>
+<p>但要检查这些点：</p>
+<ul>
+<li>frontmatter 是否有 Codex 不识别或不需要的字段</li>
+<li>工具名是否是 Claude 专属工具名</li>
+<li>路径是否仍指向 <code>.claude/</code></li>
+<li>是否应该放进 <code>.agents/skills</code></li>
+<li>是否要打包成 Plugin</li>
+</ul>
+<p>例如，Claude 里写 <code>allowed-tools: WebFetch Read Write Edit Glob</code>，迁移到 Codex 时就不应该原样照搬，而应该改成 Codex 当前可用工具或更通用的描述。</p>
+<hr>
+<h2 id="十一最佳实践">十一、最佳实践
+</h2><h3 id="111-先写-agentsmd">11.1 先写 <code>AGENTS.md</code>
+</h3><p>Codex 最先需要知道的是&quot;这个项目怎么工作&quot;。</p>
+<p>所以第一个应该完善的不是 Hooks，也不是 MCP，而是 <code>AGENTS.md</code>。</p>
+<p>至少写清楚：</p>
+<ul>
+<li>项目是什么</li>
+<li>目录结构</li>
+<li>常用命令</li>
+<li>测试方式</li>
+<li>代码风格</li>
+<li>禁止事项</li>
+<li>完成标准</li>
+</ul>
+<h3 id="112-再写-codexconfigtoml">11.2 再写 <code>.codex/config.toml</code>
+</h3><p>当项目规则清楚后，再配置 Codex 的运行方式：</p>
+<ul>
+<li>默认模型</li>
+<li>推理强度</li>
+<li>沙箱</li>
+<li>审批</li>
+<li>MCP</li>
+<li>Hooks</li>
+</ul>
+<p>不要把配置写得过满。</p>
+<p>能用默认值解决的，不必一上来全部覆盖。</p>
+<h3 id="113-重复流程沉淀成-skill">11.3 重复流程沉淀成 Skill
+</h3><p>当你第三次对 Codex 说同一套流程，就应该考虑写 Skill。</p>
+<p>例如：</p>
+<ul>
+<li>&ldquo;先读这些官方文档，再写 Hugo 文章&rdquo;</li>
+<li>&ldquo;先跑这些测试，再做 PR 总结&rdquo;</li>
+<li>&ldquo;先扫描这些目录，再输出架构图&rdquo;</li>
+</ul>
+<p>Skill 的价值是把经验从 prompt 里拿出来，变成可复用资产。</p>
+<h3 id="114-需要外部系统时再接-mcp">11.4 需要外部系统时再接 MCP
+</h3><p>MCP 很有用，但不要为了&quot;高级&quot;而接。</p>
+<p>只有当任务真的需要外部系统时再接：</p>
+<ul>
+<li>需要最新官方文档</li>
+<li>需要 Figma 设计稿</li>
+<li>需要浏览器截图</li>
+<li>需要 GitHub Issue</li>
+<li>需要内部知识库</li>
+</ul>
+<p>如果本地文件已经足够，就不要增加额外依赖。</p>
+<h3 id="115-能确定性执行的规则交给-hooks">11.5 能确定性执行的规则交给 Hooks
+</h3><p>不要指望提示词稳定拦截所有危险命令。</p>
+<p>例如这些事情更适合 Hooks：</p>
+<ul>
+<li>禁止 <code>rm -rf</code></li>
+<li>禁止读取私钥文件</li>
+<li>检查提交信息格式</li>
+<li>扫描 prompt 中的密钥</li>
+<li>记录工具调用审计日志</li>
+</ul>
+<p>提示词负责意图和策略，Hooks 负责确定性边界。</p>
+<h3 id="116-不要滥用-subagents">11.6 不要滥用 Subagents
+</h3><p>Subagents 适合大任务、并行探索和专业分工。</p>
+<p>但它也会带来：</p>
+<ul>
+<li>更多 token 消耗</li>
+<li>更高延迟</li>
+<li>更多上下文汇总成本</li>
+<li>更复杂的结果合并</li>
+</ul>
+<p>小任务单 Agent 做完就好。</p>
+<h3 id="117-建议的搭建顺序">11.7 建议的搭建顺序
+</h3><p>我建议按这个顺序搭 Codex 工作流：</p>
+<ol>
+<li>写 <code>AGENTS.md</code>。</li>
+<li>写 <code>.codex/config.toml</code>。</li>
+<li>配必要的 MCP。</li>
+<li>把重复流程写成 Skill。</li>
+<li>把共享能力打包成 Plugin。</li>
+<li>给高风险边界加 Hooks。</li>
+<li>大任务再引入 Subagents。</li>
+</ol>
+<p>这个顺序的好处是：先解决基础上下文，再解决执行环境，然后再扩展能力。</p>
+<hr>
+<h2 id="十二常见高频面试题">十二、常见高频面试题
+</h2><h3 id="121-agentsmd-和-codexconfigtoml-的区别是什么">12.1 <code>AGENTS.md</code> 和 <code>.codex/config.toml</code> 的区别是什么？
+</h3><p><strong>答：</strong></p>
+<p><code>AGENTS.md</code> 是给 Agent 的项目说明，解决&quot;在这个项目里应该怎么工作&quot;的问题。</p>
+<p><code>.codex/config.toml</code> 是 Codex 客户端配置，解决&quot;Codex 这次运行时应该使用什么模型、权限、沙箱、MCP、Hooks&quot;的问题。</p>
+<p>举例来说，&ldquo;改完后端要跑 <code>go test ./...</code>&rdquo; 应该放 <code>AGENTS.md</code>；&ldquo;默认沙箱用 <code>workspace-write</code>&rdquo; 应该放 <code>.codex/config.toml</code>。</p>
+<p>一个偏工程约定，一个偏运行设置。</p>
+<p>补充一点：项目级 <code>AGENTS.md</code> 默认放在仓库根目录或对应子目录，不放在项目 <code>.codex/</code> 目录下。<code>.codex/README.md</code> 可以作为迁移说明或本地配置汇总，但 Codex 的项目长期说明入口仍然是 <code>AGENTS.md</code>。</p>
+<h3 id="122-hooks-和-agentsmd-都能约束-codex为什么还需要-hooks">12.2 Hooks 和 <code>AGENTS.md</code> 都能约束 Codex，为什么还需要 Hooks？
+</h3><p><strong>答：</strong></p>
+<p><code>AGENTS.md</code> 是自然语言指令，模型会读并遵守，但它本质上仍然依赖模型理解。</p>
+<p>Hooks 是生命周期脚本，执行结果更确定。</p>
+<p>如果只是&quot;PR 总结要包含测试情况&quot;，放 <code>AGENTS.md</code> 很合适。</p>
+<p>如果是&quot;禁止执行 <code>rm -rf</code>&quot;、&ldquo;禁止读取 <code>.env</code>&quot;、&ldquo;检测 prompt 中是否包含密钥&rdquo;，更适合用 Hooks 或企业策略实现。</p>
+<p>所以二者不是替代关系，而是互补关系：<code>AGENTS.md</code> 管协作约定，Hooks 管确定性边界。</p>
+<h3 id="123-skillspluginsmcp-三者有什么区别">12.3 Skills、Plugins、MCP 三者有什么区别？
+</h3><p><strong>答：</strong></p>
+<p>Skills 是工作流。</p>
+<p>它告诉 Codex：遇到这类任务应该按什么步骤做，应该参考哪些文件，应该产出什么格式。</p>
+<p>MCP 是外部工具和上下文协议。</p>
+<p>它把外部系统变成 Codex 可以调用的工具，比如文档、Figma、浏览器、GitHub、Sentry。</p>
+<p>Plugins 是分发包。</p>
+<p>它可以把 Skills、MCP servers、应用集成、Hooks 等打包起来，让别人安装。</p>
+<p>一句话：Skill 定义方法，MCP 提供外部能力，Plugin 负责安装和分发。</p>
+<h3 id="124-codexskills-和-agentsskills-应该用哪个">12.4 <code>.codex/skills</code> 和 <code>.agents/skills</code> 应该用哪个？
+</h3><p><strong>答：</strong></p>
+<p>截至本文核对的官方 Codex Skills 文档，仓库级 Skills 的扫描位置是 <code>.agents/skills</code>。</p>
+<p><code>.codex/skills</code> 可以作为迁移目录或本地组织目录，但不要默认认为它一定按官方仓库级 Skill 机制自动发现。</p>
+<p>如果希望仓库内 Skill 被 Codex 稳定扫描，建议放到：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">.agents/skills/&lt;skill-name&gt;/SKILL.md
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果希望跨项目分发，建议打包成 Plugin。</p>
+<h3 id="125-mcp-和-web-搜索有什么区别">12.5 MCP 和 Web 搜索有什么区别？
+</h3><p><strong>答：</strong></p>
+<p>Web 搜索适合公开网页，尤其是临时查资料。</p>
+<p>MCP 更适合稳定、结构化、可授权的外部系统访问。</p>
+<p>例如查公开文档可以用 Web 搜索；访问公司内部知识库、Figma 文件、GitHub Issue、浏览器调试能力，更适合 MCP 或连接器。</p>
+<p>MCP 的关键价值是：把外部系统变成一组明确工具，并由配置控制启用、禁用、审批和超时。</p>
+<h3 id="126-subagents-什么时候值得用">12.6 Subagents 什么时候值得用？
+</h3><p><strong>答：</strong></p>
+<p>Subagents 适合并行度高、需要分工的任务。</p>
+<p>例如：</p>
+<ul>
+<li>一个 Agent 探索代码路径</li>
+<li>一个 Agent 查官方文档</li>
+<li>一个 Agent 做安全 review</li>
+<li>主 Agent 汇总结果并修改代码</li>
+</ul>
+<p>但 Subagents 不适合所有任务。</p>
+<p>它会增加 token、延迟和结果合并成本。简单修 bug、改一个文件、写一小段文档时，用主 Agent 就够了。</p>
+<h3 id="127-codex-的安全边界应该怎么设计">12.7 Codex 的安全边界应该怎么设计？
+</h3><p><strong>答：</strong></p>
+<p>推荐分四层。</p>
+<p>第一层是 Sandbox，控制能读写哪里。</p>
+<p>第二层是 Approval，控制什么时候问用户。</p>
+<p>第三层是 Hooks，处理确定性检查和审计。</p>
+<p>第四层是企业级 requirements 或托管配置，用来强制组织策略。</p>
+<p>日常开发可以从 <code>workspace-write</code> + <code>on-request</code> 开始；陌生仓库和 review 场景用 <code>read-only</code> 更稳；高权限模式只适合可信、隔离环境。</p>
+<h3 id="128-从-claude-code-迁移到-codex最容易错在哪里">12.8 从 Claude Code 迁移到 Codex，最容易错在哪里？
+</h3><p><strong>答：</strong></p>
+<p>最容易错在把 <code>.claude/</code> 机械改名成 <code>.codex/</code>。</p>
+<p>真正应该迁移的是职责，不是目录名。</p>
+<p><code>CLAUDE.md</code> 的项目说明迁到 <code>AGENTS.md</code>。</p>
+<p><code>settings.json</code> 里的可配置部分迁到 <code>.codex/config.toml</code>。</p>
+<p>逐命令 allow/deny 规则需要拆到 sandbox、approval、Hooks、README 和 requirements 里表达。</p>
+<p>Skills 则要注意官方仓库级扫描位置是 <code>.agents/skills</code>，不是简单复制到 <code>.codex/skills</code> 就结束。</p>
+<hr>
+<h2 id="十三附录进一步阅读">十三、附录：进一步阅读
+</h2><h3 id="131-官方文档一手来源">13.1 官方文档（一手来源）
+</h3><p>本文事实主要对齐以下官方文档：</p>
+<ul>
+<li><a class="link" href="https://developers.openai.com/codex/config-basic"  target="_blank" rel="noopener"
+    >Config basics</a></li>
+<li><a class="link" href="https://developers.openai.com/codex/config-reference"  target="_blank" rel="noopener"
+    >Configuration Reference</a></li>
+<li><a class="link" href="https://developers.openai.com/codex/guides/agents-md"  target="_blank" rel="noopener"
+    >Custom instructions with AGENTS.md</a></li>
+<li><a class="link" href="https://developers.openai.com/codex/hooks"  target="_blank" rel="noopener"
+    >Hooks</a></li>
+<li><a class="link" href="https://developers.openai.com/codex/skills"  target="_blank" rel="noopener"
+    >Agent Skills</a></li>
+<li><a class="link" href="https://developers.openai.com/codex/plugins"  target="_blank" rel="noopener"
+    >Plugins</a></li>
+<li><a class="link" href="https://developers.openai.com/codex/mcp"  target="_blank" rel="noopener"
+    >Model Context Protocol</a></li>
+<li><a class="link" href="https://developers.openai.com/codex/subagents"  target="_blank" rel="noopener"
+    >Subagents</a></li>
+<li><a class="link" href="https://developers.openai.com/codex/concepts/customization"  target="_blank" rel="noopener"
+    >Customization</a></li>
+<li><a class="link" href="https://developers.openai.com/codex/learn/best-practices"  target="_blank" rel="noopener"
+    >Best practices</a></li>
+</ul>
+<h3 id="132-本博客相关文章">13.2 本博客相关文章
+</h3><ul>
+<li><a class="link" href="what-is-mcp.md" >什么是 MCP：概念、使用方式、开发方法、底层原理与常见面试题</a></li>
+<li><a class="link" href="what-is-skills.md" >什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题</a></li>
+<li><a class="link" href="component-mcp-skills.md" >AppBuilder 组件、MCP 与 Skills 的对比学习</a></li>
+</ul>
+<h3 id="133-一句话总结">13.3 一句话总结
+</h3><p>Codex 的核心不是某一个配置文件，而是一套分层协作系统。</p>
+<p><code>AGENTS.md</code> 负责项目说明，<code>.codex/config.toml</code> 负责运行配置，Hooks 负责确定性生命周期扩展，MCP 负责外部能力，Skills 负责可复用流程，Plugins 负责分发，Subagents 负责并行委派。</p>
+<p>把这些层放对位置，Codex 才会从&quot;能聊天的代码助手&quot;变成&quot;能被团队配置和复用的工程 Agent&rdquo;。</p>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/ai/">AI</a>
+        
+            <a href="/tags/codex/">Codex</a>
+        
+            <a href="/tags/agent/">Agent</a>
+        
+            <a href="/tags/mcp/">Mcp</a>
+        
+            <a href="/tags/skills/">Skills</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-skills%E6%A6%82%E5%BF%B5%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F%E5%BC%80%E5%8F%91%E6%96%B9%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/appbuilder-%E7%BB%84%E4%BB%B6mcp-%E4%B8%8E-skills-%E7%9A%84%E5%AF%B9%E6%AF%94%E5%AD%A6%E4%B9%A0/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AppBuilder 组件、MCP 与 Skills 的对比学习</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/multica-%E9%A1%B9%E7%9B%AE%E8%A7%A3%E6%9E%90%E9%83%A8%E7%BD%B2%E4%BD%BF%E7%94%A8%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1%E4%B8%8E%E6%8A%80%E6%9C%AF%E4%BA%AE%E7%82%B9/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">Multica 项目解析：部署、使用、架构设计与技术亮点</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/ai-agent-%E5%AE%89%E5%85%A8%E4%BD%93%E7%B3%BBprompt-injectiontool-injection%E6%9D%83%E9%99%90%E6%8E%A7%E5%88%B6%E5%AE%A1%E6%89%B9%E5%AE%A1%E8%AE%A1%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AI Agent 安全体系：Prompt Injection、Tool Injection、权限控制、审批审计与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/ai-agent-%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7%E4%B8%8E%E8%AF%84%E4%BC%B0trace%E6%8C%87%E6%A0%87%E5%9B%9E%E6%94%BE%E6%B5%8B%E8%AF%95%E9%9B%86%E7%BA%BF%E4%B8%8A%E5%8F%8D%E9%A6%88%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AI Agent 可观测性与评估：Trace、指标、回放、测试集、线上反馈与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>
