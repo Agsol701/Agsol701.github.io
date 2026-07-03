@@ -269,6 +269,13 @@
             <li><a href="#ubuntu--linux-服务器">Ubuntu / Linux 服务器</a></li>
           </ul>
         </li>
+        <li><a href="#远程访问面板时的-oauth-回调问题">远程访问面板时的 OAuth 回调问题</a>
+          <ul>
+            <li><a href="#方式一在服务器浏览器中操作">方式一：在服务器浏览器中操作</a></li>
+            <li><a href="#方式二通过-ssh-转发回调端口">方式二：通过 SSH 转发回调端口</a></li>
+          </ul>
+        </li>
+        <li><a href="#docker-部署下的代理配置">Docker 部署下的代理配置</a></li>
         <li><a href="#升级">升级</a></li>
       </ul>
     </li>
@@ -599,6 +606,135 @@
 </div><p>访问 <code>http://YOUR_SERVER_IP:8080</code> 进入管理面板。</p>
 <blockquote>
 <p><strong>远程部署 OAuth 注意事项</strong>：OpenAI OAuth 回调地址为 <code>localhost:1455</code>，如果通过远程 IP 访问面板进行 OAuth 授权，回调无法到达服务端。建议在本地（macOS）部署 sub2api 完成 OAuth 授权，或在服务器上使用带桌面环境的浏览器操作。</p></blockquote>
+<h3 id="远程访问面板时的-oauth-回调问题">远程访问面板时的 OAuth 回调问题
+</h3><p>在服务器上部署 Sub2API 后，如果从本机浏览器访问远程面板，例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">http://YOUR_SERVER_IP:8080/admin/accounts
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>再进行 OpenAI / Codex OAuth 授权，可能会遇到授权完成但 Sub2API 无法验证通过的问题。原因是 OAuth 流程里的 <code>localhost</code> 总是相对于当前浏览器所在机器，而不是相对于 Sub2API 服务器。</p>
+<p>例如授权回调地址为：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">http://localhost:1455
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果浏览器运行在本机，<code>localhost:1455</code> 指向本机；如果浏览器运行在服务器桌面环境，<code>localhost:1455</code> 才指向服务器。远程访问 Sub2API 面板时，浏览器会把授权结果回调到本机，服务器上的 Sub2API 或 OAuth 辅助流程就可能拿不到 code，导致验证失败、卡住或需要手动复制 code。</p>
+<p>推荐两种处理方式。</p>
+<h4 id="方式一在服务器浏览器中操作">方式一：在服务器浏览器中操作
+</h4><p>如果服务器有桌面环境，可以直接在服务器上打开浏览器访问：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">http://localhost:8080/admin/accounts
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>此时浏览器、Sub2API 和 <code>localhost:1455</code> 都在同一台服务器上，OAuth 回调路径最简单。</p>
+<h4 id="方式二通过-ssh-转发回调端口">方式二：通过 SSH 转发回调端口
+</h4><p>如果仍想在本机浏览器操作，可以将本机的 <code>1455</code> 端口转发到服务器：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ssh -L 1455:127.0.0.1:1455 user@YOUR_SERVER_IP
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>保持 SSH 会话不要关闭，然后在本机浏览器继续访问远程 Sub2API 面板：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">http://YOUR_SERVER_IP:8080/admin/accounts
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样浏览器访问 <code>localhost:1455</code> 时，请求会通过 SSH 隧道转发到服务器的 <code>127.0.0.1:1455</code>。</p>
+<p>需要注意，端口转发只解决 OAuth 回调地址的问题，不解决上游请求出口问题。如果 token exchange 报 <code>unsupported_country_region_territory</code>，还需要在 Sub2API 后台「代理管理」中配置可用代理，并在添加 OpenAI / Codex OAuth 账号时选择该代理。</p>
+<h3 id="docker-部署下的代理配置">Docker 部署下的代理配置
+</h3><p>如果服务器上已经运行 Clash Verge、Mihomo 或其他代理客户端，Sub2API 仍然可能需要在后台单独配置代理。原因是代理客户端只是监听了一个本地端口，并不会自动接管 Docker 容器内应用的所有出站请求。Sub2API 容器默认会直接访问 OpenAI、Claude、Gemini 等上游服务；如果服务器公网出口所在地区不被上游支持，就可能在 OAuth token exchange 或后续请求中遇到 <code>unsupported_country_region_territory</code>、<code>request_forbidden</code> 等错误。</p>
+<p>常见结构如下：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">服务器宿主机
+</span></span><span class="line"><span class="cl">├─ Clash Verge / Mihomo 监听代理端口，例如 7897
+</span></span><span class="line"><span class="cl">└─ Docker 容器 sub2api
+</span></span><span class="line"><span class="cl">   └─ 默认直连上游服务，除非在 Sub2API 中显式选择代理
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>因此，需要先确认代理客户端监听的端口，例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ss -lntp <span class="p">|</span> grep -Ei <span class="s2">&#34;789|clash|mihomo|verge&#34;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>再从宿主机测试代理出口：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">curl -x http://127.0.0.1:7897 https://ifconfig.me
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>如果 Sub2API 运行在 Docker 容器中，容器里的 <code>127.0.0.1</code> 指向容器自身，不是宿主机。后台「代理管理」中应填写容器能够访问到的宿主机地址，例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">协议: http
+</span></span><span class="line"><span class="cl">主机地址: YOUR_SERVER_LAN_IP
+</span></span><span class="line"><span class="cl">端口: 7897
+</span></span><span class="line"><span class="cl">用户名: 留空或按代理配置填写
+</span></span><span class="line"><span class="cl">密码: 留空或按代理配置填写
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>也可以使用 Docker 网关地址，例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">协议: http
+</span></span><span class="line"><span class="cl">主机地址: 172.19.0.1
+</span></span><span class="line"><span class="cl">端口: 7897
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>实际地址以当前 Docker 网络为准。可以从 Sub2API 容器内测试：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker <span class="nb">exec</span> sub2api sh -lc <span class="s1">&#39;curl -x http://YOUR_SERVER_LAN_IP:7897 https://ifconfig.me&#39;</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>测试返回的出口 IP 应当是代理节点的公网 IP，而不是服务器原始公网 IP。确认可用后，在 Sub2API 后台进入「代理管理」新增代理；添加 OpenAI / Codex OAuth 账号时选择该代理，再生成授权链接并完成 code exchange。这样 token exchange 和后续刷新 token 才会走代理。</p>
 <h3 id="升级">升级
 </h3><div class="highlight"><div class="chroma">
 <table class="lntable"><tr><td class="lntd">
@@ -808,6 +944,19 @@
             
                 
 <article class="">
+    <a href="/p/claude-code-%E6%9E%B6%E6%9E%84%E4%B8%8E%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%BB%8E%E5%AE%98%E6%96%B9%E6%96%87%E6%A1%A3%E7%90%86%E8%A7%A3%E7%BC%96%E7%A0%81-agent/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">Claude Code 架构与实现机制：从官方文档理解编码 Agent</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
     <a href="/p/codex-%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97%E6%9E%B6%E6%9E%84%E9%85%8D%E7%BD%AEhooksskillsmcp-%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/">
         
         
@@ -853,19 +1002,6 @@
 
         <div class="article-details">
             <h2 class="article-title">AI Agent 安全体系：Prompt Injection、Tool Injection、权限控制、审批审计与高频面试题</h2>
-        </div>
-    </a>
-</article>
-
-            
-                
-<article class="">
-    <a href="/p/%E6%B2%99%E7%AE%B1/">
-        
-        
-
-        <div class="article-details">
-            <h2 class="article-title">沙箱</h2>
         </div>
     </a>
 </article>

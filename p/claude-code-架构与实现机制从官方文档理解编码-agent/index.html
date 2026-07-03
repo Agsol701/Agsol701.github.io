@@ -1,0 +1,2581 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 Claude Code 不是一个只会回答代码问题的聊天窗口。\n按照官方中文概览页的定义，Claude Code 是一个代理编码工具，可以读取代码库、编辑文件、运行命令，并与开发工具集成。它可以在终端、IDE（Integrated Development Environment，集成开发环境）、桌面应用和浏览器中使用。\n这句话里其实已经包含了 Claude Code 的核心架构：\n它要理解整个代码库，而不是只理解一段粘贴进去的代码。 它要能修改文件、执行命令，而不是只生成文本建议。 它要接入终端、IDE、桌面、Web 等多个入口，而不是绑定在单一界面里。 它要能连接 MCP（Model Context Protocol，模型上下文协议）、Hooks、Skills、CI/CD（Continuous Integration / Continuous Delivery，持续集成与持续交付）等扩展能力，而不是封闭运行。 所以，理解 Claude Code 的关键不是问&quot;它用了哪个命令行界面&quot;，而是理解它背后的编码 Agent Runtime（智能体运行时）。\n本文基于 Anthropic Claude Code 官方中文文档整理，并在公开信息范围内做工程化解读。不会引用非公开源码，也不会把推测包装成官方实现细节。\n官方概览地址：\nhttps://code.claude.com/docs/zh-CN/overview\n一、Claude Code 是什么 1.1 一句话理解 Claude Code 是面向软件工程任务的 AI 编码 Agent。\n它的工作方式不是&quot;你问一句，它答一句&quot;，而是围绕一个真实代码库完成一轮工程任务：\n读取项目文件 理解代码结构 修改多个文件 运行命令验证结果 连接外部系统 生成提交或拉取请求 在不同开发入口之间延续工作 从用户视角看，它像一个能进入项目目录工作的开发助手。\n从系统视角看，它是模型推理、上下文管理、工具调用、权限控制、会话编排和扩展系统共同组成的 Agent Runtime。\n1.2 Claude Code 与普通聊天机器人的区别 普通聊天机器人主要处理文本输入和文本输出。\nClaude Code 的输入和输出则更接近工程环境：\n">
+<title>Claude Code 架构与实现机制：从官方文档理解编码 Agent</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/claude-code-%E6%9E%B6%E6%9E%84%E4%B8%8E%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%BB%8E%E5%AE%98%E6%96%B9%E6%96%87%E6%A1%A3%E7%90%86%E8%A7%A3%E7%BC%96%E7%A0%81-agent/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><style>.mermaid { text-align: center; }</style>
+<script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
+    });
+</script><meta property='og:title' content="Claude Code 架构与实现机制：从官方文档理解编码 Agent">
+<meta property='og:description' content="写在前面 Claude Code 不是一个只会回答代码问题的聊天窗口。\n按照官方中文概览页的定义，Claude Code 是一个代理编码工具，可以读取代码库、编辑文件、运行命令，并与开发工具集成。它可以在终端、IDE（Integrated Development Environment，集成开发环境）、桌面应用和浏览器中使用。\n这句话里其实已经包含了 Claude Code 的核心架构：\n它要理解整个代码库，而不是只理解一段粘贴进去的代码。 它要能修改文件、执行命令，而不是只生成文本建议。 它要接入终端、IDE、桌面、Web 等多个入口，而不是绑定在单一界面里。 它要能连接 MCP（Model Context Protocol，模型上下文协议）、Hooks、Skills、CI/CD（Continuous Integration / Continuous Delivery，持续集成与持续交付）等扩展能力，而不是封闭运行。 所以，理解 Claude Code 的关键不是问&quot;它用了哪个命令行界面&quot;，而是理解它背后的编码 Agent Runtime（智能体运行时）。\n本文基于 Anthropic Claude Code 官方中文文档整理，并在公开信息范围内做工程化解读。不会引用非公开源码，也不会把推测包装成官方实现细节。\n官方概览地址：\nhttps://code.claude.com/docs/zh-CN/overview\n一、Claude Code 是什么 1.1 一句话理解 Claude Code 是面向软件工程任务的 AI 编码 Agent。\n它的工作方式不是&quot;你问一句，它答一句&quot;，而是围绕一个真实代码库完成一轮工程任务：\n读取项目文件 理解代码结构 修改多个文件 运行命令验证结果 连接外部系统 生成提交或拉取请求 在不同开发入口之间延续工作 从用户视角看，它像一个能进入项目目录工作的开发助手。\n从系统视角看，它是模型推理、上下文管理、工具调用、权限控制、会话编排和扩展系统共同组成的 Agent Runtime。\n1.2 Claude Code 与普通聊天机器人的区别 普通聊天机器人主要处理文本输入和文本输出。\nClaude Code 的输入和输出则更接近工程环境：\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/claude-code-%E6%9E%B6%E6%9E%84%E4%B8%8E%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%BB%8E%E5%AE%98%E6%96%B9%E6%96%87%E6%A1%A3%E7%90%86%E8%A7%A3%E7%BC%96%E7%A0%81-agent/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='claude-code' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='mcp' /><meta property='article:tag' content='skills' /><meta property='article:published_time' content='2026-07-01T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-07-01T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="Claude Code 架构与实现机制：从官方文档理解编码 Agent">
+<meta name="twitter:description" content="写在前面 Claude Code 不是一个只会回答代码问题的聊天窗口。\n按照官方中文概览页的定义，Claude Code 是一个代理编码工具，可以读取代码库、编辑文件、运行命令，并与开发工具集成。它可以在终端、IDE（Integrated Development Environment，集成开发环境）、桌面应用和浏览器中使用。\n这句话里其实已经包含了 Claude Code 的核心架构：\n它要理解整个代码库，而不是只理解一段粘贴进去的代码。 它要能修改文件、执行命令，而不是只生成文本建议。 它要接入终端、IDE、桌面、Web 等多个入口，而不是绑定在单一界面里。 它要能连接 MCP（Model Context Protocol，模型上下文协议）、Hooks、Skills、CI/CD（Continuous Integration / Continuous Delivery，持续集成与持续交付）等扩展能力，而不是封闭运行。 所以，理解 Claude Code 的关键不是问&quot;它用了哪个命令行界面&quot;，而是理解它背后的编码 Agent Runtime（智能体运行时）。\n本文基于 Anthropic Claude Code 官方中文文档整理，并在公开信息范围内做工程化解读。不会引用非公开源码，也不会把推测包装成官方实现细节。\n官方概览地址：\nhttps://code.claude.com/docs/zh-CN/overview\n一、Claude Code 是什么 1.1 一句话理解 Claude Code 是面向软件工程任务的 AI 编码 Agent。\n它的工作方式不是&quot;你问一句，它答一句&quot;，而是围绕一个真实代码库完成一轮工程任务：\n读取项目文件 理解代码结构 修改多个文件 运行命令验证结果 连接外部系统 生成提交或拉取请求 在不同开发入口之间延续工作 从用户视角看，它像一个能进入项目目录工作的开发助手。\n从系统视角看，它是模型推理、上下文管理、工具调用、权限控制、会话编排和扩展系统共同组成的 Agent Runtime。\n1.2 Claude Code 与普通聊天机器人的区别 普通聊天机器人主要处理文本输入和文本输出。\nClaude Code 的输入和输出则更接近工程环境：\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about-me/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About Me</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ul>
+    <li><a href="#写在前面">写在前面</a></li>
+    <li><a href="#一claude-code-是什么">一、Claude Code 是什么</a>
+      <ul>
+        <li><a href="#11-一句话理解">1.1 一句话理解</a></li>
+        <li><a href="#12-claude-code-与普通聊天机器人的区别">1.2 Claude Code 与普通聊天机器人的区别</a></li>
+        <li><a href="#13-核心任务类型">1.3 核心任务类型</a></li>
+      </ul>
+    </li>
+    <li><a href="#二从官方概览看整体架构">二、从官方概览看整体架构</a>
+      <ul>
+        <li><a href="#21-总体分层">2.1 总体分层</a></li>
+        <li><a href="#22-产品入口层">2.2 产品入口层</a></li>
+        <li><a href="#23-会话编排层">2.3 会话编排层</a></li>
+        <li><a href="#24-上下文层">2.4 上下文层</a></li>
+        <li><a href="#25-模型推理层">2.5 模型推理层</a></li>
+        <li><a href="#26-权限与策略层">2.6 权限与策略层</a></li>
+        <li><a href="#27-工具执行层">2.7 工具执行层</a></li>
+      </ul>
+    </li>
+    <li><a href="#三claude-code-的主要能力模块">三、Claude Code 的主要能力模块</a>
+      <ul>
+        <li><a href="#31-cli终端里的-agent">3.1 CLI：终端里的 Agent</a></li>
+        <li><a href="#32-ide把-agent-放进编辑器">3.2 IDE：把 Agent 放进编辑器</a></li>
+        <li><a href="#33-desktop-与-web多会话和长任务">3.3 Desktop 与 Web：多会话和长任务</a></li>
+        <li><a href="#34-mcp连接外部数据和工具">3.4 MCP：连接外部数据和工具</a></li>
+        <li><a href="#35-claudemd自动记忆skills-与-hooks">3.5 <code>CLAUDE.md</code>、自动记忆、Skills 与 Hooks</a></li>
+        <li><a href="#36-多代理与-agent-sdk">3.6 多代理与 Agent SDK</a></li>
+      </ul>
+    </li>
+    <li><a href="#四一次任务如何运行">四、一次任务如何运行</a>
+      <ul>
+        <li><a href="#41-典型执行流程">4.1 典型执行流程</a></li>
+        <li><a href="#42-为什么上下文管理重要">4.2 为什么上下文管理重要</a></li>
+        <li><a href="#43-为什么-hooks-重要">4.3 为什么 Hooks 重要</a></li>
+      </ul>
+    </li>
+    <li><a href="#五工程实现视角下的关键设计">五、工程实现视角下的关键设计</a>
+      <ul>
+        <li><a href="#51-多入口共享同一底层能力">5.1 多入口共享同一底层能力</a></li>
+        <li><a href="#52-agent-loop-是执行核心">5.2 Agent Loop 是执行核心</a></li>
+        <li><a href="#53-权限系统决定可落地程度">5.3 权限系统决定可落地程度</a></li>
+        <li><a href="#54-扩展系统让-agent-适配团队">5.4 扩展系统让 Agent 适配团队</a></li>
+      </ul>
+    </li>
+    <li><a href="#六prompt-管理不要把所有指令都塞进一句话">六、Prompt 管理：不要把所有指令都塞进一句话</a>
+      <ul>
+        <li><a href="#61-prompt-在-claude-code-里不是单一文本">6.1 Prompt 在 Claude Code 里不是单一文本</a></li>
+        <li><a href="#62-prompt-分层模型">6.2 Prompt 分层模型</a></li>
+        <li><a href="#63-claudemd-应该写什么">6.3 <code>CLAUDE.md</code> 应该写什么</a></li>
+        <li><a href="#64-rules把大规则拆成小规则">6.4 Rules：把大规则拆成小规则</a></li>
+        <li><a href="#65-skills-与-prompt-的关系">6.5 Skills 与 Prompt 的关系</a></li>
+        <li><a href="#66-prompt-管理的常见错误">6.6 Prompt 管理的常见错误</a></li>
+        <li><a href="#67-推荐的-prompt-管理策略">6.7 推荐的 Prompt 管理策略</a></li>
+      </ul>
+    </li>
+    <li><a href="#七上下文管理让-agent-在正确的信息里工作">七、上下文管理：让 Agent 在正确的信息里工作</a>
+      <ul>
+        <li><a href="#71-上下文管理解决什么问题">7.1 上下文管理解决什么问题</a></li>
+        <li><a href="#72-上下文来源">7.2 上下文来源</a></li>
+        <li><a href="#73-claudemd-与自动记忆">7.3 <code>CLAUDE.md</code> 与自动记忆</a></li>
+        <li><a href="#74-上下文窗口与自动压缩">7.4 上下文窗口与自动压缩</a></li>
+        <li><a href="#75-工具输出如何进入上下文">7.5 工具输出如何进入上下文</a></li>
+        <li><a href="#76-文件上下文按影响面读取">7.6 文件上下文：按影响面读取</a></li>
+        <li><a href="#77-外部上下文mcp-不等于复制粘贴">7.7 外部上下文：MCP 不等于复制粘贴</a></li>
+        <li><a href="#78-subagent-隔离上下文">7.8 Subagent 隔离上下文</a></li>
+        <li><a href="#79-上下文污染">7.9 上下文污染</a></li>
+        <li><a href="#710-上下文管理的推荐流程">7.10 上下文管理的推荐流程</a></li>
+      </ul>
+    </li>
+    <li><a href="#八多-agent-分工把一个大任务拆成多个专业角色">八、多 Agent 分工：把一个大任务拆成多个专业角色</a>
+      <ul>
+        <li><a href="#81-为什么需要多-agent">8.1 为什么需要多 Agent</a></li>
+        <li><a href="#82-多-agent-分工模型基于-subagents-机制的工程抽象">8.2 多 Agent 分工模型：基于 subagents 机制的工程抽象</a></li>
+        <li><a href="#83-常见-agent-角色设计">8.3 常见 Agent 角色设计</a></li>
+        <li><a href="#84-verify-agent验证不是看起来没问题">8.4 Verify Agent：验证不是&quot;看起来没问题&quot;</a></li>
+        <li><a href="#85-多-agent-的上下文隔离">8.5 多 Agent 的上下文隔离</a></li>
+        <li><a href="#86-多-agent-的权限隔离">8.6 多 Agent 的权限隔离</a></li>
+      </ul>
+    </li>
+    <li><a href="#九agent-调度链从用户目标到可验证结果">九、Agent 调度链：从用户目标到可验证结果</a>
+      <ul>
+        <li><a href="#91-调度链是什么">9.1 调度链是什么</a></li>
+        <li><a href="#92-调度链的四个阶段">9.2 调度链的四个阶段</a></li>
+        <li><a href="#93-什么时候直接做什么时候调-agent">9.3 什么时候直接做，什么时候调 Agent</a></li>
+        <li><a href="#94-调度链中的状态设计">9.4 调度链中的状态设计</a></li>
+        <li><a href="#95-调度输出要结构化">9.5 调度输出要结构化</a></li>
+        <li><a href="#96-调度链与命令系统">9.6 调度链与命令系统</a></li>
+      </ul>
+    </li>
+    <li><a href="#十skillspluginsmcp生态管理和使用">十、Skills、Plugins、MCP：生态管理和使用</a>
+      <ul>
+        <li><a href="#101-三者分别解决什么问题">10.1 三者分别解决什么问题</a></li>
+        <li><a href="#102-skills把流程做成可调用能力">10.2 Skills：把流程做成可调用能力</a></li>
+        <li><a href="#103-skills-的管理策略">10.3 Skills 的管理策略</a></li>
+        <li><a href="#104-plugins把能力打包版本化分发">10.4 Plugins：把能力打包、版本化、分发</a></li>
+        <li><a href="#105-plugins-的治理重点">10.5 Plugins 的治理重点</a></li>
+        <li><a href="#106-mcp让-agent-使用外部系统">10.6 MCP：让 Agent 使用外部系统</a></li>
+        <li><a href="#107-mcp-的使用原则">10.7 MCP 的使用原则</a></li>
+        <li><a href="#108-三者如何组合">10.8 三者如何组合</a></li>
+        <li><a href="#109-生态管理的推荐目录">10.9 生态管理的推荐目录</a></li>
+      </ul>
+    </li>
+    <li><a href="#十一实践建议">十一、实践建议</a>
+      <ul>
+        <li><a href="#111-先写好-claudemd">11.1 先写好 <code>CLAUDE.md</code></a></li>
+        <li><a href="#112-把重复流程沉淀成-skills">11.2 把重复流程沉淀成 Skills</a></li>
+        <li><a href="#113-用-hooks-处理确定性动作">11.3 用 Hooks 处理确定性动作</a></li>
+        <li><a href="#114-用-mcp-接入真实业务上下文">11.4 用 MCP 接入真实业务上下文</a></li>
+        <li><a href="#115-为不同入口设计不同工作流">11.5 为不同入口设计不同工作流</a></li>
+      </ul>
+    </li>
+    <li><a href="#十二总结">十二、总结</a></li>
+    <li><a href="#参考资料">参考资料</a></li>
+    <li><a href="#路径缩写说明">路径缩写说明</a></li>
+  </ul>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/ai/" >
+                Ai
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/claude-code-%E6%9E%B6%E6%9E%84%E4%B8%8E%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%BB%8E%E5%AE%98%E6%96%B9%E6%96%87%E6%A1%A3%E7%90%86%E8%A7%A3%E7%BC%96%E7%A0%81-agent/">Claude Code 架构与实现机制：从官方文档理解编码 Agent</a>
+        </h2>
+    
+        
+
+        
+            
+            <div class="article-source">source: claude-code-architecture-and-implementation</div>
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">Jul 01, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h2 id="写在前面">写在前面
+</h2><p>Claude Code 不是一个只会回答代码问题的聊天窗口。</p>
+<p>按照官方中文概览页的定义，Claude Code 是一个代理编码工具，可以读取代码库、编辑文件、运行命令，并与开发工具集成。它可以在终端、IDE（Integrated Development Environment，集成开发环境）、桌面应用和浏览器中使用。</p>
+<p>这句话里其实已经包含了 Claude Code 的核心架构：</p>
+<ul>
+<li>它要理解整个代码库，而不是只理解一段粘贴进去的代码。</li>
+<li>它要能修改文件、执行命令，而不是只生成文本建议。</li>
+<li>它要接入终端、IDE、桌面、Web 等多个入口，而不是绑定在单一界面里。</li>
+<li>它要能连接 MCP（Model Context Protocol，模型上下文协议）、Hooks、Skills、CI/CD（Continuous Integration / Continuous Delivery，持续集成与持续交付）等扩展能力，而不是封闭运行。</li>
+</ul>
+<p>所以，理解 Claude Code 的关键不是问&quot;它用了哪个命令行界面&quot;，而是理解它背后的编码 Agent Runtime（智能体运行时）。</p>
+<p>本文基于 Anthropic Claude Code 官方中文文档整理，并在公开信息范围内做工程化解读。不会引用非公开源码，也不会把推测包装成官方实现细节。</p>
+<p>官方概览地址：</p>
+<p><a class="link" href="https://code.claude.com/docs/zh-CN/overview"  target="_blank" rel="noopener"
+    >https://code.claude.com/docs/zh-CN/overview</a></p>
+<hr>
+<h2 id="一claude-code-是什么">一、Claude Code 是什么
+</h2><h3 id="11-一句话理解">1.1 一句话理解
+</h3><p>Claude Code 是面向软件工程任务的 AI 编码 Agent。</p>
+<p>它的工作方式不是&quot;你问一句，它答一句&quot;，而是围绕一个真实代码库完成一轮工程任务：</p>
+<ul>
+<li>读取项目文件</li>
+<li>理解代码结构</li>
+<li>修改多个文件</li>
+<li>运行命令验证结果</li>
+<li>连接外部系统</li>
+<li>生成提交或拉取请求</li>
+<li>在不同开发入口之间延续工作</li>
+</ul>
+<p>从用户视角看，它像一个能进入项目目录工作的开发助手。</p>
+<p>从系统视角看，它是模型推理、上下文管理、工具调用、权限控制、会话编排和扩展系统共同组成的 Agent Runtime。</p>
+<h3 id="12-claude-code-与普通聊天机器人的区别">1.2 Claude Code 与普通聊天机器人的区别
+</h3><p>普通聊天机器人主要处理文本输入和文本输出。</p>
+<p>Claude Code 的输入和输出则更接近工程环境：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>维度</th>
+          <th>普通聊天机器人</th>
+          <th>Claude Code</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>上下文</td>
+          <td>用户粘贴的文本</td>
+          <td>代码库、文件、命令输出、项目说明、会话历史</td>
+      </tr>
+      <tr>
+          <td>输出</td>
+          <td>文本回答</td>
+          <td>文件修改、命令执行、差异、提交、PR、任务结果</td>
+      </tr>
+      <tr>
+          <td>工具</td>
+          <td>通常较少或不可见</td>
+          <td>文件、Shell、搜索、MCP、IDE、CI/CD 等</td>
+      </tr>
+      <tr>
+          <td>工作模式</td>
+          <td>问答式</td>
+          <td>多步 Agent Loop</td>
+      </tr>
+      <tr>
+          <td>风险控制</td>
+          <td>主要靠提示词</td>
+          <td>权限、确认、配置、Hooks、托管策略</td>
+      </tr>
+      <tr>
+          <td>使用入口</td>
+          <td>聊天界面</td>
+          <td>CLI、VS Code、JetBrains、Desktop、Web、CI、Slack 等</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>官方概览页里反复出现的关键词是：读取代码库、编辑文件、运行命令、集成开发工具、自动化开发任务。这些能力共同决定了 Claude Code 不是&quot;代码问答工具&quot;，而是&quot;编码任务执行系统&quot;。</p>
+<h3 id="13-核心任务类型">1.3 核心任务类型
+</h3><p>官方概览页列出的典型用法可以归纳为六类。</p>
+<p>第一类是自动化繁琐工作。例如补测试、修复 lint 问题、解决合并冲突、更新依赖、编写发布说明。这里的 lint 指静态代码检查，通常用于发现格式、风格、未使用变量、导入顺序和部分潜在错误。</p>
+<p>第二类是构建功能和修复缺陷。用户用自然语言描述目标，Claude Code 规划实现路径，跨多个文件修改代码，并运行验证命令。</p>
+<p>第三类是处理 Git 工作流。Claude Code 可以暂存更改、生成提交信息、创建分支、发起拉取请求，也可以在 CI 中做代码审查和问题分类。</p>
+<p>第四类是连接外部工具。通过 MCP，Claude Code 可以接入 Google Drive、Jira、Slack 或团队自定义工具。</p>
+<p>第五类是自定义工作方式。通过 <code>CLAUDE.md</code>、自动记忆、Skills 和 Hooks，把团队规范、复用流程和确定性自动化沉淀下来。</p>
+<p>第六类是运行多代理或自定义代理。官方概览提到可以生成多个 Claude Code 代理并行处理任务，也可以通过 Agent SDK 构建自己的代理工作流。</p>
+<hr>
+<h2 id="二从官方概览看整体架构">二、从官方概览看整体架构
+</h2><h3 id="21-总体分层">2.1 总体分层
+</h3><p>从公开文档可以把 Claude Code 抽象成七层：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[产品入口层&lt;br/&gt;CLI / IDE / Desktop / Web / CI / Slack] --&gt; B[会话编排层&lt;br/&gt;任务、历史、状态、恢复]
+    B --&gt; C[上下文层&lt;br/&gt;代码库、CLAUDE.md、自动记忆、工具结果]
+    C --&gt; D[模型推理层&lt;br/&gt;理解目标、规划步骤、生成工具调用]
+    D --&gt; E[权限与策略层&lt;br/&gt;确认、配置、Hooks、托管策略]
+    E --&gt; F[工具执行层&lt;br/&gt;文件、Shell、搜索、Git、MCP、IDE]
+    F --&gt; G[结果反馈层&lt;br/&gt;差异、日志、提交、PR、最终总结]
+    G --&gt; B
+</code></pre><p>这张图不是 Anthropic 内部源码结构图，而是基于官方功能边界整理出的工程模型。</p>
+<p>它强调一个重点：Claude Code 的核心不是某个界面，而是一个可以被多个入口复用的编码 Agent 引擎。</p>
+<h3 id="22-产品入口层">2.2 产品入口层
+</h3><p>官方概览页明确列出 Claude Code 可以在多个环境中使用：</p>
+<ul>
+<li>Terminal</li>
+<li>VS Code</li>
+<li>Desktop app</li>
+<li>Web</li>
+<li>JetBrains</li>
+</ul>
+<p>此外，概览页还提到 GitHub Actions、GitLab CI/CD、Slack、Chrome 扩展、Agent SDK 等集成方式。</p>
+<p>这些入口面向不同工作场景：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>入口</th>
+          <th>适合场景</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Terminal</td>
+          <td>本地项目开发、命令行自动化、脚本管道</td>
+      </tr>
+      <tr>
+          <td>VS Code</td>
+          <td>编辑器内差异查看、上下文选择、对话历史</td>
+      </tr>
+      <tr>
+          <td>JetBrains</td>
+          <td>IntelliJ IDEA、PyCharm、WebStorm 等 IDE 工作流</td>
+      </tr>
+      <tr>
+          <td>Desktop app</td>
+          <td>可视化查看差异、并行会话、定期任务、云会话</td>
+      </tr>
+      <tr>
+          <td>Web</td>
+          <td>无需本地设置，适合远程仓库、长任务、多任务并行</td>
+      </tr>
+      <tr>
+          <td>CI/CD</td>
+          <td>自动代码审查、问题分类、构建失败分析</td>
+      </tr>
+      <tr>
+          <td>Slack</td>
+          <td>从团队聊天触发错误修复或拉取请求</td>
+      </tr>
+      <tr>
+          <td>Agent SDK</td>
+          <td>构建自定义代理和内部自动化系统</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>这说明 Claude Code 的产品设计不是&quot;一个 CLI 工具外加几个插件&quot;，而是&quot;一个底层 Agent 能力，接上多种工作入口&quot;。</p>
+<h3 id="23-会话编排层">2.3 会话编排层
+</h3><p>一次 Claude Code 任务通常不是单轮回答，而是一段持续会话。</p>
+<p>会话编排层需要管理：</p>
+<ul>
+<li>用户目标</li>
+<li>对话历史</li>
+<li>已读取文件</li>
+<li>工具调用结果</li>
+<li>待办事项</li>
+<li>文件修改状态</li>
+<li>命令执行状态</li>
+<li>用户审批</li>
+<li>中断与恢复</li>
+<li>多入口迁移</li>
+</ul>
+<p>官方概览页提到，用户可以从手机或浏览器继续本地会话，也可以把 Web 或 iOS 上启动的长任务通过 <code>claude --teleport</code> 拉回终端，还可以使用 <code>/desktop</code> 把终端会话交给桌面应用做可视化差异审查。</p>
+<p>这背后意味着会话不是只存在于单一终端输入输出流里，而是被抽象成可迁移、可恢复、可展示的任务状态。</p>
+<h3 id="24-上下文层">2.4 上下文层
+</h3><p>Claude Code 能理解代码库，前提是它有一套上下文组织机制。</p>
+<p>官方概览页提到 <code>CLAUDE.md</code>、自动记忆、Skills、MCP 服务器、设置等内容可以在不同界面中工作。这说明上下文不是临时拼接的一段文本，而是由多种来源组成：</p>
+<ul>
+<li>当前用户输入</li>
+<li>项目文件</li>
+<li>命令输出</li>
+<li>Git diff</li>
+<li><code>CLAUDE.md</code></li>
+<li>自动记忆</li>
+<li>Skills</li>
+<li>MCP 工具描述和返回结果</li>
+<li>IDE 或 CI 提供的上下文</li>
+</ul>
+<p>其中 <code>CLAUDE.md</code> 的角色很关键。官方概览把它描述为可以放在项目根目录的 Markdown 文件，Claude Code 会在每个会话开始时读取它，用来设置编码标准、架构决策、首选库和审查清单。</p>
+<p>换句话说，<code>CLAUDE.md</code> 是项目长期上下文，不是一次性提示词。</p>
+<h3 id="25-模型推理层">2.5 模型推理层
+</h3><p>模型推理层负责把上下文变成下一步行动。</p>
+<p>它要判断：</p>
+<ul>
+<li>现在应该读哪个文件</li>
+<li>是否需要搜索代码</li>
+<li>应该修改哪些位置</li>
+<li>是否需要运行测试</li>
+<li>命令失败后如何定位原因</li>
+<li>什么时候应该请求用户确认</li>
+<li>任务是否已经完成</li>
+</ul>
+<p>在 Claude Code 中，模型输出不只是自然语言回答，还可能是工具调用意图。例如读取文件、编辑文件、执行命令、请求 MCP 工具、发起子任务等。</p>
+<p>这就是 Agent Loop 的核心：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    A[理解任务] --&gt; B[规划下一步]
+    B --&gt; C[调用工具]
+    C --&gt; D[观察结果]
+    D --&gt; E{是否完成}
+    E -- 否 --&gt; B
+    E -- 是 --&gt; F[总结结果]
+</code></pre><p>这个循环让 Claude Code 可以处理多步工程任务，而不是只给出一段建议。</p>
+<h3 id="26-权限与策略层">2.6 权限与策略层
+</h3><p>Claude Code 可以编辑文件、运行命令、连接外部工具，这些能力很强，也必须有边界。</p>
+<p>官方概览页没有展开所有权限细节，但从它列出的能力可以看出，Claude Code 至少需要在以下位置做风险控制：</p>
+<ul>
+<li>执行 Shell 命令前</li>
+<li>修改文件前后</li>
+<li>连接外部系统时</li>
+<li>创建提交和 PR 时</li>
+<li>在 CI/CD 中自动执行时</li>
+<li>通过 Slack 或远程入口触发任务时</li>
+<li>Hooks 拦截工具调用时</li>
+</ul>
+<p>权限层的目标不是让 Claude Code 变弱，而是让它可以在真实工程环境中可控地变强。</p>
+<p>如果没有权限与策略层，文件编辑、命令执行、远程触发、外部系统写入都会变成高风险操作。</p>
+<h3 id="27-工具执行层">2.7 工具执行层
+</h3><p>工具执行层负责把模型决策变成真实动作。</p>
+<p>官方概览页中能看到的工具能力包括：</p>
+<ul>
+<li>读取代码库</li>
+<li>编辑文件</li>
+<li>运行命令</li>
+<li>使用 Git</li>
+<li>创建提交和拉取请求</li>
+<li>接入 MCP 外部数据源</li>
+<li>在 CI 中做审查和分类</li>
+<li>调用浏览器、Slack、IDE 等集成</li>
+</ul>
+<p>工具执行层有三个工程重点。</p>
+<p>第一，工具输入必须结构化。模型不能只说&quot;我想改文件&quot;，而要形成明确的文件路径、修改内容和执行参数。</p>
+<p>第二，工具输出必须回到上下文。否则模型不知道文件内容、命令结果、错误日志和外部系统返回了什么。</p>
+<p>第三，工具执行必须受策略约束。越接近真实系统，越需要权限、日志、确认和审计。</p>
+<hr>
+<h2 id="三claude-code-的主要能力模块">三、Claude Code 的主要能力模块
+</h2><h3 id="31-cli终端里的-agent">3.1 CLI：终端里的 Agent
+</h3><p>官方推荐的终端启动方式很直接：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">cd</span> your-project
+</span></span><span class="line"><span class="cl">claude
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>CLI（Command Line Interface，命令行界面）适合本地工程开发，因为它天然靠近文件系统、Shell、Git 和测试命令。</p>
+<p>官方概览页还给出了一些管道化使用方式，例如把日志输入 Claude Code，或者把 <code>git diff main --name-only</code> 的文件列表交给它做安全审查。</p>
+<p>这体现了 Claude Code 的一个重要设计取向：它遵循 Unix 式组合思路，可以被命令、脚本和 CI 流程串起来。</p>
+<h3 id="32-ide把-agent-放进编辑器">3.2 IDE：把 Agent 放进编辑器
+</h3><p>VS Code 扩展提供内联差异、<code>@</code> 提及、计划审查和对话历史。</p>
+<p>JetBrains 插件则面向 IntelliJ IDEA、PyCharm、WebStorm 等 IDE，提供交互式差异查看和选择性上下文共享。</p>
+<p>IDE 集成的价值在于：</p>
+<ul>
+<li>更容易看 diff</li>
+<li>更容易选中局部上下文</li>
+<li>更容易结合编辑器诊断</li>
+<li>更容易在人类开发者和 Agent 之间切换注意力</li>
+</ul>
+<p>CLI 更像任务执行入口，IDE 更像协作和审查入口。</p>
+<h3 id="33-desktop-与-web多会话和长任务">3.3 Desktop 与 Web：多会话和长任务
+</h3><p>官方概览页把桌面应用描述为可以在 IDE 或终端之外运行 Claude Code 的独立应用，支持可视化查看差异、并行运行多个会话、安排定期任务和启动云会话。</p>
+<p>Web 则适合无需本地设置的场景：</p>
+<ul>
+<li>启动长时间运行的任务</li>
+<li>稍后回来检查结果</li>
+<li>处理本地没有的仓库</li>
+<li>并行运行多个任务</li>
+<li>在桌面浏览器或 Claude iOS 应用中使用</li>
+</ul>
+<p>这类入口说明 Claude Code 的任务模型已经超出&quot;本机终端的一次交互&quot;。它更接近可调度、可迁移、可远程继续的开发任务系统。</p>
+<h3 id="34-mcp连接外部数据和工具">3.4 MCP：连接外部数据和工具
+</h3><p>MCP 是 Claude Code 扩展工具能力的重要机制。</p>
+<p>官方概览页把 MCP 描述为一个开放标准，用于将 AI 工具连接到外部数据源。通过 MCP，Claude Code 可以读取 Google Drive 中的设计文档、更新 Jira 工单、从 Slack 拉取数据，或使用自定义工具。</p>
+<p>可以把 MCP 理解成 Agent 与外部世界之间的标准工具接口。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    A[Claude Code] --&gt; B[MCP Client]
+    B --&gt; C[MCP Server]
+    C --&gt; D[Google Drive]
+    C --&gt; E[Jira]
+    C --&gt; F[Slack]
+    C --&gt; G[Custom Tools]
+</code></pre><p>在企业场景里，MCP 的价值很大：很多工程任务不是只改代码，还需要读需求、查工单、同步文档、通知团队、访问内部系统。</p>
+<h3 id="35-claudemd自动记忆skills-与-hooks">3.5 <code>CLAUDE.md</code>、自动记忆、Skills 与 Hooks
+</h3><p>官方概览页把自定义能力分成四类。</p>
+<p><code>CLAUDE.md</code> 用来保存项目说明。它适合写编码标准、架构决策、首选库、审查清单等长期规则。</p>
+<p>自动记忆用于保存 Claude Code 在工作中学到的内容，例如构建命令、调试经验和项目习惯。它解决的是跨会话经验复用问题。</p>
+<p>Skills 用来打包可重复工作流。比如团队可以把 <code>/review-pr</code>、<code>/deploy-staging</code> 这类流程做成可共享技能。</p>
+<p>Hooks 用来在 Claude Code 操作前后运行 Shell 命令。比如每次文件编辑后自动格式化，或者提交前运行 lint。</p>
+<p>它们的职责不同：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>模块</th>
+          <th>主要作用</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>CLAUDE.md</code></td>
+          <td>项目长期说明和协作规则</td>
+      </tr>
+      <tr>
+          <td>自动记忆</td>
+          <td>跨会话保存项目经验</td>
+      </tr>
+      <tr>
+          <td>Skills</td>
+          <td>打包和复用工作流</td>
+      </tr>
+      <tr>
+          <td>Hooks</td>
+          <td>在生命周期事件上执行确定性自动化</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>一个简单判断方法是：需要告诉 Claude &ldquo;应该怎么想&quot;时，用 <code>CLAUDE.md</code> 或 Skills；需要系统&quot;每次都自动做某件确定动作&quot;时，用 Hooks。</p>
+<h3 id="36-多代理与-agent-sdk">3.6 多代理与 Agent SDK
+</h3><p>官方概览页提到两种更高级的 Agent 能力。</p>
+<p>第一种是运行多个 Claude Code 代理，让它们同时处理任务的不同部分。主代理可以协调工作、分配子任务并合并结果。</p>
+<p>第二种是使用 Agent SDK 构建完全自定义的工作流。SDK 让开发者可以用 Claude Code 的工具和能力构建自己的代理，并控制编排、工具访问和权限。</p>
+<p>这说明 Claude Code 不只是一个成品工具，也是一套可以被二次集成的 Agent 能力平台。</p>
+<hr>
+<h2 id="四一次任务如何运行">四、一次任务如何运行
+</h2><h3 id="41-典型执行流程">4.1 典型执行流程
+</h3><p>假设用户输入：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">为 auth 模块补测试，运行测试，并修复失败用例。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>Claude Code 的执行过程可以抽象成：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">sequenceDiagram
+    participant U as 用户
+    participant C as Claude Code
+    participant FS as 文件系统
+    participant SH as Shell
+    participant M as 模型
+
+    U-&gt;&gt;C: 提出任务
+    C-&gt;&gt;FS: 读取 CLAUDE.md 和项目文件
+    C-&gt;&gt;M: 组织上下文
+    M-&gt;&gt;C: 规划搜索与修改步骤
+    C-&gt;&gt;FS: 搜索 auth 模块和测试目录
+    C-&gt;&gt;M: 返回文件内容
+    M-&gt;&gt;C: 生成测试修改
+    C-&gt;&gt;FS: 编辑测试文件
+    C-&gt;&gt;SH: 运行测试命令
+    SH-&gt;&gt;C: 返回测试结果
+    C-&gt;&gt;M: 分析失败原因
+    M-&gt;&gt;C: 生成修复方案
+    C-&gt;&gt;FS: 修改代码或测试
+    C-&gt;&gt;SH: 再次运行测试
+    C-&gt;&gt;U: 总结修改、验证结果和风险
+</code></pre><p>这里最关键的是闭环：模型不会只给出一次答案，而是不断根据工具结果调整下一步。</p>
+<h3 id="42-为什么上下文管理重要">4.2 为什么上下文管理重要
+</h3><p>代码库往往远大于模型一次能处理的上下文窗口。</p>
+<p>因此 Claude Code 不可能简单地把整个仓库塞给模型。它更合理的方式是：</p>
+<ul>
+<li>先读取项目说明和目录结构</li>
+<li>根据任务搜索相关文件</li>
+<li>只加载必要文件片段</li>
+<li>把命令输出和错误日志作为新证据</li>
+<li>在需要时压缩或摘要历史</li>
+<li>把可复用经验沉淀到记忆或项目说明里</li>
+</ul>
+<p>这也是为什么 <code>CLAUDE.md</code>、自动记忆、Skills 和工具结果会成为架构上的一等公民。</p>
+<p>Agent 的聪明程度不只来自模型本身，也来自它能不能拿到正确、适量、及时的上下文。</p>
+<h3 id="43-为什么-hooks-重要">4.3 为什么 Hooks 重要
+</h3><p>模型擅长推理和生成，但工程环境里还有大量确定性规则。</p>
+<p>例如：</p>
+<ul>
+<li>每次改 Python 文件后运行格式化</li>
+<li>禁止执行危险命令</li>
+<li>提交前必须跑 lint</li>
+<li>会话结束时写操作日志</li>
+<li>工具调用前扫描敏感路径</li>
+</ul>
+<p>这些事情不适合完全交给模型自由发挥，因为它们应该稳定、可审计、可重复。</p>
+<p>Hooks 的价值就在这里：把确定性自动化挂到 Claude Code 的生命周期上，让团队规则不只停留在提示词里。</p>
+<hr>
+<h2 id="五工程实现视角下的关键设计">五、工程实现视角下的关键设计
+</h2><h3 id="51-多入口共享同一底层能力">5.1 多入口共享同一底层能力
+</h3><p>官方概览页明确写到，每个界面都连接到相同的底层 Claude Code 引擎，因此 <code>CLAUDE.md</code>、设置和 MCP 服务器可以在所有界面中工作。</p>
+<p>这句话非常关键。</p>
+<p>它意味着 Claude Code 的架构重心在底层引擎，而不是某个单独 UI。CLI、IDE、Desktop、Web 更像是不同的交互壳：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[Terminal] --&gt; E[Claude Code Engine]
+    B[VS Code / JetBrains] --&gt; E
+    C[Desktop / Web] --&gt; E
+    D[CI / Slack / SDK] --&gt; E
+    E --&gt; F[Context]
+    E --&gt; G[Tools]
+    E --&gt; H[Permissions]
+    E --&gt; I[MCP / Skills / Hooks]
+</code></pre><p>这也是为什么同一套项目说明和工具配置可以跨入口复用。</p>
+<h3 id="52-agent-loop-是执行核心">5.2 Agent Loop 是执行核心
+</h3><p>编码任务天然是多步的。</p>
+<p>人类开发者修 bug 时也不会只看一个文件，而是会搜索、阅读、假设、修改、运行测试、看错误、再修改。</p>
+<p>Claude Code 的 Agent Loop 模拟的正是这个过程。</p>
+<p>简化成伪代码大致是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">加载用户目标和项目上下文
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">while 任务未完成:
+</span></span><span class="line"><span class="cl">    基于当前上下文规划下一步
+</span></span><span class="line"><span class="cl">    如果需要更多信息:
+</span></span><span class="line"><span class="cl">        调用读取、搜索或 MCP 工具
+</span></span><span class="line"><span class="cl">    如果需要修改:
+</span></span><span class="line"><span class="cl">        生成文件编辑
+</span></span><span class="line"><span class="cl">    如果需要验证:
+</span></span><span class="line"><span class="cl">        运行命令或测试
+</span></span><span class="line"><span class="cl">    接收工具结果
+</span></span><span class="line"><span class="cl">    更新上下文
+</span></span><span class="line"><span class="cl">    如遇高风险动作:
+</span></span><span class="line"><span class="cl">        请求确认或按策略处理
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">输出最终总结
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>真实实现当然会复杂得多，但这个抽象能解释大多数用户可见行为。</p>
+<h3 id="53-权限系统决定可落地程度">5.3 权限系统决定可落地程度
+</h3><p>一个能运行命令、改文件、连外部工具的 Agent，如果没有权限系统，很难进入严肃工程环境。</p>
+<p>权限系统至少要覆盖三类问题。</p>
+<p>第一，哪些工具可以用。例如能不能执行 Shell，能不能写文件，能不能访问外部系统。</p>
+<p>第二，哪些动作需要确认。例如删除文件、安装依赖、推送分支、访问敏感路径。</p>
+<p>第三，哪些规则必须强制执行。例如组织托管策略、CI 中的只读审查、Hooks 拦截。</p>
+<p>Claude Code 的能力越强，权限系统越重要。</p>
+<h3 id="54-扩展系统让-agent-适配团队">5.4 扩展系统让 Agent 适配团队
+</h3><p>不同团队的工程流程差异很大。</p>
+<p>有的团队重视代码审查，有的团队重视发布流程，有的团队需要访问内部知识库，有的团队有严格的安全命令白名单。</p>
+<p>Claude Code 通过几类扩展点适配这些差异：</p>
+<ul>
+<li><code>CLAUDE.md</code>：写项目知识</li>
+<li>自动记忆：积累跨会话经验</li>
+<li>Skills：封装复用流程</li>
+<li>Hooks：接入确定性自动化</li>
+<li>MCP：连接外部系统</li>
+<li>Agent SDK：构建自定义代理工作流</li>
+</ul>
+<p>这套扩展模型的方向很明确：把通用 Agent 变成团队自己的工程 Agent。</p>
+<hr>
+<h2 id="六prompt-管理不要把所有指令都塞进一句话">六、Prompt 管理：不要把所有指令都塞进一句话
+</h2><h3 id="61-prompt-在-claude-code-里不是单一文本">6.1 Prompt 在 Claude Code 里不是单一文本
+</h3><p>很多人把 prompt 理解成用户输入框里的一句话。</p>
+<p>在 Claude Code 这种编码 Agent 里，prompt 更像一个由多层信息拼出来的上下文包。它至少包括：</p>
+<ul>
+<li>系统级行为约束</li>
+<li>当前用户请求</li>
+<li>会话历史</li>
+<li><code>CLAUDE.md</code></li>
+<li><code>CLAUDE.local.md</code></li>
+<li><code>.claude/rules/</code></li>
+<li>自动记忆</li>
+<li>Skills 的名称、描述和按需加载内容</li>
+<li>Subagent 的专用 system prompt</li>
+<li>MCP 工具说明和返回结果</li>
+<li>文件内容、命令输出、diff 和错误日志</li>
+</ul>
+<p>因此，Prompt 管理的核心不是&quot;写一个万能提示词&rdquo;，而是回答三个问题：</p>
+<p>第一，哪些内容每次会话都应该出现？</p>
+<p>第二，哪些内容只在相关任务出现时加载？</p>
+<p>第三，哪些内容不应该放进模型上下文，而应该交给 Hooks、权限或工具处理？</p>
+<h3 id="62-prompt-分层模型">6.2 Prompt 分层模型
+</h3><p>可以把 Claude Code 的 prompt 管理拆成五层：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[系统层&lt;br/&gt;Claude Code 默认行为、工具协议、权限边界] --&gt; B[用户层&lt;br/&gt;个人偏好、全局 CLAUDE.md、全局 settings]
+    B --&gt; C[项目层&lt;br/&gt;项目 CLAUDE.md、rules、settings、MCP 配置]
+    C --&gt; D[任务层&lt;br/&gt;当前用户请求、计划、文件、命令输出]
+    D --&gt; E[扩展层&lt;br/&gt;Skills、Subagents、Plugins、MCP 返回结果]
+</code></pre><p>这五层的职责不同。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>层级</th>
+          <th>适合放什么</th>
+          <th>不适合放什么</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>系统层</td>
+          <td>产品默认行为、工具调用格式、权限协议</td>
+          <td>项目私有知识</td>
+      </tr>
+      <tr>
+          <td>用户层</td>
+          <td>个人偏好、常用输出风格、通用开发习惯</td>
+          <td>团队强制规范</td>
+      </tr>
+      <tr>
+          <td>项目层</td>
+          <td>架构约定、测试命令、代码风格、发布流程</td>
+          <td>临时任务细节</td>
+      </tr>
+      <tr>
+          <td>任务层</td>
+          <td>本次要做什么、当前错误、当前 diff</td>
+          <td>长期规则</td>
+      </tr>
+      <tr>
+          <td>扩展层</td>
+          <td>专用流程、外部工具说明、子任务约束</td>
+          <td>所有任务都要读的大段背景</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>这也是为什么官方文档建议从 <code>CLAUDE.md</code> 开始，再按需要增加 Skills、Subagents、Hooks、MCP 和 Plugins。</p>
+<h3 id="63-claudemd-应该写什么">6.3 <code>CLAUDE.md</code> 应该写什么
+</h3><p><code>CLAUDE.md</code> 是项目级长期 prompt。</p>
+<p>它应该帮助 Claude Code 快速进入项目，而不是替代 README，也不是堆满所有细节。</p>
+<p>建议结构如下：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span><span class="lnt">28
+</span><span class="lnt">29
+</span><span class="lnt">30
+</span><span class="lnt">31
+</span><span class="lnt">32
+</span><span class="lnt">33
+</span><span class="lnt">34
+</span><span class="lnt">35
+</span><span class="lnt">36
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-markdown" data-lang="markdown"><span class="line"><span class="cl"><span class="gh"># 项目说明
+</span></span></span><span class="line"><span class="cl"><span class="gh"></span>
+</span></span><span class="line"><span class="cl">一句话说明项目用途、核心模块和技术栈。
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="gu">## 常用命令
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 安装依赖：
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 本地启动：
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 运行测试：
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 静态检查：
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 格式化：
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="gu">## 代码结构
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="k">-</span> <span class="sb">`src/`</span>：
+</span></span><span class="line"><span class="cl"><span class="k">-</span> <span class="sb">`tests/`</span>：
+</span></span><span class="line"><span class="cl"><span class="k">-</span> <span class="sb">`scripts/`</span>：
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="gu">## 编码约定
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 命名规则：
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 错误处理：
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 日志规范：
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 测试要求：
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="gu">## 工作流
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 修改前先阅读哪些文件
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 提交前必须运行哪些命令
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 哪些目录不能随意修改
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="gu">## 常见坑
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 已知兼容性问题
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 容易误用的 API
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 本地环境差异
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>好的 <code>CLAUDE.md</code> 有三个特点。</p>
+<p>第一，可执行。它告诉 Agent 应该运行什么命令，而不只是描述愿景。</p>
+<p>第二，可定位。它告诉 Agent 关键文件在哪里，而不是笼统说&quot;遵守项目结构&quot;。</p>
+<p>第三，可更新。项目变化后及时维护，否则长期上下文会变成错误上下文。</p>
+<h3 id="64-rules把大规则拆成小规则">6.4 Rules：把大规则拆成小规则
+</h3><p>如果所有约定都写进 <code>CLAUDE.md</code>，上下文会越来越重。</p>
+<p>更好的方式是把规则拆到 <code>.claude/rules/</code>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">.claude/
+</span></span><span class="line"><span class="cl">  rules/
+</span></span><span class="line"><span class="cl">    python.md
+</span></span><span class="line"><span class="cl">    frontend.md
+</span></span><span class="line"><span class="cl">    database.md
+</span></span><span class="line"><span class="cl">    security.md
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样做的好处是：</p>
+<ul>
+<li>Python 规则只服务 Python 代码</li>
+<li>前端规则只服务前端目录</li>
+<li>数据库规则只在迁移和 SQL 相关任务中出现</li>
+<li>安全规则可以独立维护</li>
+</ul>
+<p>从 Prompt 管理角度看，Rules 的价值是&quot;按任务加载相关约束&quot;，而不是让每次会话都背着全部规则前进。</p>
+<h3 id="65-skills-与-prompt-的关系">6.5 Skills 与 Prompt 的关系
+</h3><p>Skills 也是 prompt，但它不是普通 prompt。</p>
+<p>它更像&quot;带名称、描述和触发条件的工作流包&quot;。官方 SDK 文档说明，Skills 与 <code>CLAUDE.md</code> 的区别在于：<code>CLAUDE.md</code> 每个会话都会加载，而 Skills 按需加载。Agent 启动时先看到 skill 描述，只有相关时才加载完整内容。</p>
+<p>这意味着 Skills 适合承载比较长、比较专门的流程，例如：</p>
+<ul>
+<li>PR 审查</li>
+<li>发布检查</li>
+<li>事故复盘</li>
+<li>API 文档生成</li>
+<li>迁移脚本审查</li>
+<li>安全扫描流程</li>
+</ul>
+<p>不要把这些流程全塞进 <code>CLAUDE.md</code>。否则每次做一个小改动，模型都要读一大段不相关流程。</p>
+<h3 id="66-prompt-管理的常见错误">6.6 Prompt 管理的常见错误
+</h3><p>第一种错误是&quot;万能提示词依赖&quot;。</p>
+<p>把所有规则都写进一个超长 prompt，看起来信息很全，实际会制造噪音。模型会在不相关任务中看到过多约束，反而更难抓重点。</p>
+<p>第二种错误是&quot;规则和动作混在一起&quot;。</p>
+<p>例如&quot;每次提交前必须运行测试&quot;可以写进 <code>CLAUDE.md</code>，但如果团队真的要求强制执行，就应该配 Hooks 或 CI。提示词是建议，Hooks 和 CI 才是约束。</p>
+<p>第三种错误是&quot;把临时事实写进长期记忆&quot;。</p>
+<p>比如&quot;今天临时跳过某个测试&quot;不适合进入 <code>CLAUDE.md</code> 或自动记忆。长期上下文应该稳定，否则以后会误导 Agent。</p>
+<p>第四种错误是&quot;不给验证命令&quot;。</p>
+<p>只写&quot;保证质量&quot;没有意义。应该写清楚 <code>npm test</code>、<code>pytest</code>、<code>ruff check .</code>、<code>go test ./...</code> 这类命令。</p>
+<h3 id="67-推荐的-prompt-管理策略">6.7 推荐的 Prompt 管理策略
+</h3><p>一个团队可以按这个顺序建设：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    A[先写 CLAUDE.md] --&gt; B[拆分 rules]
+    B --&gt; C[沉淀常用 Skills]
+    C --&gt; D[为高风险任务建 Subagents]
+    D --&gt; E[用 Hooks 强制关键动作]
+    E --&gt; F[用 Plugins 分发团队能力]
+</code></pre><p>简单说：</p>
+<ul>
+<li>长期项目知识放 <code>CLAUDE.md</code></li>
+<li>局部规则放 <code>.claude/rules/</code></li>
+<li>可复用流程放 Skills</li>
+<li>专业角色放 Subagents</li>
+<li>确定性动作放 Hooks</li>
+<li>跨项目分发放 Plugins</li>
+<li>外部系统上下文放 MCP</li>
+</ul>
+<hr>
+<h2 id="七上下文管理让-agent-在正确的信息里工作">七、上下文管理：让 Agent 在正确的信息里工作
+</h2><h3 id="71-上下文管理解决什么问题">7.1 上下文管理解决什么问题
+</h3><p>Claude Code 的能力很大一部分来自上下文。</p>
+<p>但上下文不是越多越好。代码库、日志、diff、命令输出、需求文档、MCP 工具结果都可能进入会话，信息太少会让 Agent 判断错误，信息太多又会挤占上下文窗口、增加噪音和成本。</p>
+<p>上下文管理要解决四个问题：</p>
+<ul>
+<li>该给 Agent 看什么</li>
+<li>什么时候给 Agent 看</li>
+<li>看完后哪些信息需要保留</li>
+<li>哪些信息应该摘要、隔离或丢弃</li>
+</ul>
+<p>官方文档提到，当上下文接近限制时，Claude Code 会自动管理上下文：先清除较旧的工具输出，必要时总结对话；用户请求和关键代码片段会被保留，但早期细节可能丢失。</p>
+<p>这意味着团队不能把重要规则只留在聊天历史里。长期规则应该进入 <code>CLAUDE.md</code>、Rules、Skills 或配置系统。</p>
+<h3 id="72-上下文来源">7.2 上下文来源
+</h3><p>Claude Code 的上下文大致来自七类信息。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>来源</th>
+          <th>内容</th>
+          <th>管理重点</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>用户输入</td>
+          <td>本次任务、约束、目标</td>
+          <td>表达清楚完成标准和限制</td>
+      </tr>
+      <tr>
+          <td>项目记忆</td>
+          <td><code>CLAUDE.md</code>、自动记忆、rules</td>
+          <td>保持短、准、可维护</td>
+      </tr>
+      <tr>
+          <td>代码文件</td>
+          <td>当前读取的源代码、测试、配置</td>
+          <td>只读相关文件，避免全仓库灌入</td>
+      </tr>
+      <tr>
+          <td>工具输出</td>
+          <td>Shell、测试、lint、构建日志</td>
+          <td>保留关键错误，压缩冗长日志</td>
+      </tr>
+      <tr>
+          <td>Git 信息</td>
+          <td>diff、提交、分支、PR</td>
+          <td>关注本次变更影响面</td>
+      </tr>
+      <tr>
+          <td>扩展能力</td>
+          <td>Skills、Subagents、Hooks</td>
+          <td>按需加载，不要全量常驻</td>
+      </tr>
+      <tr>
+          <td>外部系统</td>
+          <td>MCP 返回的工单、文档、日志</td>
+          <td>结构化、带来源、控制权限</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>一个常见误区是把上下文等同于&quot;文件内容&quot;。</p>
+<p>实际上，错误日志、测试失败、用户约束、项目规则和外部工单往往比源代码片段更关键。上下文管理不是单纯读文件，而是为当前任务组织证据。</p>
+<h3 id="73-claudemd-与自动记忆">7.3 <code>CLAUDE.md</code> 与自动记忆
+</h3><p>官方 memory 文档把 <code>CLAUDE.md</code> 和自动记忆称为两个互补的记忆系统，它们都会在每次对话开始时加载，并被 Claude 当作上下文，而不是强制配置。</p>
+<p>两者差异可以这样理解：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>机制</th>
+          <th>谁维护</th>
+          <th>适合内容</th>
+          <th>风险</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>CLAUDE.md</code></td>
+          <td>人维护</td>
+          <td>编码标准、工作流、架构说明、测试命令</td>
+          <td>写太长、过期、像 README 一样泛</td>
+      </tr>
+      <tr>
+          <td>自动记忆</td>
+          <td>Claude 维护</td>
+          <td>构建命令、调试经验、项目偏好、发现的模式</td>
+          <td>记录临时事实、记住错误经验</td>
+      </tr>
+  </tbody>
+</table></div>
+<p><code>CLAUDE.md</code> 更适合放&quot;团队想让 Agent 稳定遵守的项目知识&quot;。</p>
+<p>自动记忆更适合放&quot;Agent 在工作中学到的经验&quot;。</p>
+<p>如果某个规则必须强制执行，例如禁止读取密钥文件或禁止执行发布命令，不应该只写进记忆。官方文档也强调，要阻止某个操作，应使用 PreToolUse hook，而不是依赖 Claude 是否记得。</p>
+<h3 id="74-上下文窗口与自动压缩">7.4 上下文窗口与自动压缩
+</h3><p>上下文窗口可以理解成当前会话能携带的信息容量。</p>
+<p>当会话变长时，Claude Code 会自动压缩上下文。压缩的目标不是删除所有旧信息，而是保留任务目标、关键代码片段、重要结论和当前状态。</p>
+<p>但压缩会带来损耗：</p>
+<ul>
+<li>早期讨论细节可能丢失</li>
+<li>冗长工具输出可能被删掉</li>
+<li>未结构化的重要信息可能被摘要错</li>
+<li>模糊的用户偏好可能被弱化</li>
+</ul>
+<p>所以长任务里要主动管理上下文。</p>
+<p>常用命令包括：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>命令</th>
+          <th>作用</th>
+          <th>适合场景</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>/context</code></td>
+          <td>查看当前上下文占用</td>
+          <td>不知道空间被什么占满时</td>
+      </tr>
+      <tr>
+          <td><code>/compact</code></td>
+          <td>压缩当前会话</td>
+          <td>长任务继续推进前</td>
+      </tr>
+      <tr>
+          <td><code>/compact focus on ...</code></td>
+          <td>带焦点压缩</td>
+          <td>想保留某个主题的关键信息</td>
+      </tr>
+      <tr>
+          <td><code>/clear</code></td>
+          <td>开启空上下文新对话</td>
+          <td>切换到不相关任务</td>
+      </tr>
+      <tr>
+          <td><code>/resume</code></td>
+          <td>恢复历史会话</td>
+          <td>回到之前任务</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>比如做完 auth bug 修复后，如果要继续做 billing 重构，不应该让旧 auth 日志一直占着上下文。可以先 <code>/clear</code>，或者在同一任务内用 <code>/compact focus on billing refactor</code>。</p>
+<h3 id="75-工具输出如何进入上下文">7.5 工具输出如何进入上下文
+</h3><p>工具输出是 Agent 判断现实状态的证据。</p>
+<p>例如：</p>
+<ul>
+<li>测试失败日志告诉 Agent 哪个断言失败</li>
+<li>lint 输出告诉 Agent 哪些文件不合规</li>
+<li><code>git diff</code> 告诉 Agent 这次改了什么</li>
+<li><code>ls</code> 和 <code>rg</code> 告诉 Agent 文件在哪里</li>
+<li>MCP 工具返回工单状态或设计文档内容</li>
+</ul>
+<p>但工具输出很容易膨胀。</p>
+<p>例如一次全量测试可能输出几千行日志。如果直接塞进上下文，模型会被大量无用信息淹没。更好的做法是：</p>
+<ul>
+<li>优先保留失败摘要</li>
+<li>保留最小复现命令</li>
+<li>保留关键 stack trace</li>
+<li>删除重复日志</li>
+<li>把长日志保存到文件，只让 Agent 读取相关片段</li>
+</ul>
+<p>对 Verify Agent 来说，最有价值的输出不是完整日志，而是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">命令：pytest tests/auth -q
+</span></span><span class="line"><span class="cl">结果：失败
+</span></span><span class="line"><span class="cl">失败用例：test_refresh_expired_token
+</span></span><span class="line"><span class="cl">关键错误：expected 401, got 200
+</span></span><span class="line"><span class="cl">相关文件：app/auth/session.py, tests/auth/test_session.py
+</span></span><span class="line"><span class="cl">下一步建议：检查 token 过期判断分支
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这类结构化证据比大段原始输出更适合进入主上下文。</p>
+<h3 id="76-文件上下文按影响面读取">7.6 文件上下文：按影响面读取
+</h3><p>Claude Code 理解代码库，不代表每次都应该读完整代码库。</p>
+<p>更好的策略是按影响面逐步读取：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[用户任务] --&gt; B[读 CLAUDE.md 和目录结构]
+    B --&gt; C[搜索入口符号和相关文件]
+    C --&gt; D[读取核心实现]
+    D --&gt; E[读取相邻测试和配置]
+    E --&gt; F[根据错误日志补充文件]
+    F --&gt; G[形成最小可用上下文]
+</code></pre><p>比如修登录 bug 时，通常不需要先读完整个后端项目，而是应该从路由、service、session、测试和配置开始。</p>
+<p>文件上下文管理有三个原则。</p>
+<p>第一，先读入口，再读依赖。不要一开始就撒网式读取。</p>
+<p>第二，读代码也要读测试。测试往往解释了项目期望行为。</p>
+<p>第三，读配置。很多 bug 不在业务代码，而在开关、环境变量、依赖版本或构建配置。</p>
+<h3 id="77-外部上下文mcp-不等于复制粘贴">7.7 外部上下文：MCP 不等于复制粘贴
+</h3><p>没有 MCP 时，用户经常把 Jira、Slack、设计文档、监控日志复制进聊天框。</p>
+<p>这样有几个问题：</p>
+<ul>
+<li>内容容易过期</li>
+<li>来源不清楚</li>
+<li>格式不稳定</li>
+<li>复制时可能遗漏关键字段</li>
+<li>大段文本会占用上下文</li>
+</ul>
+<p>MCP 的价值是让 Claude Code 按需读取外部系统，并用结构化结果进入上下文。</p>
+<p>例如 Jira MCP 工具可以返回：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;issue&#34;</span><span class="p">:</span> <span class="s2">&#34;AUTH-123&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;title&#34;</span><span class="p">:</span> <span class="s2">&#34;Refresh token expires too late&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;status&#34;</span><span class="p">:</span> <span class="s2">&#34;In Progress&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;priority&#34;</span><span class="p">:</span> <span class="s2">&#34;High&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;acceptanceCriteria&#34;</span><span class="p">:</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;expired refresh token returns 401&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;client should clear local session&#34;</span>
+</span></span><span class="line"><span class="cl">  <span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;links&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;design-doc-url&#34;</span><span class="p">,</span> <span class="s2">&#34;incident-url&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这比用户粘贴一段聊天记录更稳定。</p>
+<p>但 MCP 上下文也要管控。外部系统返回太多字段、太多历史评论、太多无关附件，同样会污染上下文。MCP 工具应该尽量返回当前任务需要的最小结构化信息。</p>
+<h3 id="78-subagent-隔离上下文">7.8 Subagent 隔离上下文
+</h3><p>官方上下文窗口文档建议，可以把大型读取委托给 subagents，让文件内容保留在子代理上下文中，而不是主上下文里。</p>
+<p>这点非常重要。</p>
+<p>例如主 Agent 要分析一个大模块，可以让 Research Agent 做大范围阅读：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">任务：阅读支付模块，找出 refund 流程涉及哪些文件。
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">Research Agent 自己读取：
+</span></span><span class="line"><span class="cl">- routes/payment.py
+</span></span><span class="line"><span class="cl">- services/refund.py
+</span></span><span class="line"><span class="cl">- models/payment.py
+</span></span><span class="line"><span class="cl">- tests/payment/test_refund.py
+</span></span><span class="line"><span class="cl">- docs/payment.md
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">返回主 Agent：
+</span></span><span class="line"><span class="cl">- 涉及文件列表
+</span></span><span class="line"><span class="cl">- 调用链摘要
+</span></span><span class="line"><span class="cl">- 关键风险
+</span></span><span class="line"><span class="cl">- 建议修改点
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>主 Agent 不需要知道每个文件的全部内容，只需要知道&quot;哪些文件重要、为什么重要、下一步怎么做&quot;。</p>
+<p>这就是上下文隔离的价值：让探索发生在子上下文里，让主上下文保持干净。</p>
+<h3 id="79-上下文污染">7.9 上下文污染
+</h3><p>上下文污染指的是：进入会话的信息误导了 Agent。</p>
+<p>常见污染来源包括：</p>
+<ul>
+<li>过期的 <code>CLAUDE.md</code></li>
+<li>自动记忆里保存了临时 workaround</li>
+<li>用户粘贴了不完整日志</li>
+<li>子 Agent 返回了没有证据的结论</li>
+<li>MCP 工具返回了过期工单状态</li>
+<li>长会话里残留了上一个任务的假设</li>
+<li>过度压缩导致关键限制被弱化</li>
+</ul>
+<p>上下文污染比上下文不足更隐蔽，因为 Agent 看起来掌握了信息，但信息是错的。</p>
+<p>减少污染的方法：</p>
+<ul>
+<li>长期规则保持短而准</li>
+<li>任务切换时用 <code>/clear</code></li>
+<li>长任务压缩时用明确焦点</li>
+<li>子 Agent 输出必须带证据</li>
+<li>MCP 返回结果带时间和来源</li>
+<li>重要结论用测试、diff 或命令输出验证</li>
+<li>定期审查自动记忆和 <code>CLAUDE.md</code></li>
+</ul>
+<h3 id="710-上下文管理的推荐流程">7.10 上下文管理的推荐流程
+</h3><p>一个比较稳的上下文管理流程是：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[接收任务] --&gt; B[加载长期上下文]
+    B --&gt; C[识别任务类型和影响面]
+    C --&gt; D[读取最小相关文件]
+    D --&gt; E[调用工具或 MCP 补充证据]
+    E --&gt; F[结构化保留关键结果]
+    F --&gt; G{上下文是否膨胀}
+    G -- 是 --&gt; H[委托 Subagent 或 /compact]
+    G -- 否 --&gt; I[继续实现和验证]
+    H --&gt; I
+    I --&gt; J[输出结果和残余风险]
+    J --&gt; K[必要时更新 CLAUDE.md 或记忆]
+</code></pre><p>实践中可以记住一句话：把规则放在长期上下文，把证据放在任务上下文，把探索放在子 Agent，把强制动作放在 Hooks。</p>
+<hr>
+<h2 id="八多-agent-分工把一个大任务拆成多个专业角色">八、多 Agent 分工：把一个大任务拆成多个专业角色
+</h2><h3 id="81-为什么需要多-agent">8.1 为什么需要多 Agent
+</h3><p>单个 Agent 可以完成很多任务，但它也会遇到三个限制。</p>
+<p>第一，上下文会膨胀。一个大型任务可能需要读大量文件、日志和文档，主会话很容易变长。</p>
+<p>第二，角色会混杂。实现、测试、审查、安全分析、文档编写需要不同关注点，让一个 Agent 同时扮演所有角色，容易顾此失彼。</p>
+<p>第三，任务无法并行。多个相对独立的模块如果串行处理，会浪费时间。</p>
+<p>多 Agent 的价值就是把任务拆成多个边界清楚的工作单元：</p>
+<ul>
+<li>主 Agent 负责目标理解、任务拆分和结果整合</li>
+<li>实现 Agent 负责代码修改</li>
+<li>验证 Agent 负责测试和质量检查</li>
+<li>Review Agent 负责审查 diff 和潜在缺陷</li>
+<li>Research Agent 负责查资料、读文档和分析依赖</li>
+<li>Migration Agent 负责数据库或接口迁移</li>
+<li>Security Agent 负责安全风险扫描</li>
+</ul>
+<p>官方 subagents 文档也说明，可以创建具有自定义提示、工具限制、权限模式、hooks 和 skills 的专门 subagents。</p>
+<p>需要注意：下面这些 <code>Research Agent</code>、<code>Implement Agent</code>、<code>Verify Agent</code>、<code>Review Agent</code>、<code>Security Agent</code> 不是 Claude Code 官方固定内置的一组系统 Agent，而是基于 subagents 机制整理出的工程角色。Claude Code 提供 subagent 机制和部分内置 subagents；具体专业角色通常需要用户或团队通过自定义 subagent、command、skill 或 batch 工作流定义出来。</p>
+<h3 id="82-多-agent-分工模型基于-subagents-机制的工程抽象">8.2 多 Agent 分工模型：基于 subagents 机制的工程抽象
+</h3><p>可以把多 Agent 系统理解成一个小型工程团队：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[Main Agent&lt;br/&gt;任务理解与调度] --&gt; B[Research Agent&lt;br/&gt;代码和文档调研]
+    A --&gt; C[Implement Agent&lt;br/&gt;实现修改]
+    A --&gt; D[Verify Agent&lt;br/&gt;测试和验证]
+    A --&gt; E[Review Agent&lt;br/&gt;代码审查]
+    A --&gt; F[Security Agent&lt;br/&gt;安全检查]
+    B --&gt; A
+    C --&gt; A
+    D --&gt; A
+    E --&gt; A
+    F --&gt; A
+</code></pre><p>这张图不是官方拓扑图，也不表示 Claude Code 默认内置了这些固定名称的 Agent。它表达的是：主会话 Agent 可以基于 subagents 机制，把调研、实现、验证、审查、安全检查等不同职责委派给专门的工作单元。这里的 <code>Verify Agent</code> 表示专门负责验证的子 Agent：运行测试、检查 lint、分析失败原因，并给主 Agent 一个明确结论。</p>
+<h3 id="83-常见-agent-角色设计">8.3 常见 Agent 角色设计
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>角色</th>
+          <th>主要职责</th>
+          <th>推荐工具权限</th>
+          <th>输出形式</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Main Agent</td>
+          <td>拆任务、调度、合并结果、对用户总结</td>
+          <td>读写文件、调用子 Agent、有限 Shell</td>
+          <td>计划、决策、最终总结</td>
+      </tr>
+      <tr>
+          <td>Research Agent</td>
+          <td>搜索代码、阅读文档、定位影响面</td>
+          <td>只读文件、搜索、MCP</td>
+          <td>相关文件列表、依赖关系、风险点</td>
+      </tr>
+      <tr>
+          <td>Implement Agent</td>
+          <td>修改代码、补测试、处理失败</td>
+          <td>读写文件、测试命令</td>
+          <td>修改说明、diff 摘要、验证建议</td>
+      </tr>
+      <tr>
+          <td>Verify Agent</td>
+          <td>跑测试、lint、类型检查、构建</td>
+          <td>Shell、只读文件、必要日志读取</td>
+          <td>PASS / FAIL / PARTIAL 和证据</td>
+      </tr>
+      <tr>
+          <td>Review Agent</td>
+          <td>审查正确性、可维护性、边界条件</td>
+          <td>只读 diff、只读文件</td>
+          <td>问题清单和严重级别</td>
+      </tr>
+      <tr>
+          <td>Security Agent</td>
+          <td>检查密钥、注入、权限、依赖风险</td>
+          <td>只读文件、扫描工具、MCP</td>
+          <td>安全风险和修复建议</td>
+      </tr>
+      <tr>
+          <td>Release Agent</td>
+          <td>生成 changelog、检查版本、发布前清单</td>
+          <td>Git、只读文件、有限 Shell</td>
+          <td>发布摘要和检查项</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>角色设计要避免两个极端。</p>
+<p>一种极端是所有 Agent 都拥有全部工具权限。这会让隔离失去意义。</p>
+<p>另一种极端是角色太碎。每个小任务都新建一个 Agent，会增加调度成本和上下文合并成本。</p>
+<h3 id="84-verify-agent验证不是看起来没问题">8.4 Verify Agent：验证不是&quot;看起来没问题&quot;
+</h3><p>验证 Agent 的核心职责不是赞同实现，而是主动寻找实现是否真的成立。</p>
+<p>一个好的 Verify Agent 应该做这些事：</p>
+<ul>
+<li>识别本次变更影响哪些模块</li>
+<li>找到应该运行的测试、lint、类型检查和构建命令</li>
+<li>执行验证命令</li>
+<li>保存关键错误日志</li>
+<li>判断失败是实现问题、测试环境问题还是既有问题</li>
+<li>必要时建议最小修复方向</li>
+<li>给出明确状态：<code>PASS</code>、<code>FAIL</code> 或 <code>PARTIAL</code></li>
+</ul>
+<p>验证 Agent 的输出不应该是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">看起来没问题。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>而应该是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">状态：PARTIAL
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">已运行：
+</span></span><span class="line"><span class="cl">- pytest tests/auth -q：通过
+</span></span><span class="line"><span class="cl">- ruff check app/auth tests/auth：通过
+</span></span><span class="line"><span class="cl">- npm run build：未运行，当前变更不涉及前端
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">未覆盖：
+</span></span><span class="line"><span class="cl">- 没有运行全量集成测试
+</span></span><span class="line"><span class="cl">- 没有验证真实 OAuth 回调
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">结论：
+</span></span><span class="line"><span class="cl">本次 auth 单元测试和静态检查通过，但外部 OAuth 流程仍需要人工或集成环境验证。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这类输出给主 Agent 的价值很高，因为主 Agent 可以据此决定是否继续修复、是否告知用户残余风险。</p>
+<h3 id="85-多-agent-的上下文隔离">8.5 多 Agent 的上下文隔离
+</h3><p>Subagent 的一个重要价值是上下文隔离。</p>
+<p>主 Agent 不需要把所有搜索过程、日志细节和失败尝试都保留在主上下文里。它可以把探索任务交给子 Agent，最后只接收结构化摘要。</p>
+<p>例如：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Research Agent 输出：
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">相关文件：
+</span></span><span class="line"><span class="cl">- app/auth/service.py
+</span></span><span class="line"><span class="cl">- app/auth/session.py
+</span></span><span class="line"><span class="cl">- tests/auth/test_session.py
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">关键发现：
+</span></span><span class="line"><span class="cl">- 登录态由 SessionService.refresh() 更新
+</span></span><span class="line"><span class="cl">- 过期时间依赖 settings.AUTH_TTL
+</span></span><span class="line"><span class="cl">- 现有测试没有覆盖 refresh token 过期路径
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">建议下一步：
+</span></span><span class="line"><span class="cl">- 为 refresh token 过期添加测试
+</span></span><span class="line"><span class="cl">- 修改 SessionService.refresh() 的异常分支
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这种摘要比把所有搜索过程原样塞回主会话更有效。</p>
+<h3 id="86-多-agent-的权限隔离">8.6 多 Agent 的权限隔离
+</h3><p>多 Agent 不是只为了并行，也为了权限收敛。</p>
+<p>例如：</p>
+<ul>
+<li>Research Agent 只读，不允许编辑</li>
+<li>Verify Agent 可以运行测试，但不允许修改代码</li>
+<li>Implement Agent 可以编辑代码，但不允许推送分支</li>
+<li>Security Agent 可以读配置，但不能读取密钥文件内容</li>
+<li>Release Agent 可以生成 changelog，但发布命令需要人工确认</li>
+</ul>
+<p>权限越清楚，系统越可控。</p>
+<p>如果一个子 Agent 的职责只是审查，就不应该给它写文件权限。这样即使它判断错误，也不会直接改坏项目。</p>
+<hr>
+<h2 id="九agent-调度链从用户目标到可验证结果">九、Agent 调度链：从用户目标到可验证结果
+</h2><h3 id="91-调度链是什么">9.1 调度链是什么
+</h3><p>Agent 调度链指的是：主 Agent 如何把用户目标拆成任务，选择合适的子 Agent 或工具，收集结果，再决定下一步。</p>
+<p>它不是简单的&quot;多开几个 Agent&quot;，而是一条有状态的任务链路：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[用户目标] --&gt; B[主 Agent 澄清目标和约束]
+    B --&gt; C[拆分任务]
+    C --&gt; D{选择执行方式}
+    D --&gt; E[直接调用工具]
+    D --&gt; F[委派 Subagent]
+    D --&gt; G[调用 Skill]
+    D --&gt; H[调用 MCP]
+    E --&gt; I[收集结果]
+    F --&gt; I
+    G --&gt; I
+    H --&gt; I
+    I --&gt; J{是否需要继续}
+    J -- 是 --&gt; C
+    J -- 否 --&gt; K[验证、总结、交付]
+</code></pre><p>调度链的质量，决定了 Claude Code 是&quot;想到哪做到哪&quot;，还是像工程师一样有节奏地推进。</p>
+<h3 id="92-调度链的四个阶段">9.2 调度链的四个阶段
+</h3><p>第一阶段是 intake，也就是接收任务。</p>
+<p>主 Agent 要判断用户真正想要什么：是修 bug、加功能、查原因、写文档，还是做审查。它还要识别约束：不能改哪些文件、必须跑哪些测试、是否允许联网、是否需要保持兼容。</p>
+<p>第二阶段是 planning，也就是拆解任务。</p>
+<p>主 Agent 把目标拆成若干可执行单元。例如&quot;升级登录模块&quot;可以拆成：阅读现有实现、定位测试、修改代码、补测试、运行验证、整理风险。</p>
+<p>第三阶段是 dispatch，也就是调度。</p>
+<p>主 Agent 决定每个单元交给谁：</p>
+<ul>
+<li>简单读文件：直接工具调用</li>
+<li>大范围搜索：Research Agent</li>
+<li>代码修改：Implement Agent 或主 Agent 自己做</li>
+<li>质量检查：Verify Agent</li>
+<li>外部系统查询：MCP</li>
+<li>固定流程：Skill</li>
+</ul>
+<p>第四阶段是 reduce，也就是归并。</p>
+<p>主 Agent 汇总子 Agent 输出、工具结果和验证证据，决定是否继续修复，最后给用户交付结论。</p>
+<h3 id="93-什么时候直接做什么时候调-agent">9.3 什么时候直接做，什么时候调 Agent
+</h3><p>不是所有任务都需要多 Agent。</p>
+<p>可以用这个判断表：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>情况</th>
+          <th>推荐方式</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>改一个小文件、上下文清楚</td>
+          <td>主 Agent 直接做</td>
+      </tr>
+      <tr>
+          <td>需要搜索很多模块</td>
+          <td>Research Agent</td>
+      </tr>
+      <tr>
+          <td>需要跨多个目录并行修改</td>
+          <td>多个 Implement Agent</td>
+      </tr>
+      <tr>
+          <td>需要独立质量判断</td>
+          <td>Verify / Review Agent</td>
+      </tr>
+      <tr>
+          <td>需要访问外部系统</td>
+          <td>MCP</td>
+      </tr>
+      <tr>
+          <td>流程固定且可复用</td>
+          <td>Skill</td>
+      </tr>
+      <tr>
+          <td>要跨项目分享能力</td>
+          <td>Plugin</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>多 Agent 的成本是真实存在的：调度需要 token，结果合并需要判断，子 Agent 可能理解偏差。</p>
+<p>所以最佳实践不是&quot;所有任务都多 Agent&quot;，而是&quot;复杂任务才多 Agent&quot;。</p>
+<h3 id="94-调度链中的状态设计">9.4 调度链中的状态设计
+</h3><p>一个清晰的调度链应该维护任务状态。</p>
+<p>可以用下面这种状态机理解：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">stateDiagram-v2
+    [*] --&gt; Intake
+    Intake --&gt; Plan
+    Plan --&gt; Dispatch
+    Dispatch --&gt; Execute
+    Execute --&gt; Verify
+    Verify --&gt; Rework: 验证失败
+    Rework --&gt; Dispatch
+    Verify --&gt; Review: 验证通过
+    Review --&gt; Rework: 审查发现阻塞问题
+    Review --&gt; Deliver
+    Deliver --&gt; [*]
+</code></pre><p>这条链路里，验证失败不是异常，而是正常反馈。</p>
+<p>一个成熟的 Agent 系统应该允许失败结果回流到实现环节，而不是在第一次测试失败后就把错误日志丢给用户。</p>
+<h3 id="95-调度输出要结构化">9.5 调度输出要结构化
+</h3><p>子 Agent 返回主 Agent 的内容应该尽量结构化。</p>
+<p>不推荐：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">我看了一下，应该是 session 相关的问题。
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>推荐：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-markdown" data-lang="markdown"><span class="line"><span class="cl"><span class="gu">## 结论
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl">问题在 <span class="sb">`SessionService.refresh()`</span> 的过期判断。
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="gu">## 证据
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="k">-</span> <span class="sb">`tests/auth/test_session.py::test_refresh_expired_token`</span> 失败
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 错误日志显示 expired_at 比较方向相反
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 相关代码位于 <span class="sb">`app/auth/session.py`</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="gu">## 建议
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 修正过期判断
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 增加边界时间测试
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 运行 <span class="sb">`pytest tests/auth -q`</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>结构化输出能减少主 Agent 的合并成本，也方便最终给用户解释。</p>
+<h3 id="96-调度链与命令系统">9.6 调度链与命令系统
+</h3><p>官方 commands 文档展示了 Claude Code 在任务期间和任务之间的命令体系。</p>
+<p>从调度角度看，这些命令可以理解成不同的调度入口：</p>
+<ul>
+<li><code>/plan</code>：先进入规划再执行，适合大改动</li>
+<li><code>/agents</code>：管理子 Agent</li>
+<li><code>/tasks</code>：查看后台任务</li>
+<li><code>/batch</code>：把大型修改拆成独立单元并行运行</li>
+<li><code>/background</code>：把整个会话放到后台继续运行</li>
+<li><code>/diff</code>：查看当前改动</li>
+<li><code>/code-review</code>：对 diff 做代码审查</li>
+<li><code>/security-review</code>：做更深的安全检查</li>
+<li><code>/compact</code>：压缩长会话上下文</li>
+<li><code>/resume</code>：恢复历史会话</li>
+</ul>
+<p>这些命令说明 Claude Code 的调度不只是模型内部推理，也暴露成用户可控的工作流界面。</p>
+<hr>
+<h2 id="十skillspluginsmcp生态管理和使用">十、Skills、Plugins、MCP：生态管理和使用
+</h2><h3 id="101-三者分别解决什么问题">10.1 三者分别解决什么问题
+</h3><p>Skills、Plugins 和 MCP 很容易混在一起，但它们解决的是不同问题。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>机制</th>
+          <th>核心问题</th>
+          <th>典型内容</th>
+          <th>使用方式</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Skills</td>
+          <td>如何复用一套 Agent 工作流</td>
+          <td><code>SKILL.md</code>、脚本、参考资料</td>
+          <td>Claude 按需加载，或用户用 <code>/skill-name</code> 调用</td>
+      </tr>
+      <tr>
+          <td>Plugins</td>
+          <td>如何分发一组能力</td>
+          <td>skills、agents、hooks、MCP servers、主题等</td>
+          <td>安装、启用、禁用、版本化管理</td>
+      </tr>
+      <tr>
+          <td>MCP</td>
+          <td>如何连接外部工具和数据源</td>
+          <td>外部服务工具、资源、提示</td>
+          <td>作为工具服务器被 Claude 调用</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>简单说：</p>
+<ul>
+<li>Skill 是&quot;工作方法&quot;</li>
+<li>Plugin 是&quot;能力包&quot;</li>
+<li>MCP 是&quot;外部工具接口&quot;</li>
+</ul>
+<h3 id="102-skills把流程做成可调用能力">10.2 Skills：把流程做成可调用能力
+</h3><p>一个 Skill 通常是一个目录，里面有 <code>SKILL.md</code>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">.claude/
+</span></span><span class="line"><span class="cl">  skills/
+</span></span><span class="line"><span class="cl">    review-pr/
+</span></span><span class="line"><span class="cl">      SKILL.md
+</span></span><span class="line"><span class="cl">      checklist.md
+</span></span><span class="line"><span class="cl">      scripts/
+</span></span><span class="line"><span class="cl">        collect_diff.sh
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>SKILL.md</code> 应该写清楚：</p>
+<ul>
+<li>这个 Skill 解决什么问题</li>
+<li>什么时候应该使用</li>
+<li>输入是什么</li>
+<li>步骤是什么</li>
+<li>输出格式是什么</li>
+<li>需要调用哪些命令或脚本</li>
+<li>失败时如何处理</li>
+</ul>
+<p>示例：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-markdown" data-lang="markdown"><span class="line"><span class="cl"><span class="gh"># PR Review
+</span></span></span><span class="line"><span class="cl"><span class="gh"></span>
+</span></span><span class="line"><span class="cl"><span class="gu">## 何时使用
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl">当用户要求审查当前 diff、PR 或 merge request 时使用。
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="gu">## 工作步骤
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="k">1.</span> 读取当前 diff。
+</span></span><span class="line"><span class="cl"><span class="k">2.</span> 判断改动类型：功能、修复、重构、依赖、配置。
+</span></span><span class="line"><span class="cl"><span class="k">3.</span> 检查正确性、边界条件、测试覆盖和兼容性。
+</span></span><span class="line"><span class="cl"><span class="k">4.</span> 只报告有证据的问题，不做泛泛建议。
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="gu">## 输出格式
+</span></span></span><span class="line"><span class="cl"><span class="gu"></span>
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 阻塞问题
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 非阻塞建议
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 已验证项
+</span></span><span class="line"><span class="cl"><span class="k">-</span> 未覆盖风险
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>好的 Skill 要像一个可执行流程，而不是一段空泛建议。</p>
+<h3 id="103-skills-的管理策略">10.3 Skills 的管理策略
+</h3><p>Skills 不应该无限增长。</p>
+<p>建议按三个层级管理：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>层级</th>
+          <th>位置</th>
+          <th>内容</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>个人 Skills</td>
+          <td><code>~/.claude/skills/</code></td>
+          <td>个人写作、调试、常用工作流</td>
+      </tr>
+      <tr>
+          <td>项目 Skills</td>
+          <td><code>&lt;repo&gt;/.claude/skills/</code></td>
+          <td>当前仓库专用流程</td>
+      </tr>
+      <tr>
+          <td>插件 Skills</td>
+          <td>plugin 目录内</td>
+          <td>团队或社区分发能力</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>命名要稳定，描述要明确。</p>
+<p>例如 <code>/deploy</code> 太宽泛，容易误触；<code>/deploy-staging</code>、<code>/review-pr</code>、<code>/generate-api-docs</code> 更清晰。</p>
+<p>还要定期清理：</p>
+<ul>
+<li>长期不用的 Skill 关掉或删除</li>
+<li>重复 Skill 合并</li>
+<li>过时命令更新</li>
+<li>高风险 Skill 加权限说明</li>
+<li>输出格式保持一致</li>
+</ul>
+<h3 id="104-plugins把能力打包版本化分发">10.4 Plugins：把能力打包、版本化、分发
+</h3><p>如果 Skill 只是项目里的一个工作流，Plugin 则是可分发的能力包。</p>
+<p>官方 plugins 文档说明，插件可以包含：</p>
+<ul>
+<li>Skills</li>
+<li>Agents</li>
+<li>Hooks</li>
+<li>MCP servers</li>
+<li>LSP servers</li>
+<li>Monitors</li>
+<li>Themes</li>
+</ul>
+<p>典型目录可以这样组织：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">my-team-plugin/
+</span></span><span class="line"><span class="cl">  .claude-plugin/
+</span></span><span class="line"><span class="cl">    plugin.json
+</span></span><span class="line"><span class="cl">  skills/
+</span></span><span class="line"><span class="cl">    review-pr/
+</span></span><span class="line"><span class="cl">      SKILL.md
+</span></span><span class="line"><span class="cl">  agents/
+</span></span><span class="line"><span class="cl">    verify.md
+</span></span><span class="line"><span class="cl">    security-reviewer.md
+</span></span><span class="line"><span class="cl">  hooks/
+</span></span><span class="line"><span class="cl">    post-edit-format.sh
+</span></span><span class="line"><span class="cl">  mcp/
+</span></span><span class="line"><span class="cl">    jira-server.json
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>Plugin 适合这些场景：</p>
+<ul>
+<li>团队要共享一套 Claude Code 能力</li>
+<li>多个项目使用同样的审查流程</li>
+<li>希望版本化发布和回滚</li>
+<li>希望把 agents、hooks、skills、MCP 一起打包</li>
+<li>想建立内部插件市场</li>
+</ul>
+<p>如果只是一个项目的临时配置，用 <code>.claude/</code> 就够了。只有当它需要跨项目复用、版本化、分发时，才值得做 Plugin。</p>
+<h3 id="105-plugins-的治理重点">10.5 Plugins 的治理重点
+</h3><p>Plugin 带来复用，也带来治理问题。</p>
+<p>建议至少管理五件事。</p>
+<p>第一，版本。</p>
+<p>团队插件要有版本号和变更日志。否则不同项目使用不同版本时，很难定位行为差异。</p>
+<p>第二，权限。</p>
+<p>插件可能带 hooks、agents 和 MCP servers，必须审查它会执行什么命令、访问什么系统、读取哪些路径。</p>
+<p>第三，默认启用范围。</p>
+<p>不是所有能力都应该默认打开。高风险 hooks、发布类 Skill、外部写入类 MCP 工具应该谨慎启用。</p>
+<p>第四，配置。</p>
+<p>插件应该把环境差异放到用户配置或项目配置里，不要把团队私有路径、token、机器名写死。</p>
+<p>第五，回滚。</p>
+<p>如果某个插件版本导致 Claude Code 行为异常，团队需要能快速禁用或回退。</p>
+<h3 id="106-mcp让-agent-使用外部系统">10.6 MCP：让 Agent 使用外部系统
+</h3><p>MCP 的核心是把外部系统包装成 Claude Code 可以理解和调用的工具。</p>
+<p>例如：</p>
+<ul>
+<li>Jira：查任务、改状态、写评论</li>
+<li>Slack：读取讨论、发送通知</li>
+<li>Google Drive：读取设计文档</li>
+<li>数据库元数据服务：查询表结构</li>
+<li>内部发布平台：查询发布状态</li>
+<li>日志平台：拉取错误日志</li>
+</ul>
+<p>典型调用链是：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">sequenceDiagram
+    participant C as Claude Code
+    participant M as MCP Server
+    participant S as 外部系统
+
+    C-&gt;&gt;M: 调用工具，例如 get_issue
+    M-&gt;&gt;S: 请求外部 API
+    S-&gt;&gt;M: 返回结构化数据
+    M-&gt;&gt;C: 返回工具结果
+    C-&gt;&gt;C: 把结果纳入上下文并继续推理
+</code></pre><p>MCP 的价值不是&quot;让 Claude 多几个插件&quot;，而是把业务上下文纳入 Agent Loop。</p>
+<h3 id="107-mcp-的使用原则">10.7 MCP 的使用原则
+</h3><p>第一，工具描述要清楚。</p>
+<p>模型是否会正确调用 MCP，很大程度取决于工具名称、参数说明和返回结构。</p>
+<p>第二，返回结果要结构化。</p>
+<p>不要返回一大段不可解析文本。更好的方式是返回字段明确的数据，例如 issue id、标题、状态、负责人、相关链接、错误栈、时间戳。</p>
+<p>第三，权限要最小化。</p>
+<p>读 Jira 和改 Jira 状态不是同一类权限。读取日志和删除日志更不是同一类权限。</p>
+<p>第四，写操作要谨慎。</p>
+<p>凡是会修改外部系统的 MCP 工具，例如关闭工单、发布版本、发送通知，最好加确认或限制触发条件。</p>
+<p>第五，MCP 不能替代项目上下文。</p>
+<p>MCP 提供外部事实，<code>CLAUDE.md</code> 和代码库提供项目规则。两者应该配合，而不是互相替代。</p>
+<h3 id="108-三者如何组合">10.8 三者如何组合
+</h3><p>Skills、Plugins、MCP 可以组合使用。</p>
+<p>例如团队要做一个&quot;发布前检查&quot;能力：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[release-check Plugin] --&gt; B[Skill: /release-check]
+    A --&gt; C[Agent: Release Agent]
+    A --&gt; D[Agent: Verify Agent]
+    A --&gt; E[Hook: 阻止未验证发布]
+    A --&gt; F[MCP: Jira / Slack / 发布平台]
+    B --&gt; C
+    C --&gt; D
+    C --&gt; F
+    E --&gt; C
+</code></pre><p>实际工作流可能是：</p>
+<ol>
+<li>用户运行 <code>/release-check</code></li>
+<li>Skill 定义发布检查流程</li>
+<li>Release Agent 汇总版本、diff、变更说明</li>
+<li>Verify Agent 运行测试和构建</li>
+<li>MCP 查询 Jira 是否还有阻塞 issue</li>
+<li>MCP 查询发布平台当前状态</li>
+<li>Hook 在缺少验证结果时阻止发布命令</li>
+<li>主 Agent 输出发布是否可继续</li>
+</ol>
+<p>这就是生态能力的组合：Skill 定流程，Agent 做分工，MCP 接外部系统，Hook 做强约束，Plugin 负责打包分发。</p>
+<h3 id="109-生态管理的推荐目录">10.9 生态管理的推荐目录
+</h3><p>一个比较清晰的项目结构可以是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">repo/
+</span></span><span class="line"><span class="cl">  CLAUDE.md
+</span></span><span class="line"><span class="cl">  .claude/
+</span></span><span class="line"><span class="cl">    settings.json
+</span></span><span class="line"><span class="cl">    rules/
+</span></span><span class="line"><span class="cl">      backend.md
+</span></span><span class="line"><span class="cl">      frontend.md
+</span></span><span class="line"><span class="cl">      security.md
+</span></span><span class="line"><span class="cl">    skills/
+</span></span><span class="line"><span class="cl">      review-pr/
+</span></span><span class="line"><span class="cl">        SKILL.md
+</span></span><span class="line"><span class="cl">      release-check/
+</span></span><span class="line"><span class="cl">        SKILL.md
+</span></span><span class="line"><span class="cl">    agents/
+</span></span><span class="line"><span class="cl">      verify.md
+</span></span><span class="line"><span class="cl">      security-reviewer.md
+</span></span><span class="line"><span class="cl">    hooks/
+</span></span><span class="line"><span class="cl">      block-dangerous-command.sh
+</span></span><span class="line"><span class="cl">      post-edit-format.sh
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>团队级可分发能力则放到插件仓库：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">claude-code-team-plugin/
+</span></span><span class="line"><span class="cl">  .claude-plugin/
+</span></span><span class="line"><span class="cl">    plugin.json
+</span></span><span class="line"><span class="cl">  skills/
+</span></span><span class="line"><span class="cl">  agents/
+</span></span><span class="line"><span class="cl">  hooks/
+</span></span><span class="line"><span class="cl">  mcp/
+</span></span><span class="line"><span class="cl">  README.md
+</span></span><span class="line"><span class="cl">  CHANGELOG.md
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>项目内 <code>.claude/</code> 解决&quot;这个项目怎么工作&quot;。</p>
+<p>Plugin 解决&quot;这套能力如何跨项目共享&quot;。</p>
+<p>MCP 解决&quot;Agent 如何访问外部业务系统&quot;。</p>
+<hr>
+<h2 id="十一实践建议">十一、实践建议
+</h2><h3 id="111-先写好-claudemd">11.1 先写好 <code>CLAUDE.md</code>
+</h3><p>如果一个项目首次接入 Claude Code，最值得优先做的是写好 <code>CLAUDE.md</code>。</p>
+<p>建议至少包含：</p>
+<ul>
+<li>项目是什么</li>
+<li>主要目录结构</li>
+<li>本地启动命令</li>
+<li>测试命令</li>
+<li>lint / format（静态检查 / 格式化）命令</li>
+<li>代码风格</li>
+<li>常见坑</li>
+<li>提交或 PR 规范</li>
+<li>禁止事项</li>
+</ul>
+<p>这能显著降低 Claude Code 每次重新摸索项目的成本。</p>
+<h3 id="112-把重复流程沉淀成-skills">11.2 把重复流程沉淀成 Skills
+</h3><p>如果团队经常让 Claude Code 做同一类任务，例如：</p>
+<ul>
+<li>审查 PR</li>
+<li>写接口文档</li>
+<li>生成发布说明</li>
+<li>分析 CI 失败</li>
+<li>做依赖升级</li>
+<li>扫描安全风险</li>
+</ul>
+<p>就应该考虑把流程沉淀成 Skills。</p>
+<p>Skills 的意义不是&quot;多写一个提示词文件&quot;，而是让团队把可复用的工作方法标准化。</p>
+<h3 id="113-用-hooks-处理确定性动作">11.3 用 Hooks 处理确定性动作
+</h3><p>不要把所有规则都写进提示词。</p>
+<p>提示词适合表达偏好和方法，Hooks 适合表达强制动作和自动化流程。</p>
+<p>例如：</p>
+<ul>
+<li>编辑后自动格式化</li>
+<li>提交前运行测试</li>
+<li>禁止访问密钥文件</li>
+<li>高风险命令前阻断</li>
+<li>会话结束时记录审计日志</li>
+</ul>
+<p>这些事情越确定，越适合 Hooks。</p>
+<h3 id="114-用-mcp-接入真实业务上下文">11.4 用 MCP 接入真实业务上下文
+</h3><p>很多开发任务失败，不是因为模型不会写代码，而是因为它缺少业务上下文。</p>
+<p>例如：</p>
+<ul>
+<li>需求文档在 Google Drive</li>
+<li>任务状态在 Jira</li>
+<li>错误报告在 Slack</li>
+<li>接口契约在内部平台</li>
+<li>发布记录在自建系统</li>
+</ul>
+<p>MCP 的价值就是把这些外部上下文变成 Claude Code 可以调用的工具。</p>
+<h3 id="115-为不同入口设计不同工作流">11.5 为不同入口设计不同工作流
+</h3><p>不要把所有场景都塞进终端。</p>
+<p>更合理的分工是：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>场景</th>
+          <th>推荐入口</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>快速本地修改</td>
+          <td>CLI</td>
+      </tr>
+      <tr>
+          <td>查看差异和手工审查</td>
+          <td>IDE 或 Desktop</td>
+      </tr>
+      <tr>
+          <td>长时间任务</td>
+          <td>Web 或 Desktop</td>
+      </tr>
+      <tr>
+          <td>自动 PR 审查</td>
+          <td>GitHub Actions / GitLab CI/CD</td>
+      </tr>
+      <tr>
+          <td>团队聊天触发</td>
+          <td>Slack</td>
+      </tr>
+      <tr>
+          <td>内部平台集成</td>
+          <td>Agent SDK</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>Claude Code 的优势正是多入口共享底层能力。</p>
+<hr>
+<h2 id="十二总结">十二、总结
+</h2><p>Claude Code 的本质是一个面向软件工程的编码 Agent Runtime。</p>
+<p>它的核心不是&quot;会写代码的模型&quot;，而是这一整套系统：</p>
+<ul>
+<li>多入口产品层：CLI、IDE、Desktop、Web、CI、Slack、SDK</li>
+<li>会话编排层：任务状态、历史、恢复、迁移</li>
+<li>上下文层：代码库、<code>CLAUDE.md</code>、自动记忆、Skills、MCP</li>
+<li>上下文管理层：上下文窗口、压缩、清理、子 Agent 隔离和证据保留</li>
+<li>模型推理层：规划、判断、生成工具调用</li>
+<li>Prompt 管理层：长期规则、任务上下文、按需加载流程和局部规则</li>
+<li>权限策略层：确认、配置、Hooks、托管约束</li>
+<li>工具执行层：文件、Shell、Git、外部系统</li>
+<li>调度协作层：多 Agent 分工、验证闭环、后台任务和调度链</li>
+<li>扩展生态层：MCP、Hooks、Skills、Plugins、Agent SDK</li>
+</ul>
+<p>如果只把 Claude Code 当成&quot;更聪明的代码补全&quot;，会低估它。</p>
+<p>更准确的理解是：Claude Code 把大语言模型放进真实工程环境里，通过 prompt 管理、上下文、工具、权限、多 Agent 调度和扩展生态，让模型能够参与完整的软件开发流程。</p>
+<p>这也是它和普通 AI 聊天工具最大的区别。</p>
+<hr>
+<h2 id="参考资料">参考资料
+</h2><ul>
+<li><a class="link" href="https://code.claude.com/docs/zh-CN/overview"  target="_blank" rel="noopener"
+    >Claude Code 官方中文概览</a></li>
+<li><a class="link" href="https://code.claude.com/docs/zh-CN/how-claude-code-works"  target="_blank" rel="noopener"
+    >Claude Code 如何工作</a></li>
+<li><a class="link" href="https://code.claude.com/docs/zh-CN/context-window"  target="_blank" rel="noopener"
+    >探索上下文窗口</a></li>
+<li><a class="link" href="https://code.claude.com/docs/zh-CN/memory"  target="_blank" rel="noopener"
+    >Claude 如何记住你的项目</a></li>
+<li><a class="link" href="https://code.claude.com/docs/zh-CN/best-practices"  target="_blank" rel="noopener"
+    >Claude Code 最佳实践</a></li>
+<li><a class="link" href="https://code.claude.com/docs/zh-CN/features-overview"  target="_blank" rel="noopener"
+    >扩展 Claude Code</a></li>
+<li><a class="link" href="https://code.claude.com/docs/zh-CN/claude-directory"  target="_blank" rel="noopener"
+    >探索 .claude 目录</a></li>
+<li><a class="link" href="https://code.claude.com/docs/zh-CN/mcp"  target="_blank" rel="noopener"
+    >通过 MCP 将 Claude Code 连接到工具</a></li>
+<li><a class="link" href="https://code.claude.com/docs/zh-CN/sub-agents"  target="_blank" rel="noopener"
+    >创建自定义 subagents</a></li>
+<li><a class="link" href="https://code.claude.com/docs/zh-CN/skills"  target="_blank" rel="noopener"
+    >使用 Skills 扩展 Claude</a></li>
+<li><a class="link" href="https://code.claude.com/docs/zh-CN/plugins"  target="_blank" rel="noopener"
+    >创建 Plugins</a></li>
+<li><a class="link" href="https://code.claude.com/docs/zh-CN/plugins-reference"  target="_blank" rel="noopener"
+    >Plugins 参考</a></li>
+<li><a class="link" href="https://code.claude.com/docs/zh-CN/commands"  target="_blank" rel="noopener"
+    >命令</a></li>
+<li><a class="link" href="https://code.claude.com/docs/zh-CN/settings"  target="_blank" rel="noopener"
+    >Claude Code 设置</a></li>
+<li><a class="link" href="https://code.claude.com/docs/zh-CN/headless"  target="_blank" rel="noopener"
+    >以编程方式运行 Claude Code</a></li>
+<li><a class="link" href="https://code.claude.com/docs/zh-CN/agent-sdk/plugins"  target="_blank" rel="noopener"
+    >SDK 中的 Plugins</a></li>
+</ul>
+<h2 id="路径缩写说明">路径缩写说明
+</h2><ul>
+<li><code>hugo-main -&gt; /home/agsol/workspace/hugo-main</code></li>
+<li><code>claude-code-architecture-and-implementation.md（hugo-main） -&gt; content/post/ai/claude-code-architecture-and-implementation.md</code></li>
+</ul>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/ai/">AI</a>
+        
+            <a href="/tags/claude-code/">Claude-Code</a>
+        
+            <a href="/tags/agent/">Agent</a>
+        
+            <a href="/tags/mcp/">Mcp</a>
+        
+            <a href="/tags/skills/">Skills</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/codex-%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97%E6%9E%B6%E6%9E%84%E9%85%8D%E7%BD%AEhooksskillsmcp-%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">Codex 使用指南：架构、配置、Hooks、Skills、MCP 与常见面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-skills%E6%A6%82%E5%BF%B5%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F%E5%BC%80%E5%8F%91%E6%96%B9%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/appbuilder-%E7%BB%84%E4%BB%B6mcp-%E4%B8%8E-skills-%E7%9A%84%E5%AF%B9%E6%AF%94%E5%AD%A6%E4%B9%A0/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AppBuilder 组件、MCP 与 Skills 的对比学习</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/multica-%E9%A1%B9%E7%9B%AE%E8%A7%A3%E6%9E%90%E9%83%A8%E7%BD%B2%E4%BD%BF%E7%94%A8%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1%E4%B8%8E%E6%8A%80%E6%9C%AF%E4%BA%AE%E7%82%B9/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">Multica 项目解析：部署、使用、架构设计与技术亮点</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/ai-agent-%E5%AE%89%E5%85%A8%E4%BD%93%E7%B3%BBprompt-injectiontool-injection%E6%9D%83%E9%99%90%E6%8E%A7%E5%88%B6%E5%AE%A1%E6%89%B9%E5%AE%A1%E8%AE%A1%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AI Agent 安全体系：Prompt Injection、Tool Injection、权限控制、审批审计与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>

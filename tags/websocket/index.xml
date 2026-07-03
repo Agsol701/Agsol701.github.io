@@ -7,7 +7,264 @@
         <generator>Hugo -- gohugo.io</generator>
         <language>en</language>
         <copyright>Agsol</copyright>
-        <lastBuildDate>Fri, 20 Mar 2026 00:00:00 +0000</lastBuildDate><atom:link href="https://Agsol701.github.io/tags/websocket/index.xml" rel="self" type="application/rss+xml" /><item>
+        <lastBuildDate>Fri, 03 Jul 2026 00:00:00 +0000</lastBuildDate><atom:link href="https://Agsol701.github.io/tags/websocket/index.xml" rel="self" type="application/rss+xml" /><item>
+        <title>OpenClaw Gateway 架构学习笔记</title>
+        <link>https://Agsol701.github.io/p/openclaw-gateway-%E6%9E%B6%E6%9E%84%E5%AD%A6%E4%B9%A0%E7%AC%94%E8%AE%B0/</link>
+        <pubDate>Fri, 03 Jul 2026 00:00:00 +0000</pubDate>
+        
+        <guid>https://Agsol701.github.io/p/openclaw-gateway-%E6%9E%B6%E6%9E%84%E5%AD%A6%E4%B9%A0%E7%AC%94%E8%AE%B0/</guid>
+        <description>&lt;h1 id=&#34;openclaw-gateway-架构学习笔记&#34;&gt;OpenClaw Gateway 架构学习笔记
+&lt;/h1&gt;&lt;h2 id=&#34;资料来源&#34;&gt;资料来源
+&lt;/h2&gt;&lt;p&gt;本文基于 OpenClaw 官方文档整理，重点参考：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://docs.openclaw.ai/zh-CN/concepts/architecture&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Gateway 网关架构&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://docs.openclaw.ai/zh-CN/gateway/protocol&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Gateway 网关协议&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://docs.openclaw.ai/zh-CN/concepts/agent-loop&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Agent loop&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://docs.openclaw.ai/zh-CN/concepts/queue&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;命令队列&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://docs.openclaw.ai/zh-CN/channels/pairing&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;配对&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://docs.openclaw.ai/zh-CN/gateway/security&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;安全&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;一句话理解&#34;&gt;一句话理解
+&lt;/h2&gt;&lt;p&gt;OpenClaw 的核心不是把每个消息渠道、设备能力、控制 UI 都做成独立后端，而是用一个长期运行的 Gateway 作为本机控制平面。所有控制端、消息渠道和设备节点都通过同一个 Gateway 协议接入，Gateway 负责鉴权、配对、能力声明、事件广播、Agent 运行调度和本地策略执行。&lt;/p&gt;
+&lt;h2 id=&#34;整体技术架构&#34;&gt;整体技术架构
+&lt;/h2&gt;&lt;p&gt;OpenClaw 的架构可以拆成四类角色。&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Gateway 网关：长期运行的守护进程，是控制平面、消息接入面和策略执行面。&lt;/li&gt;
+&lt;li&gt;控制平面客户端：macOS App、CLI、Web UI、自动化脚本，通过 WebSocket 访问 Gateway。&lt;/li&gt;
+&lt;li&gt;节点：macOS、iOS、Android、headless 等设备，以 &lt;code&gt;role: &amp;quot;node&amp;quot;&lt;/code&gt; 连接 Gateway，并声明可执行能力。&lt;/li&gt;
+&lt;li&gt;消息渠道和 WebChat：WhatsApp、Telegram、Slack、Discord、Signal、iMessage、WebChat 等入口由 Gateway 统一管理。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;官方文档强调“每台主机一个 Gateway”。这个约束很关键，因为 WhatsApp 等渠道会话、Agent 会话文件、工具权限和设备信任都围绕这个 Gateway 实例形成一个本地主信任域。&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart LR
+    Operator[控制平面客户端&amp;lt;br/&amp;gt;CLI / Web UI / macOS App] --&amp;gt;|WebSocket RPC| Gateway
+    WebChat[WebChat 静态 UI] --&amp;gt;|WebSocket RPC| Gateway
+    Node[设备节点&amp;lt;br/&amp;gt;iOS / Android / macOS / headless] --&amp;gt;|role: node&amp;lt;br/&amp;gt;能力和命令声明| Gateway
+    Channels[消息渠道&amp;lt;br/&amp;gt;WhatsApp / Telegram / Slack / Discord] --&amp;gt; Gateway
+    Gateway --&amp;gt; AgentRuntime[Agent Runtime]
+    Gateway --&amp;gt; Policy[认证 / 配对 / Scope / 工具策略]
+    Gateway --&amp;gt; Canvas[Canvas Host&amp;lt;br/&amp;gt;/__openclaw__/canvas/]
+    Gateway --&amp;gt; A2UI[A2UI Host&amp;lt;br/&amp;gt;/__openclaw__/a2ui/]
+    AgentRuntime --&amp;gt; Model[模型和工具执行]
+&lt;/code&gt;&lt;/pre&gt;&lt;h2 id=&#34;核心组件&#34;&gt;核心组件
+&lt;/h2&gt;&lt;h3 id=&#34;gateway-网关&#34;&gt;Gateway 网关
+&lt;/h3&gt;&lt;p&gt;Gateway 是 OpenClaw 的核心守护进程，默认监听 &lt;code&gt;127.0.0.1:18789&lt;/code&gt;。它承担以下职责：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;维护消息渠道提供商连接，例如 WhatsApp、Telegram、Slack、Discord 等。&lt;/li&gt;
+&lt;li&gt;暴露类型化 WebSocket API，支持请求、响应和服务端推送事件。&lt;/li&gt;
+&lt;li&gt;使用 JSON Schema 校验入站协议帧。&lt;/li&gt;
+&lt;li&gt;发出 &lt;code&gt;agent&lt;/code&gt;、&lt;code&gt;chat&lt;/code&gt;、&lt;code&gt;presence&lt;/code&gt;、&lt;code&gt;health&lt;/code&gt;、&lt;code&gt;heartbeat&lt;/code&gt;、&lt;code&gt;cron&lt;/code&gt; 等事件。&lt;/li&gt;
+&lt;li&gt;承载 Canvas 和 A2UI 静态入口，路径分别为 &lt;code&gt;/__openclaw__/canvas/&lt;/code&gt; 和 &lt;code&gt;/__openclaw__/a2ui/&lt;/code&gt;。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;从技术实现看，Gateway 相当于“单实例控制总线”。它把消息渠道、Agent runtime、设备节点、控制 UI 以及安全策略收敛到一个进程边界内，减少跨服务一致性问题，但也意味着主机和 Gateway 配置本身必须被视为可信边界。&lt;/p&gt;
+&lt;h3 id=&#34;控制平面客户端&#34;&gt;控制平面客户端
+&lt;/h3&gt;&lt;p&gt;控制平面客户端包括 CLI、Web UI、macOS App 和自动化脚本。它们每个客户端维护一个 WebSocket 连接，主要做三类事情：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;发起请求：如 &lt;code&gt;health&lt;/code&gt;、&lt;code&gt;status&lt;/code&gt;、&lt;code&gt;send&lt;/code&gt;、&lt;code&gt;agent&lt;/code&gt;、&lt;code&gt;system-presence&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;订阅事件：如 &lt;code&gt;tick&lt;/code&gt;、&lt;code&gt;agent&lt;/code&gt;、&lt;code&gt;presence&lt;/code&gt;、&lt;code&gt;shutdown&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;根据自身权限范围访问配置、模型、日志、Agent 会话和工具审批等能力。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这些客户端在协议层通常是 &lt;code&gt;role: &amp;quot;operator&amp;quot;&lt;/code&gt;，并通过 &lt;code&gt;operator.read&lt;/code&gt;、&lt;code&gt;operator.write&lt;/code&gt;、&lt;code&gt;operator.admin&lt;/code&gt;、&lt;code&gt;operator.approvals&lt;/code&gt;、&lt;code&gt;operator.pairing&lt;/code&gt; 等 scope 做权限分层。&lt;/p&gt;
+&lt;h3 id=&#34;节点&#34;&gt;节点
+&lt;/h3&gt;&lt;p&gt;节点是远程或本机能力宿主。节点连接同一个 Gateway WebSocket 服务器，但会在握手时声明 &lt;code&gt;role: &amp;quot;node&amp;quot;&lt;/code&gt;，并上报：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;caps&lt;/code&gt;：高级能力类别，例如 &lt;code&gt;camera&lt;/code&gt;、&lt;code&gt;canvas&lt;/code&gt;、&lt;code&gt;screen&lt;/code&gt;、&lt;code&gt;location&lt;/code&gt;、&lt;code&gt;voice&lt;/code&gt;、&lt;code&gt;talk&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;commands&lt;/code&gt;：可被调用的命令白名单，例如 &lt;code&gt;camera.snap&lt;/code&gt;、&lt;code&gt;canvas.navigate&lt;/code&gt;、&lt;code&gt;screen.record&lt;/code&gt;、&lt;code&gt;location.get&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;permissions&lt;/code&gt;：细粒度开关，例如 &lt;code&gt;camera.capture&lt;/code&gt;、&lt;code&gt;screen.record&lt;/code&gt;。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这套设计把“设备有什么能力”和“Gateway 允许它做什么”分开。节点的声明只是能力主张，Gateway 仍会在服务端执行允许列表和策略检查。&lt;/p&gt;
+&lt;h3 id=&#34;webchat&#34;&gt;WebChat
+&lt;/h3&gt;&lt;p&gt;WebChat 是一个静态 UI，通过 Gateway WebSocket API 获取聊天历史并发送消息。在远程访问场景中，WebChat 和其他客户端一样，可以通过 SSH 隧道、Tailscale 或 VPN 接入 Gateway。&lt;/p&gt;
+&lt;h2 id=&#34;websocket-协议实现&#34;&gt;WebSocket 协议实现
+&lt;/h2&gt;&lt;h3 id=&#34;传输和分帧&#34;&gt;传输和分帧
+&lt;/h3&gt;&lt;p&gt;Gateway 协议使用 WebSocket 文本帧，载荷为 JSON。协议帧主要分三类：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;type&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;req&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;id&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;...&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;method&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;...&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;params&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;{}&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;type&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;res&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;id&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;...&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;ok&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;kc&#34;&gt;true&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;payload&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;{}&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;type&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;event&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;event&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;...&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;payload&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;{},&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;seq&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;1&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;stateVersion&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;1&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;实现上有几个重要点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;第一帧必须是 &lt;code&gt;connect&lt;/code&gt; 请求，否则 Gateway 会关闭连接。&lt;/li&gt;
+&lt;li&gt;握手前帧大小有限制，握手后客户端应遵守 &lt;code&gt;hello-ok.policy.maxPayload&lt;/code&gt; 和 &lt;code&gt;hello-ok.policy.maxBufferedBytes&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;hello-ok.features.methods&lt;/code&gt; 和 &lt;code&gt;hello-ok.features.events&lt;/code&gt; 是能力发现元数据，不是所有内部方法的完整转储。&lt;/li&gt;
+&lt;li&gt;有副作用的方法，例如 &lt;code&gt;send&lt;/code&gt;、&lt;code&gt;agent&lt;/code&gt;，需要幂等键，以便客户端安全重试。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;握手流程&#34;&gt;握手流程
+&lt;/h3&gt;&lt;p&gt;Gateway 先向客户端发出 &lt;code&gt;connect.challenge&lt;/code&gt;，客户端再提交 &lt;code&gt;connect&lt;/code&gt; 请求。请求中包含协议版本范围、客户端信息、角色、scope、能力、命令、认证信息和设备签名。&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;sequenceDiagram
+    participant Client as 客户端
+    participant Gateway as Gateway
+
+    Gateway--&amp;gt;&amp;gt;Client: event: connect.challenge
+    Client-&amp;gt;&amp;gt;Gateway: req: connect&amp;lt;br/&amp;gt;role/scopes/caps/auth/device
+    Gateway--&amp;gt;&amp;gt;Client: res: hello-ok&amp;lt;br/&amp;gt;protocol/features/snapshot/auth/policy
+    Gateway--&amp;gt;&amp;gt;Client: event: presence
+    Gateway--&amp;gt;&amp;gt;Client: event: tick
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;&lt;code&gt;hello-ok&lt;/code&gt; 是握手成功后的关键响应，包含：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;协商后的协议版本。&lt;/li&gt;
+&lt;li&gt;Gateway 服务端版本和连接 ID。&lt;/li&gt;
+&lt;li&gt;可发现方法和事件。&lt;/li&gt;
+&lt;li&gt;当前状态快照，例如 presence、health。&lt;/li&gt;
+&lt;li&gt;协商后的角色和 scope。&lt;/li&gt;
+&lt;li&gt;策略限制，例如最大载荷、最大缓冲区、tick 间隔。&lt;/li&gt;
+&lt;li&gt;可选的设备令牌和插件表面 URL。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;类型和代码生成&#34;&gt;类型和代码生成
+&lt;/h3&gt;&lt;p&gt;协议类型由 TypeBox schema 定义，再生成 JSON Schema，并进一步生成 Swift 模型。这个链路说明 OpenClaw 希望用单一 schema 源头约束多语言客户端，避免手写协议模型漂移。&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart LR
+    TypeBox[TypeBox Schema] --&amp;gt; JSONSchema[JSON Schema]
+    JSONSchema --&amp;gt; Validator[Gateway 入站帧校验]
+    JSONSchema --&amp;gt; Swift[Swift 客户端模型]
+    JSONSchema --&amp;gt; UI[Web / CLI 类型和表单约束]
+&lt;/code&gt;&lt;/pre&gt;&lt;h2 id=&#34;agent-运行链路&#34;&gt;Agent 运行链路
+&lt;/h2&gt;&lt;p&gt;Agent loop 是一次真实智能体运行的主路径：接收请求、组装上下文、调用模型、执行工具、流式返回、持久化会话。&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;sequenceDiagram
+    participant Client as 客户端/消息渠道
+    participant Gateway as Gateway
+    participant Queue as 队列
+    participant Runtime as Agent Runtime
+    participant Model as 模型/工具
+
+    Client-&amp;gt;&amp;gt;Gateway: req: agent
+    Gateway--&amp;gt;&amp;gt;Client: ack {runId, acceptedAt}
+    Gateway-&amp;gt;&amp;gt;Queue: 按 sessionKey 入队
+    Queue-&amp;gt;&amp;gt;Runtime: runEmbeddedAgent
+    Runtime-&amp;gt;&amp;gt;Model: 推理和工具调用
+    Runtime--&amp;gt;&amp;gt;Gateway: assistant/tool/lifecycle 增量
+    Gateway--&amp;gt;&amp;gt;Client: event: agent streaming
+    Gateway--&amp;gt;&amp;gt;Client: final res: agent
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;关键实现点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;agent&lt;/code&gt; RPC 会先校验参数、解析会话并持久化会话元数据，然后立即返回 &lt;code&gt;runId&lt;/code&gt; 和 accepted 状态。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;agentCommand&lt;/code&gt; 负责解析模型、thinking、verbose、trace 默认值，并加载 Skills 快照。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;runEmbeddedAgent&lt;/code&gt; 负责实际运行，包含会话队列、全局队列、模型凭证解析、运行时事件订阅、流式输出、超时中止和用量元数据返回。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;subscribeEmbeddedAgentSession&lt;/code&gt; 将 runtime 事件桥接为 OpenClaw 的 &lt;code&gt;agent&lt;/code&gt; 流，包括 assistant 增量、tool 事件和生命周期事件。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;agent.wait&lt;/code&gt; 可以等待某个 &lt;code&gt;runId&lt;/code&gt; 的 end 或 error 结果。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这个设计的好处是：RPC 层快速确认接收，真实运行异步执行，并通过事件流持续返回进度。&lt;/p&gt;
+&lt;h2 id=&#34;队列和并发控制&#34;&gt;队列和并发控制
+&lt;/h2&gt;&lt;p&gt;OpenClaw 使用一个轻量的进程内队列来串行化入站自动回复运行，目标是防止多个 Agent 运行同时争用同一会话状态、日志、CLI stdin 或上游模型额度。&lt;/p&gt;
+&lt;p&gt;队列策略分两层：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;会话通道：&lt;code&gt;runEmbeddedAgent&lt;/code&gt; 按 &lt;code&gt;session:&amp;lt;key&amp;gt;&lt;/code&gt; 入队，保证同一会话只有一个活跃运行。&lt;/li&gt;
+&lt;li&gt;全局通道：每个会话运行再进入全局通道，例如默认 &lt;code&gt;main&lt;/code&gt;，受 &lt;code&gt;agents.defaults.maxConcurrent&lt;/code&gt; 控制整体并发。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;消息队列模式包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;steer&lt;/code&gt;：把运行中途到达的消息注入活跃运行，在下一次模型调用前交付。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;followup&lt;/code&gt;：当前运行结束后逐条处理后续消息。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;collect&lt;/code&gt;：静默窗口后合并消息为一个后续轮次。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;interrupt&lt;/code&gt;：中止当前活跃运行，改跑最新消息。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;队列模型体现了 OpenClaw 对 Agent 产品体验的取舍：同一会话要强一致，跨会话可以有限并发，运行中的用户补充信息优先通过 Steering 接入，而不是盲目启动第二个 Agent loop。&lt;/p&gt;
+&lt;h2 id=&#34;配对和本地信任&#34;&gt;配对和本地信任
+&lt;/h2&gt;&lt;p&gt;配对是 OpenClaw 的显式访问审批步骤，主要用于两个地方：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;私信配对：控制谁可以通过消息渠道和机器人对话。&lt;/li&gt;
+&lt;li&gt;节点配对：控制哪些设备或节点可以加入 Gateway 网络。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;配对实现中有几个细节值得注意：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;所有 WebSocket 客户端，包括操作员客户端和节点，都会在 &lt;code&gt;connect&lt;/code&gt; 中携带设备身份。&lt;/li&gt;
+&lt;li&gt;新设备 ID 需要配对批准，批准后 Gateway 会签发设备令牌。&lt;/li&gt;
+&lt;li&gt;直接 local loopback 连接可以自动批准，以保证同主机体验顺畅。&lt;/li&gt;
+&lt;li&gt;Tailnet 和 LAN 连接仍需要显式配对批准。&lt;/li&gt;
+&lt;li&gt;所有连接都需要签名 &lt;code&gt;connect.challenge&lt;/code&gt; nonce。&lt;/li&gt;
+&lt;li&gt;签名载荷会绑定 &lt;code&gt;platform&lt;/code&gt; 和 &lt;code&gt;deviceFamily&lt;/code&gt;，设备元数据变化时需要修复配对。&lt;/li&gt;
+&lt;li&gt;Gateway 认证配置仍然适用于所有连接，本地和远程都不例外。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;私信配对使用短代码。官方文档说明代码为 8 个大写字符，不包含 &lt;code&gt;0O1I&lt;/code&gt; 等易混淆字符，默认 1 小时过期，并限制每个渠道待处理请求数量。&lt;/p&gt;
+&lt;h2 id=&#34;安全模型&#34;&gt;安全模型
+&lt;/h2&gt;&lt;p&gt;OpenClaw 的安全边界不是敌对多租户模型，而是“可信主机 + 可信操作员控制平面”模型。&lt;/p&gt;
+&lt;h3 id=&#34;主机信任&#34;&gt;主机信任
+&lt;/h3&gt;&lt;p&gt;如果某人可以修改 Gateway 主机状态或配置，例如 &lt;code&gt;~/.openclaw&lt;/code&gt; 和 &lt;code&gt;openclaw.json&lt;/code&gt;，就应被视为可信操作员。官方不建议多个互不信任的操作员共用同一个 Gateway。混合信任团队应使用独立 Gateway，或者至少使用独立 OS 用户和主机边界。&lt;/p&gt;
+&lt;h3 id=&#34;gateway-和节点信任&#34;&gt;Gateway 和节点信任
+&lt;/h3&gt;&lt;p&gt;Gateway 是控制平面和策略表面，节点是远程执行表面。节点配对后，节点上的操作等价于被该 Gateway 信任的操作员操作。因此：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;sessionKey&lt;/code&gt; 是路由和上下文选择器，不是授权令牌。&lt;/li&gt;
+&lt;li&gt;Exec 审批是操作员意图护栏，不是强多租户隔离。&lt;/li&gt;
+&lt;li&gt;如果多个用户都能向启用工具的智能体发消息，他们都可能通过提示影响工具调用。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;scope-和审批&#34;&gt;Scope 和审批
+&lt;/h3&gt;&lt;p&gt;操作员 scope 用于控制 RPC 权限。例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;operator.read&lt;/code&gt;：读取状态、会话、事件等。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;operator.write&lt;/code&gt;：发送消息、触发 Agent 等写操作。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;operator.admin&lt;/code&gt;：配置、更新、敏感管理操作。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;operator.approvals&lt;/code&gt;：处理工具或 Exec 审批。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;operator.pairing&lt;/code&gt;：处理配对。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;operator.talk.secrets&lt;/code&gt;：读取 Talk 配置中的敏感凭据。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;节点命令也有审批时检查。比如涉及 &lt;code&gt;system.run&lt;/code&gt;、&lt;code&gt;system.run.prepare&lt;/code&gt;、&lt;code&gt;system.which&lt;/code&gt; 的节点配对批准，需要更高权限组合。&lt;/p&gt;
+&lt;h2 id=&#34;技术实现要点总结&#34;&gt;技术实现要点总结
+&lt;/h2&gt;&lt;h3 id=&#34;单-gateway-架构&#34;&gt;单 Gateway 架构
+&lt;/h3&gt;&lt;p&gt;OpenClaw 采用单 Gateway 模式，将渠道连接、控制 API、节点网络、Agent 调度和安全策略放在一个长期进程里。实现收益是状态集中、协议统一、部署简单；代价是 Gateway 主机成为强信任边界。&lt;/p&gt;
+&lt;h3 id=&#34;类型化协议&#34;&gt;类型化协议
+&lt;/h3&gt;&lt;p&gt;Gateway WebSocket 协议不是自由 JSON，而是由 TypeBox schema 定义，并生成 JSON Schema 和客户端模型。这样可以在入站校验、客户端类型和 UI 表单之间共享契约。&lt;/p&gt;
+&lt;h3 id=&#34;事件驱动运行&#34;&gt;事件驱动运行
+&lt;/h3&gt;&lt;p&gt;&lt;code&gt;agent&lt;/code&gt; 请求采用“先 ack，后流式事件”的模式。客户端不需要同步等待完整运行结束，而是通过 &lt;code&gt;event: agent&lt;/code&gt; 获取 assistant、tool 和 lifecycle 增量。&lt;/p&gt;
+&lt;h3 id=&#34;能力声明和服务端强制&#34;&gt;能力声明和服务端强制
+&lt;/h3&gt;&lt;p&gt;节点在握手时声明 &lt;code&gt;caps&lt;/code&gt;、&lt;code&gt;commands&lt;/code&gt; 和 &lt;code&gt;permissions&lt;/code&gt;，但 Gateway 将这些视为主张。真正的权限仍由服务端允许列表、scope 和审批策略决定。&lt;/p&gt;
+&lt;h3 id=&#34;会话一致性优先&#34;&gt;会话一致性优先
+&lt;/h3&gt;&lt;p&gt;Agent loop 通过每会话队列和会话写锁保护会话历史、转录和工具状态。跨会话可以并发，同一会话必须串行或通过 Steering 合流。&lt;/p&gt;
+&lt;h3 id=&#34;本地优先的远程访问&#34;&gt;本地优先的远程访问
+&lt;/h3&gt;&lt;p&gt;默认 Gateway 绑定本地回环地址。远程访问优先推荐 Tailscale 或 VPN，也可通过 SSH 隧道转发 &lt;code&gt;18789&lt;/code&gt; 端口。远程场景仍复用相同握手和认证模型。&lt;/p&gt;
+&lt;h2 id=&#34;可以借鉴的工程设计&#34;&gt;可以借鉴的工程设计
+&lt;/h2&gt;&lt;ol&gt;
+&lt;li&gt;对 Agent 系统使用单一控制平面协议，而不是让 CLI、Web、App、节点各自绕不同接口。&lt;/li&gt;
+&lt;li&gt;将长任务设计为 ack + event streaming，避免请求阻塞和客户端超时。&lt;/li&gt;
+&lt;li&gt;把设备能力声明与服务端授权分离，避免信任客户端自报。&lt;/li&gt;
+&lt;li&gt;对有副作用 RPC 强制幂等键，让重试成为协议能力。&lt;/li&gt;
+&lt;li&gt;对同一会话强串行化，对跨会话做有限并发，平衡一致性和吞吐。&lt;/li&gt;
+&lt;li&gt;将协议 schema 作为源头，再生成校验规则和客户端模型。&lt;/li&gt;
+&lt;li&gt;明确产品安全边界，避免把可信单操作员系统误包装成强多租户系统。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h2 id=&#34;学习检查表&#34;&gt;学习检查表
+&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;能否画出 Gateway、operator client、node、message channel、agent runtime 的关系。&lt;/li&gt;
+&lt;li&gt;能否解释为什么第一帧必须是 &lt;code&gt;connect&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;能否区分 &lt;code&gt;operator&lt;/code&gt; 和 &lt;code&gt;node&lt;/code&gt; 两种角色。&lt;/li&gt;
+&lt;li&gt;能否说明 &lt;code&gt;caps&lt;/code&gt;、&lt;code&gt;commands&lt;/code&gt;、&lt;code&gt;permissions&lt;/code&gt; 的区别。&lt;/li&gt;
+&lt;li&gt;能否解释 &lt;code&gt;hello-ok&lt;/code&gt; 中 &lt;code&gt;features&lt;/code&gt;、&lt;code&gt;snapshot&lt;/code&gt;、&lt;code&gt;auth&lt;/code&gt;、&lt;code&gt;policy&lt;/code&gt; 的作用。&lt;/li&gt;
+&lt;li&gt;能否说明同一会话为什么要串行化。&lt;/li&gt;
+&lt;li&gt;能否解释 &lt;code&gt;steer&lt;/code&gt;、&lt;code&gt;followup&lt;/code&gt;、&lt;code&gt;collect&lt;/code&gt;、&lt;code&gt;interrupt&lt;/code&gt; 四种队列模式。&lt;/li&gt;
+&lt;li&gt;能否说明 &lt;code&gt;sessionKey&lt;/code&gt; 为什么不是授权令牌。&lt;/li&gt;
+&lt;li&gt;能否说清 OpenClaw 的安全边界为什么是可信主机模型，而不是敌对多租户模型。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;路径缩写说明&#34;&gt;路径缩写说明
+&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;当前文档 -&amp;gt; &lt;code&gt;content/post/ai/openclaw-architecture-study.md&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;工作区根路径 -&amp;gt; &lt;code&gt;/home/agsol/workspace/ag-workspace&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+</description>
+        </item>
+        <item>
         <title>流式返回协议对比</title>
         <link>https://Agsol701.github.io/p/%E6%B5%81%E5%BC%8F%E8%BF%94%E5%9B%9E%E5%8D%8F%E8%AE%AE%E5%AF%B9%E6%AF%94/</link>
         <pubDate>Fri, 20 Mar 2026 00:00:00 +0000</pubDate>

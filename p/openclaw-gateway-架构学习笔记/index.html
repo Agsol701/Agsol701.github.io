@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="OpenClaw Gateway 架构学习笔记 资料来源 本文基于 OpenClaw 官方文档整理，重点参考：\nGateway 网关架构 Gateway 网关协议 Agent loop 命令队列 配对 安全 一句话理解 OpenClaw 的核心不是把每个消息渠道、设备能力、控制 UI 都做成独立后端，而是用一个长期运行的 Gateway 作为本机控制平面。所有控制端、消息渠道和设备节点都通过同一个 Gateway 协议接入，Gateway 负责鉴权、配对、能力声明、事件广播、Agent 运行调度和本地策略执行。\n整体技术架构 OpenClaw 的架构可以拆成四类角色。\nGateway 网关：长期运行的守护进程，是控制平面、消息接入面和策略执行面。 控制平面客户端：macOS App、CLI、Web UI、自动化脚本，通过 WebSocket 访问 Gateway。 节点：macOS、iOS、Android、headless 等设备，以 role: &quot;node&quot; 连接 Gateway，并声明可执行能力。 消息渠道和 WebChat：WhatsApp、Telegram、Slack、Discord、Signal、iMessage、WebChat 等入口由 Gateway 统一管理。 官方文档强调“每台主机一个 Gateway”。这个约束很关键，因为 WhatsApp 等渠道会话、Agent 会话文件、工具权限和设备信任都围绕这个 Gateway 实例形成一个本地主信任域。\nflowchart LR Operator[控制平面客户端&lt;br/&gt;CLI / Web UI / macOS App] --&gt;|WebSocket RPC| Gateway WebChat[WebChat 静态 UI] --&gt;|WebSocket RPC| Gateway Node[设备节点&lt;br/&gt;iOS / Android / macOS / headless] --&gt;|role: node&lt;br/&gt;能力和命令声明| Gateway Channels[消息渠道&lt;br/&gt;WhatsApp / Telegram / Slack / Discord] --&gt; Gateway Gateway --&gt; AgentRuntime[Agent Runtime] Gateway --&gt; Policy[认证 / 配对 / Scope / 工具策略] Gateway --&gt; Canvas[Canvas Host&lt;br/&gt;/__openclaw__/canvas/] Gateway --&gt; A2UI[A2UI Host&lt;br/&gt;/__openclaw__/a2ui/] AgentRuntime --&gt; Model[模型和工具执行] 核心组件 Gateway 网关 Gateway 是 OpenClaw 的核心守护进程，默认监听 127.0.0.1:18789。它承担以下职责：\n">
+<title>OpenClaw Gateway 架构学习笔记</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/openclaw-gateway-%E6%9E%B6%E6%9E%84%E5%AD%A6%E4%B9%A0%E7%AC%94%E8%AE%B0/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><style>.mermaid { text-align: center; }</style>
+<script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
+    });
+</script><meta property='og:title' content="OpenClaw Gateway 架构学习笔记">
+<meta property='og:description' content="OpenClaw Gateway 架构学习笔记 资料来源 本文基于 OpenClaw 官方文档整理，重点参考：\nGateway 网关架构 Gateway 网关协议 Agent loop 命令队列 配对 安全 一句话理解 OpenClaw 的核心不是把每个消息渠道、设备能力、控制 UI 都做成独立后端，而是用一个长期运行的 Gateway 作为本机控制平面。所有控制端、消息渠道和设备节点都通过同一个 Gateway 协议接入，Gateway 负责鉴权、配对、能力声明、事件广播、Agent 运行调度和本地策略执行。\n整体技术架构 OpenClaw 的架构可以拆成四类角色。\nGateway 网关：长期运行的守护进程，是控制平面、消息接入面和策略执行面。 控制平面客户端：macOS App、CLI、Web UI、自动化脚本，通过 WebSocket 访问 Gateway。 节点：macOS、iOS、Android、headless 等设备，以 role: &quot;node&quot; 连接 Gateway，并声明可执行能力。 消息渠道和 WebChat：WhatsApp、Telegram、Slack、Discord、Signal、iMessage、WebChat 等入口由 Gateway 统一管理。 官方文档强调“每台主机一个 Gateway”。这个约束很关键，因为 WhatsApp 等渠道会话、Agent 会话文件、工具权限和设备信任都围绕这个 Gateway 实例形成一个本地主信任域。\nflowchart LR Operator[控制平面客户端&lt;br/&gt;CLI / Web UI / macOS App] --&gt;|WebSocket RPC| Gateway WebChat[WebChat 静态 UI] --&gt;|WebSocket RPC| Gateway Node[设备节点&lt;br/&gt;iOS / Android / macOS / headless] --&gt;|role: node&lt;br/&gt;能力和命令声明| Gateway Channels[消息渠道&lt;br/&gt;WhatsApp / Telegram / Slack / Discord] --&gt; Gateway Gateway --&gt; AgentRuntime[Agent Runtime] Gateway --&gt; Policy[认证 / 配对 / Scope / 工具策略] Gateway --&gt; Canvas[Canvas Host&lt;br/&gt;/__openclaw__/canvas/] Gateway --&gt; A2UI[A2UI Host&lt;br/&gt;/__openclaw__/a2ui/] AgentRuntime --&gt; Model[模型和工具执行] 核心组件 Gateway 网关 Gateway 是 OpenClaw 的核心守护进程，默认监听 127.0.0.1:18789。它承担以下职责：\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/openclaw-gateway-%E6%9E%B6%E6%9E%84%E5%AD%A6%E4%B9%A0%E7%AC%94%E8%AE%B0/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='AI Agent' /><meta property='article:tag' content='OpenClaw' /><meta property='article:tag' content='Gateway' /><meta property='article:tag' content='WebSocket' /><meta property='article:published_time' content='2026-07-03T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-07-03T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="OpenClaw Gateway 架构学习笔记">
+<meta name="twitter:description" content="OpenClaw Gateway 架构学习笔记 资料来源 本文基于 OpenClaw 官方文档整理，重点参考：\nGateway 网关架构 Gateway 网关协议 Agent loop 命令队列 配对 安全 一句话理解 OpenClaw 的核心不是把每个消息渠道、设备能力、控制 UI 都做成独立后端，而是用一个长期运行的 Gateway 作为本机控制平面。所有控制端、消息渠道和设备节点都通过同一个 Gateway 协议接入，Gateway 负责鉴权、配对、能力声明、事件广播、Agent 运行调度和本地策略执行。\n整体技术架构 OpenClaw 的架构可以拆成四类角色。\nGateway 网关：长期运行的守护进程，是控制平面、消息接入面和策略执行面。 控制平面客户端：macOS App、CLI、Web UI、自动化脚本，通过 WebSocket 访问 Gateway。 节点：macOS、iOS、Android、headless 等设备，以 role: &quot;node&quot; 连接 Gateway，并声明可执行能力。 消息渠道和 WebChat：WhatsApp、Telegram、Slack、Discord、Signal、iMessage、WebChat 等入口由 Gateway 统一管理。 官方文档强调“每台主机一个 Gateway”。这个约束很关键，因为 WhatsApp 等渠道会话、Agent 会话文件、工具权限和设备信任都围绕这个 Gateway 实例形成一个本地主信任域。\nflowchart LR Operator[控制平面客户端&lt;br/&gt;CLI / Web UI / macOS App] --&gt;|WebSocket RPC| Gateway WebChat[WebChat 静态 UI] --&gt;|WebSocket RPC| Gateway Node[设备节点&lt;br/&gt;iOS / Android / macOS / headless] --&gt;|role: node&lt;br/&gt;能力和命令声明| Gateway Channels[消息渠道&lt;br/&gt;WhatsApp / Telegram / Slack / Discord] --&gt; Gateway Gateway --&gt; AgentRuntime[Agent Runtime] Gateway --&gt; Policy[认证 / 配对 / Scope / 工具策略] Gateway --&gt; Canvas[Canvas Host&lt;br/&gt;/__openclaw__/canvas/] Gateway --&gt; A2UI[A2UI Host&lt;br/&gt;/__openclaw__/a2ui/] AgentRuntime --&gt; Model[模型和工具执行] 核心组件 Gateway 网关 Gateway 是 OpenClaw 的核心守护进程，默认监听 127.0.0.1:18789。它承担以下职责：\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about-me/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About Me</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ul>
+    <li><a href="#资料来源">资料来源</a></li>
+    <li><a href="#一句话理解">一句话理解</a></li>
+    <li><a href="#整体技术架构">整体技术架构</a></li>
+    <li><a href="#核心组件">核心组件</a>
+      <ul>
+        <li><a href="#gateway-网关">Gateway 网关</a></li>
+        <li><a href="#控制平面客户端">控制平面客户端</a></li>
+        <li><a href="#节点">节点</a></li>
+        <li><a href="#webchat">WebChat</a></li>
+      </ul>
+    </li>
+    <li><a href="#websocket-协议实现">WebSocket 协议实现</a>
+      <ul>
+        <li><a href="#传输和分帧">传输和分帧</a></li>
+        <li><a href="#握手流程">握手流程</a></li>
+        <li><a href="#类型和代码生成">类型和代码生成</a></li>
+      </ul>
+    </li>
+    <li><a href="#agent-运行链路">Agent 运行链路</a></li>
+    <li><a href="#队列和并发控制">队列和并发控制</a></li>
+    <li><a href="#配对和本地信任">配对和本地信任</a></li>
+    <li><a href="#安全模型">安全模型</a>
+      <ul>
+        <li><a href="#主机信任">主机信任</a></li>
+        <li><a href="#gateway-和节点信任">Gateway 和节点信任</a></li>
+        <li><a href="#scope-和审批">Scope 和审批</a></li>
+      </ul>
+    </li>
+    <li><a href="#技术实现要点总结">技术实现要点总结</a>
+      <ul>
+        <li><a href="#单-gateway-架构">单 Gateway 架构</a></li>
+        <li><a href="#类型化协议">类型化协议</a></li>
+        <li><a href="#事件驱动运行">事件驱动运行</a></li>
+        <li><a href="#能力声明和服务端强制">能力声明和服务端强制</a></li>
+        <li><a href="#会话一致性优先">会话一致性优先</a></li>
+        <li><a href="#本地优先的远程访问">本地优先的远程访问</a></li>
+      </ul>
+    </li>
+    <li><a href="#可以借鉴的工程设计">可以借鉴的工程设计</a></li>
+    <li><a href="#学习检查表">学习检查表</a></li>
+    <li><a href="#路径缩写说明">路径缩写说明</a></li>
+  </ul>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/ai/" >
+                Ai
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/openclaw-gateway-%E6%9E%B6%E6%9E%84%E5%AD%A6%E4%B9%A0%E7%AC%94%E8%AE%B0/">OpenClaw Gateway 架构学习笔记</a>
+        </h2>
+    
+        
+
+        
+            
+            <div class="article-source">source: openclaw-architecture-study</div>
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">Jul 03, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h1 id="openclaw-gateway-架构学习笔记">OpenClaw Gateway 架构学习笔记
+</h1><h2 id="资料来源">资料来源
+</h2><p>本文基于 OpenClaw 官方文档整理，重点参考：</p>
+<ul>
+<li><a class="link" href="https://docs.openclaw.ai/zh-CN/concepts/architecture"  target="_blank" rel="noopener"
+    >Gateway 网关架构</a></li>
+<li><a class="link" href="https://docs.openclaw.ai/zh-CN/gateway/protocol"  target="_blank" rel="noopener"
+    >Gateway 网关协议</a></li>
+<li><a class="link" href="https://docs.openclaw.ai/zh-CN/concepts/agent-loop"  target="_blank" rel="noopener"
+    >Agent loop</a></li>
+<li><a class="link" href="https://docs.openclaw.ai/zh-CN/concepts/queue"  target="_blank" rel="noopener"
+    >命令队列</a></li>
+<li><a class="link" href="https://docs.openclaw.ai/zh-CN/channels/pairing"  target="_blank" rel="noopener"
+    >配对</a></li>
+<li><a class="link" href="https://docs.openclaw.ai/zh-CN/gateway/security"  target="_blank" rel="noopener"
+    >安全</a></li>
+</ul>
+<h2 id="一句话理解">一句话理解
+</h2><p>OpenClaw 的核心不是把每个消息渠道、设备能力、控制 UI 都做成独立后端，而是用一个长期运行的 Gateway 作为本机控制平面。所有控制端、消息渠道和设备节点都通过同一个 Gateway 协议接入，Gateway 负责鉴权、配对、能力声明、事件广播、Agent 运行调度和本地策略执行。</p>
+<h2 id="整体技术架构">整体技术架构
+</h2><p>OpenClaw 的架构可以拆成四类角色。</p>
+<ol>
+<li>Gateway 网关：长期运行的守护进程，是控制平面、消息接入面和策略执行面。</li>
+<li>控制平面客户端：macOS App、CLI、Web UI、自动化脚本，通过 WebSocket 访问 Gateway。</li>
+<li>节点：macOS、iOS、Android、headless 等设备，以 <code>role: &quot;node&quot;</code> 连接 Gateway，并声明可执行能力。</li>
+<li>消息渠道和 WebChat：WhatsApp、Telegram、Slack、Discord、Signal、iMessage、WebChat 等入口由 Gateway 统一管理。</li>
+</ol>
+<p>官方文档强调“每台主机一个 Gateway”。这个约束很关键，因为 WhatsApp 等渠道会话、Agent 会话文件、工具权限和设备信任都围绕这个 Gateway 实例形成一个本地主信任域。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    Operator[控制平面客户端&lt;br/&gt;CLI / Web UI / macOS App] --&gt;|WebSocket RPC| Gateway
+    WebChat[WebChat 静态 UI] --&gt;|WebSocket RPC| Gateway
+    Node[设备节点&lt;br/&gt;iOS / Android / macOS / headless] --&gt;|role: node&lt;br/&gt;能力和命令声明| Gateway
+    Channels[消息渠道&lt;br/&gt;WhatsApp / Telegram / Slack / Discord] --&gt; Gateway
+    Gateway --&gt; AgentRuntime[Agent Runtime]
+    Gateway --&gt; Policy[认证 / 配对 / Scope / 工具策略]
+    Gateway --&gt; Canvas[Canvas Host&lt;br/&gt;/__openclaw__/canvas/]
+    Gateway --&gt; A2UI[A2UI Host&lt;br/&gt;/__openclaw__/a2ui/]
+    AgentRuntime --&gt; Model[模型和工具执行]
+</code></pre><h2 id="核心组件">核心组件
+</h2><h3 id="gateway-网关">Gateway 网关
+</h3><p>Gateway 是 OpenClaw 的核心守护进程，默认监听 <code>127.0.0.1:18789</code>。它承担以下职责：</p>
+<ul>
+<li>维护消息渠道提供商连接，例如 WhatsApp、Telegram、Slack、Discord 等。</li>
+<li>暴露类型化 WebSocket API，支持请求、响应和服务端推送事件。</li>
+<li>使用 JSON Schema 校验入站协议帧。</li>
+<li>发出 <code>agent</code>、<code>chat</code>、<code>presence</code>、<code>health</code>、<code>heartbeat</code>、<code>cron</code> 等事件。</li>
+<li>承载 Canvas 和 A2UI 静态入口，路径分别为 <code>/__openclaw__/canvas/</code> 和 <code>/__openclaw__/a2ui/</code>。</li>
+</ul>
+<p>从技术实现看，Gateway 相当于“单实例控制总线”。它把消息渠道、Agent runtime、设备节点、控制 UI 以及安全策略收敛到一个进程边界内，减少跨服务一致性问题，但也意味着主机和 Gateway 配置本身必须被视为可信边界。</p>
+<h3 id="控制平面客户端">控制平面客户端
+</h3><p>控制平面客户端包括 CLI、Web UI、macOS App 和自动化脚本。它们每个客户端维护一个 WebSocket 连接，主要做三类事情：</p>
+<ul>
+<li>发起请求：如 <code>health</code>、<code>status</code>、<code>send</code>、<code>agent</code>、<code>system-presence</code>。</li>
+<li>订阅事件：如 <code>tick</code>、<code>agent</code>、<code>presence</code>、<code>shutdown</code>。</li>
+<li>根据自身权限范围访问配置、模型、日志、Agent 会话和工具审批等能力。</li>
+</ul>
+<p>这些客户端在协议层通常是 <code>role: &quot;operator&quot;</code>，并通过 <code>operator.read</code>、<code>operator.write</code>、<code>operator.admin</code>、<code>operator.approvals</code>、<code>operator.pairing</code> 等 scope 做权限分层。</p>
+<h3 id="节点">节点
+</h3><p>节点是远程或本机能力宿主。节点连接同一个 Gateway WebSocket 服务器，但会在握手时声明 <code>role: &quot;node&quot;</code>，并上报：</p>
+<ul>
+<li><code>caps</code>：高级能力类别，例如 <code>camera</code>、<code>canvas</code>、<code>screen</code>、<code>location</code>、<code>voice</code>、<code>talk</code>。</li>
+<li><code>commands</code>：可被调用的命令白名单，例如 <code>camera.snap</code>、<code>canvas.navigate</code>、<code>screen.record</code>、<code>location.get</code>。</li>
+<li><code>permissions</code>：细粒度开关，例如 <code>camera.capture</code>、<code>screen.record</code>。</li>
+</ul>
+<p>这套设计把“设备有什么能力”和“Gateway 允许它做什么”分开。节点的声明只是能力主张，Gateway 仍会在服务端执行允许列表和策略检查。</p>
+<h3 id="webchat">WebChat
+</h3><p>WebChat 是一个静态 UI，通过 Gateway WebSocket API 获取聊天历史并发送消息。在远程访问场景中，WebChat 和其他客户端一样，可以通过 SSH 隧道、Tailscale 或 VPN 接入 Gateway。</p>
+<h2 id="websocket-协议实现">WebSocket 协议实现
+</h2><h3 id="传输和分帧">传输和分帧
+</h3><p>Gateway 协议使用 WebSocket 文本帧，载荷为 JSON。协议帧主要分三类：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span> <span class="nt">&#34;type&#34;</span><span class="p">:</span> <span class="s2">&#34;req&#34;</span><span class="p">,</span> <span class="nt">&#34;id&#34;</span><span class="p">:</span> <span class="s2">&#34;...&#34;</span><span class="p">,</span> <span class="nt">&#34;method&#34;</span><span class="p">:</span> <span class="s2">&#34;...&#34;</span><span class="p">,</span> <span class="nt">&#34;params&#34;</span><span class="p">:</span> <span class="p">{}</span> <span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span> <span class="nt">&#34;type&#34;</span><span class="p">:</span> <span class="s2">&#34;res&#34;</span><span class="p">,</span> <span class="nt">&#34;id&#34;</span><span class="p">:</span> <span class="s2">&#34;...&#34;</span><span class="p">,</span> <span class="nt">&#34;ok&#34;</span><span class="p">:</span> <span class="kc">true</span><span class="p">,</span> <span class="nt">&#34;payload&#34;</span><span class="p">:</span> <span class="p">{}</span> <span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span> <span class="nt">&#34;type&#34;</span><span class="p">:</span> <span class="s2">&#34;event&#34;</span><span class="p">,</span> <span class="nt">&#34;event&#34;</span><span class="p">:</span> <span class="s2">&#34;...&#34;</span><span class="p">,</span> <span class="nt">&#34;payload&#34;</span><span class="p">:</span> <span class="p">{},</span> <span class="nt">&#34;seq&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="nt">&#34;stateVersion&#34;</span><span class="p">:</span> <span class="mi">1</span> <span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>实现上有几个重要点：</p>
+<ul>
+<li>第一帧必须是 <code>connect</code> 请求，否则 Gateway 会关闭连接。</li>
+<li>握手前帧大小有限制，握手后客户端应遵守 <code>hello-ok.policy.maxPayload</code> 和 <code>hello-ok.policy.maxBufferedBytes</code>。</li>
+<li><code>hello-ok.features.methods</code> 和 <code>hello-ok.features.events</code> 是能力发现元数据，不是所有内部方法的完整转储。</li>
+<li>有副作用的方法，例如 <code>send</code>、<code>agent</code>，需要幂等键，以便客户端安全重试。</li>
+</ul>
+<h3 id="握手流程">握手流程
+</h3><p>Gateway 先向客户端发出 <code>connect.challenge</code>，客户端再提交 <code>connect</code> 请求。请求中包含协议版本范围、客户端信息、角色、scope、能力、命令、认证信息和设备签名。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">sequenceDiagram
+    participant Client as 客户端
+    participant Gateway as Gateway
+
+    Gateway--&gt;&gt;Client: event: connect.challenge
+    Client-&gt;&gt;Gateway: req: connect&lt;br/&gt;role/scopes/caps/auth/device
+    Gateway--&gt;&gt;Client: res: hello-ok&lt;br/&gt;protocol/features/snapshot/auth/policy
+    Gateway--&gt;&gt;Client: event: presence
+    Gateway--&gt;&gt;Client: event: tick
+</code></pre><p><code>hello-ok</code> 是握手成功后的关键响应，包含：</p>
+<ul>
+<li>协商后的协议版本。</li>
+<li>Gateway 服务端版本和连接 ID。</li>
+<li>可发现方法和事件。</li>
+<li>当前状态快照，例如 presence、health。</li>
+<li>协商后的角色和 scope。</li>
+<li>策略限制，例如最大载荷、最大缓冲区、tick 间隔。</li>
+<li>可选的设备令牌和插件表面 URL。</li>
+</ul>
+<h3 id="类型和代码生成">类型和代码生成
+</h3><p>协议类型由 TypeBox schema 定义，再生成 JSON Schema，并进一步生成 Swift 模型。这个链路说明 OpenClaw 希望用单一 schema 源头约束多语言客户端，避免手写协议模型漂移。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    TypeBox[TypeBox Schema] --&gt; JSONSchema[JSON Schema]
+    JSONSchema --&gt; Validator[Gateway 入站帧校验]
+    JSONSchema --&gt; Swift[Swift 客户端模型]
+    JSONSchema --&gt; UI[Web / CLI 类型和表单约束]
+</code></pre><h2 id="agent-运行链路">Agent 运行链路
+</h2><p>Agent loop 是一次真实智能体运行的主路径：接收请求、组装上下文、调用模型、执行工具、流式返回、持久化会话。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">sequenceDiagram
+    participant Client as 客户端/消息渠道
+    participant Gateway as Gateway
+    participant Queue as 队列
+    participant Runtime as Agent Runtime
+    participant Model as 模型/工具
+
+    Client-&gt;&gt;Gateway: req: agent
+    Gateway--&gt;&gt;Client: ack {runId, acceptedAt}
+    Gateway-&gt;&gt;Queue: 按 sessionKey 入队
+    Queue-&gt;&gt;Runtime: runEmbeddedAgent
+    Runtime-&gt;&gt;Model: 推理和工具调用
+    Runtime--&gt;&gt;Gateway: assistant/tool/lifecycle 增量
+    Gateway--&gt;&gt;Client: event: agent streaming
+    Gateway--&gt;&gt;Client: final res: agent
+</code></pre><p>关键实现点：</p>
+<ul>
+<li><code>agent</code> RPC 会先校验参数、解析会话并持久化会话元数据，然后立即返回 <code>runId</code> 和 accepted 状态。</li>
+<li><code>agentCommand</code> 负责解析模型、thinking、verbose、trace 默认值，并加载 Skills 快照。</li>
+<li><code>runEmbeddedAgent</code> 负责实际运行，包含会话队列、全局队列、模型凭证解析、运行时事件订阅、流式输出、超时中止和用量元数据返回。</li>
+<li><code>subscribeEmbeddedAgentSession</code> 将 runtime 事件桥接为 OpenClaw 的 <code>agent</code> 流，包括 assistant 增量、tool 事件和生命周期事件。</li>
+<li><code>agent.wait</code> 可以等待某个 <code>runId</code> 的 end 或 error 结果。</li>
+</ul>
+<p>这个设计的好处是：RPC 层快速确认接收，真实运行异步执行，并通过事件流持续返回进度。</p>
+<h2 id="队列和并发控制">队列和并发控制
+</h2><p>OpenClaw 使用一个轻量的进程内队列来串行化入站自动回复运行，目标是防止多个 Agent 运行同时争用同一会话状态、日志、CLI stdin 或上游模型额度。</p>
+<p>队列策略分两层：</p>
+<ul>
+<li>会话通道：<code>runEmbeddedAgent</code> 按 <code>session:&lt;key&gt;</code> 入队，保证同一会话只有一个活跃运行。</li>
+<li>全局通道：每个会话运行再进入全局通道，例如默认 <code>main</code>，受 <code>agents.defaults.maxConcurrent</code> 控制整体并发。</li>
+</ul>
+<p>消息队列模式包括：</p>
+<ul>
+<li><code>steer</code>：把运行中途到达的消息注入活跃运行，在下一次模型调用前交付。</li>
+<li><code>followup</code>：当前运行结束后逐条处理后续消息。</li>
+<li><code>collect</code>：静默窗口后合并消息为一个后续轮次。</li>
+<li><code>interrupt</code>：中止当前活跃运行，改跑最新消息。</li>
+</ul>
+<p>队列模型体现了 OpenClaw 对 Agent 产品体验的取舍：同一会话要强一致，跨会话可以有限并发，运行中的用户补充信息优先通过 Steering 接入，而不是盲目启动第二个 Agent loop。</p>
+<h2 id="配对和本地信任">配对和本地信任
+</h2><p>配对是 OpenClaw 的显式访问审批步骤，主要用于两个地方：</p>
+<ul>
+<li>私信配对：控制谁可以通过消息渠道和机器人对话。</li>
+<li>节点配对：控制哪些设备或节点可以加入 Gateway 网络。</li>
+</ul>
+<p>配对实现中有几个细节值得注意：</p>
+<ul>
+<li>所有 WebSocket 客户端，包括操作员客户端和节点，都会在 <code>connect</code> 中携带设备身份。</li>
+<li>新设备 ID 需要配对批准，批准后 Gateway 会签发设备令牌。</li>
+<li>直接 local loopback 连接可以自动批准，以保证同主机体验顺畅。</li>
+<li>Tailnet 和 LAN 连接仍需要显式配对批准。</li>
+<li>所有连接都需要签名 <code>connect.challenge</code> nonce。</li>
+<li>签名载荷会绑定 <code>platform</code> 和 <code>deviceFamily</code>，设备元数据变化时需要修复配对。</li>
+<li>Gateway 认证配置仍然适用于所有连接，本地和远程都不例外。</li>
+</ul>
+<p>私信配对使用短代码。官方文档说明代码为 8 个大写字符，不包含 <code>0O1I</code> 等易混淆字符，默认 1 小时过期，并限制每个渠道待处理请求数量。</p>
+<h2 id="安全模型">安全模型
+</h2><p>OpenClaw 的安全边界不是敌对多租户模型，而是“可信主机 + 可信操作员控制平面”模型。</p>
+<h3 id="主机信任">主机信任
+</h3><p>如果某人可以修改 Gateway 主机状态或配置，例如 <code>~/.openclaw</code> 和 <code>openclaw.json</code>，就应被视为可信操作员。官方不建议多个互不信任的操作员共用同一个 Gateway。混合信任团队应使用独立 Gateway，或者至少使用独立 OS 用户和主机边界。</p>
+<h3 id="gateway-和节点信任">Gateway 和节点信任
+</h3><p>Gateway 是控制平面和策略表面，节点是远程执行表面。节点配对后，节点上的操作等价于被该 Gateway 信任的操作员操作。因此：</p>
+<ul>
+<li><code>sessionKey</code> 是路由和上下文选择器，不是授权令牌。</li>
+<li>Exec 审批是操作员意图护栏，不是强多租户隔离。</li>
+<li>如果多个用户都能向启用工具的智能体发消息，他们都可能通过提示影响工具调用。</li>
+</ul>
+<h3 id="scope-和审批">Scope 和审批
+</h3><p>操作员 scope 用于控制 RPC 权限。例如：</p>
+<ul>
+<li><code>operator.read</code>：读取状态、会话、事件等。</li>
+<li><code>operator.write</code>：发送消息、触发 Agent 等写操作。</li>
+<li><code>operator.admin</code>：配置、更新、敏感管理操作。</li>
+<li><code>operator.approvals</code>：处理工具或 Exec 审批。</li>
+<li><code>operator.pairing</code>：处理配对。</li>
+<li><code>operator.talk.secrets</code>：读取 Talk 配置中的敏感凭据。</li>
+</ul>
+<p>节点命令也有审批时检查。比如涉及 <code>system.run</code>、<code>system.run.prepare</code>、<code>system.which</code> 的节点配对批准，需要更高权限组合。</p>
+<h2 id="技术实现要点总结">技术实现要点总结
+</h2><h3 id="单-gateway-架构">单 Gateway 架构
+</h3><p>OpenClaw 采用单 Gateway 模式，将渠道连接、控制 API、节点网络、Agent 调度和安全策略放在一个长期进程里。实现收益是状态集中、协议统一、部署简单；代价是 Gateway 主机成为强信任边界。</p>
+<h3 id="类型化协议">类型化协议
+</h3><p>Gateway WebSocket 协议不是自由 JSON，而是由 TypeBox schema 定义，并生成 JSON Schema 和客户端模型。这样可以在入站校验、客户端类型和 UI 表单之间共享契约。</p>
+<h3 id="事件驱动运行">事件驱动运行
+</h3><p><code>agent</code> 请求采用“先 ack，后流式事件”的模式。客户端不需要同步等待完整运行结束，而是通过 <code>event: agent</code> 获取 assistant、tool 和 lifecycle 增量。</p>
+<h3 id="能力声明和服务端强制">能力声明和服务端强制
+</h3><p>节点在握手时声明 <code>caps</code>、<code>commands</code> 和 <code>permissions</code>，但 Gateway 将这些视为主张。真正的权限仍由服务端允许列表、scope 和审批策略决定。</p>
+<h3 id="会话一致性优先">会话一致性优先
+</h3><p>Agent loop 通过每会话队列和会话写锁保护会话历史、转录和工具状态。跨会话可以并发，同一会话必须串行或通过 Steering 合流。</p>
+<h3 id="本地优先的远程访问">本地优先的远程访问
+</h3><p>默认 Gateway 绑定本地回环地址。远程访问优先推荐 Tailscale 或 VPN，也可通过 SSH 隧道转发 <code>18789</code> 端口。远程场景仍复用相同握手和认证模型。</p>
+<h2 id="可以借鉴的工程设计">可以借鉴的工程设计
+</h2><ol>
+<li>对 Agent 系统使用单一控制平面协议，而不是让 CLI、Web、App、节点各自绕不同接口。</li>
+<li>将长任务设计为 ack + event streaming，避免请求阻塞和客户端超时。</li>
+<li>把设备能力声明与服务端授权分离，避免信任客户端自报。</li>
+<li>对有副作用 RPC 强制幂等键，让重试成为协议能力。</li>
+<li>对同一会话强串行化，对跨会话做有限并发，平衡一致性和吞吐。</li>
+<li>将协议 schema 作为源头，再生成校验规则和客户端模型。</li>
+<li>明确产品安全边界，避免把可信单操作员系统误包装成强多租户系统。</li>
+</ol>
+<h2 id="学习检查表">学习检查表
+</h2><ul>
+<li>能否画出 Gateway、operator client、node、message channel、agent runtime 的关系。</li>
+<li>能否解释为什么第一帧必须是 <code>connect</code>。</li>
+<li>能否区分 <code>operator</code> 和 <code>node</code> 两种角色。</li>
+<li>能否说明 <code>caps</code>、<code>commands</code>、<code>permissions</code> 的区别。</li>
+<li>能否解释 <code>hello-ok</code> 中 <code>features</code>、<code>snapshot</code>、<code>auth</code>、<code>policy</code> 的作用。</li>
+<li>能否说明同一会话为什么要串行化。</li>
+<li>能否解释 <code>steer</code>、<code>followup</code>、<code>collect</code>、<code>interrupt</code> 四种队列模式。</li>
+<li>能否说明 <code>sessionKey</code> 为什么不是授权令牌。</li>
+<li>能否说清 OpenClaw 的安全边界为什么是可信主机模型，而不是敌对多租户模型。</li>
+</ul>
+<h2 id="路径缩写说明">路径缩写说明
+</h2><ul>
+<li>当前文档 -&gt; <code>content/post/ai/openclaw-architecture-study.md</code></li>
+<li>工作区根路径 -&gt; <code>/home/agsol/workspace/ag-workspace</code></li>
+</ul>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/ai-agent/">AI Agent</a>
+        
+            <a href="/tags/openclaw/">OpenClaw</a>
+        
+            <a href="/tags/gateway/">Gateway</a>
+        
+            <a href="/tags/websocket/">Websocket</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>

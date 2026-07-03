@@ -7,7 +7,2149 @@
         <generator>Hugo -- gohugo.io</generator>
         <language>en</language>
         <copyright>Agsol</copyright>
-        <lastBuildDate>Wed, 01 Jul 2026 00:00:00 +0000</lastBuildDate><atom:link href="https://Agsol701.github.io/categories/ai/index.xml" rel="self" type="application/rss+xml" /><item>
+        <lastBuildDate>Fri, 03 Jul 2026 00:00:00 +0000</lastBuildDate><atom:link href="https://Agsol701.github.io/categories/ai/index.xml" rel="self" type="application/rss+xml" /><item>
+        <title>OpenClaw Gateway 架构学习笔记</title>
+        <link>https://Agsol701.github.io/p/openclaw-gateway-%E6%9E%B6%E6%9E%84%E5%AD%A6%E4%B9%A0%E7%AC%94%E8%AE%B0/</link>
+        <pubDate>Fri, 03 Jul 2026 00:00:00 +0000</pubDate>
+        
+        <guid>https://Agsol701.github.io/p/openclaw-gateway-%E6%9E%B6%E6%9E%84%E5%AD%A6%E4%B9%A0%E7%AC%94%E8%AE%B0/</guid>
+        <description>&lt;h1 id=&#34;openclaw-gateway-架构学习笔记&#34;&gt;OpenClaw Gateway 架构学习笔记
+&lt;/h1&gt;&lt;h2 id=&#34;资料来源&#34;&gt;资料来源
+&lt;/h2&gt;&lt;p&gt;本文基于 OpenClaw 官方文档整理，重点参考：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://docs.openclaw.ai/zh-CN/concepts/architecture&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Gateway 网关架构&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://docs.openclaw.ai/zh-CN/gateway/protocol&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Gateway 网关协议&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://docs.openclaw.ai/zh-CN/concepts/agent-loop&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Agent loop&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://docs.openclaw.ai/zh-CN/concepts/queue&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;命令队列&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://docs.openclaw.ai/zh-CN/channels/pairing&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;配对&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://docs.openclaw.ai/zh-CN/gateway/security&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;安全&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;一句话理解&#34;&gt;一句话理解
+&lt;/h2&gt;&lt;p&gt;OpenClaw 的核心不是把每个消息渠道、设备能力、控制 UI 都做成独立后端，而是用一个长期运行的 Gateway 作为本机控制平面。所有控制端、消息渠道和设备节点都通过同一个 Gateway 协议接入，Gateway 负责鉴权、配对、能力声明、事件广播、Agent 运行调度和本地策略执行。&lt;/p&gt;
+&lt;h2 id=&#34;整体技术架构&#34;&gt;整体技术架构
+&lt;/h2&gt;&lt;p&gt;OpenClaw 的架构可以拆成四类角色。&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Gateway 网关：长期运行的守护进程，是控制平面、消息接入面和策略执行面。&lt;/li&gt;
+&lt;li&gt;控制平面客户端：macOS App、CLI、Web UI、自动化脚本，通过 WebSocket 访问 Gateway。&lt;/li&gt;
+&lt;li&gt;节点：macOS、iOS、Android、headless 等设备，以 &lt;code&gt;role: &amp;quot;node&amp;quot;&lt;/code&gt; 连接 Gateway，并声明可执行能力。&lt;/li&gt;
+&lt;li&gt;消息渠道和 WebChat：WhatsApp、Telegram、Slack、Discord、Signal、iMessage、WebChat 等入口由 Gateway 统一管理。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;官方文档强调“每台主机一个 Gateway”。这个约束很关键，因为 WhatsApp 等渠道会话、Agent 会话文件、工具权限和设备信任都围绕这个 Gateway 实例形成一个本地主信任域。&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart LR
+    Operator[控制平面客户端&amp;lt;br/&amp;gt;CLI / Web UI / macOS App] --&amp;gt;|WebSocket RPC| Gateway
+    WebChat[WebChat 静态 UI] --&amp;gt;|WebSocket RPC| Gateway
+    Node[设备节点&amp;lt;br/&amp;gt;iOS / Android / macOS / headless] --&amp;gt;|role: node&amp;lt;br/&amp;gt;能力和命令声明| Gateway
+    Channels[消息渠道&amp;lt;br/&amp;gt;WhatsApp / Telegram / Slack / Discord] --&amp;gt; Gateway
+    Gateway --&amp;gt; AgentRuntime[Agent Runtime]
+    Gateway --&amp;gt; Policy[认证 / 配对 / Scope / 工具策略]
+    Gateway --&amp;gt; Canvas[Canvas Host&amp;lt;br/&amp;gt;/__openclaw__/canvas/]
+    Gateway --&amp;gt; A2UI[A2UI Host&amp;lt;br/&amp;gt;/__openclaw__/a2ui/]
+    AgentRuntime --&amp;gt; Model[模型和工具执行]
+&lt;/code&gt;&lt;/pre&gt;&lt;h2 id=&#34;核心组件&#34;&gt;核心组件
+&lt;/h2&gt;&lt;h3 id=&#34;gateway-网关&#34;&gt;Gateway 网关
+&lt;/h3&gt;&lt;p&gt;Gateway 是 OpenClaw 的核心守护进程，默认监听 &lt;code&gt;127.0.0.1:18789&lt;/code&gt;。它承担以下职责：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;维护消息渠道提供商连接，例如 WhatsApp、Telegram、Slack、Discord 等。&lt;/li&gt;
+&lt;li&gt;暴露类型化 WebSocket API，支持请求、响应和服务端推送事件。&lt;/li&gt;
+&lt;li&gt;使用 JSON Schema 校验入站协议帧。&lt;/li&gt;
+&lt;li&gt;发出 &lt;code&gt;agent&lt;/code&gt;、&lt;code&gt;chat&lt;/code&gt;、&lt;code&gt;presence&lt;/code&gt;、&lt;code&gt;health&lt;/code&gt;、&lt;code&gt;heartbeat&lt;/code&gt;、&lt;code&gt;cron&lt;/code&gt; 等事件。&lt;/li&gt;
+&lt;li&gt;承载 Canvas 和 A2UI 静态入口，路径分别为 &lt;code&gt;/__openclaw__/canvas/&lt;/code&gt; 和 &lt;code&gt;/__openclaw__/a2ui/&lt;/code&gt;。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;从技术实现看，Gateway 相当于“单实例控制总线”。它把消息渠道、Agent runtime、设备节点、控制 UI 以及安全策略收敛到一个进程边界内，减少跨服务一致性问题，但也意味着主机和 Gateway 配置本身必须被视为可信边界。&lt;/p&gt;
+&lt;h3 id=&#34;控制平面客户端&#34;&gt;控制平面客户端
+&lt;/h3&gt;&lt;p&gt;控制平面客户端包括 CLI、Web UI、macOS App 和自动化脚本。它们每个客户端维护一个 WebSocket 连接，主要做三类事情：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;发起请求：如 &lt;code&gt;health&lt;/code&gt;、&lt;code&gt;status&lt;/code&gt;、&lt;code&gt;send&lt;/code&gt;、&lt;code&gt;agent&lt;/code&gt;、&lt;code&gt;system-presence&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;订阅事件：如 &lt;code&gt;tick&lt;/code&gt;、&lt;code&gt;agent&lt;/code&gt;、&lt;code&gt;presence&lt;/code&gt;、&lt;code&gt;shutdown&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;根据自身权限范围访问配置、模型、日志、Agent 会话和工具审批等能力。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这些客户端在协议层通常是 &lt;code&gt;role: &amp;quot;operator&amp;quot;&lt;/code&gt;，并通过 &lt;code&gt;operator.read&lt;/code&gt;、&lt;code&gt;operator.write&lt;/code&gt;、&lt;code&gt;operator.admin&lt;/code&gt;、&lt;code&gt;operator.approvals&lt;/code&gt;、&lt;code&gt;operator.pairing&lt;/code&gt; 等 scope 做权限分层。&lt;/p&gt;
+&lt;h3 id=&#34;节点&#34;&gt;节点
+&lt;/h3&gt;&lt;p&gt;节点是远程或本机能力宿主。节点连接同一个 Gateway WebSocket 服务器，但会在握手时声明 &lt;code&gt;role: &amp;quot;node&amp;quot;&lt;/code&gt;，并上报：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;caps&lt;/code&gt;：高级能力类别，例如 &lt;code&gt;camera&lt;/code&gt;、&lt;code&gt;canvas&lt;/code&gt;、&lt;code&gt;screen&lt;/code&gt;、&lt;code&gt;location&lt;/code&gt;、&lt;code&gt;voice&lt;/code&gt;、&lt;code&gt;talk&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;commands&lt;/code&gt;：可被调用的命令白名单，例如 &lt;code&gt;camera.snap&lt;/code&gt;、&lt;code&gt;canvas.navigate&lt;/code&gt;、&lt;code&gt;screen.record&lt;/code&gt;、&lt;code&gt;location.get&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;permissions&lt;/code&gt;：细粒度开关，例如 &lt;code&gt;camera.capture&lt;/code&gt;、&lt;code&gt;screen.record&lt;/code&gt;。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这套设计把“设备有什么能力”和“Gateway 允许它做什么”分开。节点的声明只是能力主张，Gateway 仍会在服务端执行允许列表和策略检查。&lt;/p&gt;
+&lt;h3 id=&#34;webchat&#34;&gt;WebChat
+&lt;/h3&gt;&lt;p&gt;WebChat 是一个静态 UI，通过 Gateway WebSocket API 获取聊天历史并发送消息。在远程访问场景中，WebChat 和其他客户端一样，可以通过 SSH 隧道、Tailscale 或 VPN 接入 Gateway。&lt;/p&gt;
+&lt;h2 id=&#34;websocket-协议实现&#34;&gt;WebSocket 协议实现
+&lt;/h2&gt;&lt;h3 id=&#34;传输和分帧&#34;&gt;传输和分帧
+&lt;/h3&gt;&lt;p&gt;Gateway 协议使用 WebSocket 文本帧，载荷为 JSON。协议帧主要分三类：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;type&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;req&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;id&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;...&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;method&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;...&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;params&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;{}&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;type&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;res&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;id&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;...&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;ok&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;kc&#34;&gt;true&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;payload&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;{}&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;type&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;event&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;event&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;...&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;payload&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;{},&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;seq&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;1&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;nt&#34;&gt;&amp;#34;stateVersion&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;mi&#34;&gt;1&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;实现上有几个重要点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;第一帧必须是 &lt;code&gt;connect&lt;/code&gt; 请求，否则 Gateway 会关闭连接。&lt;/li&gt;
+&lt;li&gt;握手前帧大小有限制，握手后客户端应遵守 &lt;code&gt;hello-ok.policy.maxPayload&lt;/code&gt; 和 &lt;code&gt;hello-ok.policy.maxBufferedBytes&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;hello-ok.features.methods&lt;/code&gt; 和 &lt;code&gt;hello-ok.features.events&lt;/code&gt; 是能力发现元数据，不是所有内部方法的完整转储。&lt;/li&gt;
+&lt;li&gt;有副作用的方法，例如 &lt;code&gt;send&lt;/code&gt;、&lt;code&gt;agent&lt;/code&gt;，需要幂等键，以便客户端安全重试。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;握手流程&#34;&gt;握手流程
+&lt;/h3&gt;&lt;p&gt;Gateway 先向客户端发出 &lt;code&gt;connect.challenge&lt;/code&gt;，客户端再提交 &lt;code&gt;connect&lt;/code&gt; 请求。请求中包含协议版本范围、客户端信息、角色、scope、能力、命令、认证信息和设备签名。&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;sequenceDiagram
+    participant Client as 客户端
+    participant Gateway as Gateway
+
+    Gateway--&amp;gt;&amp;gt;Client: event: connect.challenge
+    Client-&amp;gt;&amp;gt;Gateway: req: connect&amp;lt;br/&amp;gt;role/scopes/caps/auth/device
+    Gateway--&amp;gt;&amp;gt;Client: res: hello-ok&amp;lt;br/&amp;gt;protocol/features/snapshot/auth/policy
+    Gateway--&amp;gt;&amp;gt;Client: event: presence
+    Gateway--&amp;gt;&amp;gt;Client: event: tick
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;&lt;code&gt;hello-ok&lt;/code&gt; 是握手成功后的关键响应，包含：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;协商后的协议版本。&lt;/li&gt;
+&lt;li&gt;Gateway 服务端版本和连接 ID。&lt;/li&gt;
+&lt;li&gt;可发现方法和事件。&lt;/li&gt;
+&lt;li&gt;当前状态快照，例如 presence、health。&lt;/li&gt;
+&lt;li&gt;协商后的角色和 scope。&lt;/li&gt;
+&lt;li&gt;策略限制，例如最大载荷、最大缓冲区、tick 间隔。&lt;/li&gt;
+&lt;li&gt;可选的设备令牌和插件表面 URL。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;类型和代码生成&#34;&gt;类型和代码生成
+&lt;/h3&gt;&lt;p&gt;协议类型由 TypeBox schema 定义，再生成 JSON Schema，并进一步生成 Swift 模型。这个链路说明 OpenClaw 希望用单一 schema 源头约束多语言客户端，避免手写协议模型漂移。&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart LR
+    TypeBox[TypeBox Schema] --&amp;gt; JSONSchema[JSON Schema]
+    JSONSchema --&amp;gt; Validator[Gateway 入站帧校验]
+    JSONSchema --&amp;gt; Swift[Swift 客户端模型]
+    JSONSchema --&amp;gt; UI[Web / CLI 类型和表单约束]
+&lt;/code&gt;&lt;/pre&gt;&lt;h2 id=&#34;agent-运行链路&#34;&gt;Agent 运行链路
+&lt;/h2&gt;&lt;p&gt;Agent loop 是一次真实智能体运行的主路径：接收请求、组装上下文、调用模型、执行工具、流式返回、持久化会话。&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;sequenceDiagram
+    participant Client as 客户端/消息渠道
+    participant Gateway as Gateway
+    participant Queue as 队列
+    participant Runtime as Agent Runtime
+    participant Model as 模型/工具
+
+    Client-&amp;gt;&amp;gt;Gateway: req: agent
+    Gateway--&amp;gt;&amp;gt;Client: ack {runId, acceptedAt}
+    Gateway-&amp;gt;&amp;gt;Queue: 按 sessionKey 入队
+    Queue-&amp;gt;&amp;gt;Runtime: runEmbeddedAgent
+    Runtime-&amp;gt;&amp;gt;Model: 推理和工具调用
+    Runtime--&amp;gt;&amp;gt;Gateway: assistant/tool/lifecycle 增量
+    Gateway--&amp;gt;&amp;gt;Client: event: agent streaming
+    Gateway--&amp;gt;&amp;gt;Client: final res: agent
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;关键实现点：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;agent&lt;/code&gt; RPC 会先校验参数、解析会话并持久化会话元数据，然后立即返回 &lt;code&gt;runId&lt;/code&gt; 和 accepted 状态。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;agentCommand&lt;/code&gt; 负责解析模型、thinking、verbose、trace 默认值，并加载 Skills 快照。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;runEmbeddedAgent&lt;/code&gt; 负责实际运行，包含会话队列、全局队列、模型凭证解析、运行时事件订阅、流式输出、超时中止和用量元数据返回。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;subscribeEmbeddedAgentSession&lt;/code&gt; 将 runtime 事件桥接为 OpenClaw 的 &lt;code&gt;agent&lt;/code&gt; 流，包括 assistant 增量、tool 事件和生命周期事件。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;agent.wait&lt;/code&gt; 可以等待某个 &lt;code&gt;runId&lt;/code&gt; 的 end 或 error 结果。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这个设计的好处是：RPC 层快速确认接收，真实运行异步执行，并通过事件流持续返回进度。&lt;/p&gt;
+&lt;h2 id=&#34;队列和并发控制&#34;&gt;队列和并发控制
+&lt;/h2&gt;&lt;p&gt;OpenClaw 使用一个轻量的进程内队列来串行化入站自动回复运行，目标是防止多个 Agent 运行同时争用同一会话状态、日志、CLI stdin 或上游模型额度。&lt;/p&gt;
+&lt;p&gt;队列策略分两层：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;会话通道：&lt;code&gt;runEmbeddedAgent&lt;/code&gt; 按 &lt;code&gt;session:&amp;lt;key&amp;gt;&lt;/code&gt; 入队，保证同一会话只有一个活跃运行。&lt;/li&gt;
+&lt;li&gt;全局通道：每个会话运行再进入全局通道，例如默认 &lt;code&gt;main&lt;/code&gt;，受 &lt;code&gt;agents.defaults.maxConcurrent&lt;/code&gt; 控制整体并发。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;消息队列模式包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;steer&lt;/code&gt;：把运行中途到达的消息注入活跃运行，在下一次模型调用前交付。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;followup&lt;/code&gt;：当前运行结束后逐条处理后续消息。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;collect&lt;/code&gt;：静默窗口后合并消息为一个后续轮次。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;interrupt&lt;/code&gt;：中止当前活跃运行，改跑最新消息。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;队列模型体现了 OpenClaw 对 Agent 产品体验的取舍：同一会话要强一致，跨会话可以有限并发，运行中的用户补充信息优先通过 Steering 接入，而不是盲目启动第二个 Agent loop。&lt;/p&gt;
+&lt;h2 id=&#34;配对和本地信任&#34;&gt;配对和本地信任
+&lt;/h2&gt;&lt;p&gt;配对是 OpenClaw 的显式访问审批步骤，主要用于两个地方：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;私信配对：控制谁可以通过消息渠道和机器人对话。&lt;/li&gt;
+&lt;li&gt;节点配对：控制哪些设备或节点可以加入 Gateway 网络。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;配对实现中有几个细节值得注意：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;所有 WebSocket 客户端，包括操作员客户端和节点，都会在 &lt;code&gt;connect&lt;/code&gt; 中携带设备身份。&lt;/li&gt;
+&lt;li&gt;新设备 ID 需要配对批准，批准后 Gateway 会签发设备令牌。&lt;/li&gt;
+&lt;li&gt;直接 local loopback 连接可以自动批准，以保证同主机体验顺畅。&lt;/li&gt;
+&lt;li&gt;Tailnet 和 LAN 连接仍需要显式配对批准。&lt;/li&gt;
+&lt;li&gt;所有连接都需要签名 &lt;code&gt;connect.challenge&lt;/code&gt; nonce。&lt;/li&gt;
+&lt;li&gt;签名载荷会绑定 &lt;code&gt;platform&lt;/code&gt; 和 &lt;code&gt;deviceFamily&lt;/code&gt;，设备元数据变化时需要修复配对。&lt;/li&gt;
+&lt;li&gt;Gateway 认证配置仍然适用于所有连接，本地和远程都不例外。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;私信配对使用短代码。官方文档说明代码为 8 个大写字符，不包含 &lt;code&gt;0O1I&lt;/code&gt; 等易混淆字符，默认 1 小时过期，并限制每个渠道待处理请求数量。&lt;/p&gt;
+&lt;h2 id=&#34;安全模型&#34;&gt;安全模型
+&lt;/h2&gt;&lt;p&gt;OpenClaw 的安全边界不是敌对多租户模型，而是“可信主机 + 可信操作员控制平面”模型。&lt;/p&gt;
+&lt;h3 id=&#34;主机信任&#34;&gt;主机信任
+&lt;/h3&gt;&lt;p&gt;如果某人可以修改 Gateway 主机状态或配置，例如 &lt;code&gt;~/.openclaw&lt;/code&gt; 和 &lt;code&gt;openclaw.json&lt;/code&gt;，就应被视为可信操作员。官方不建议多个互不信任的操作员共用同一个 Gateway。混合信任团队应使用独立 Gateway，或者至少使用独立 OS 用户和主机边界。&lt;/p&gt;
+&lt;h3 id=&#34;gateway-和节点信任&#34;&gt;Gateway 和节点信任
+&lt;/h3&gt;&lt;p&gt;Gateway 是控制平面和策略表面，节点是远程执行表面。节点配对后，节点上的操作等价于被该 Gateway 信任的操作员操作。因此：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;sessionKey&lt;/code&gt; 是路由和上下文选择器，不是授权令牌。&lt;/li&gt;
+&lt;li&gt;Exec 审批是操作员意图护栏，不是强多租户隔离。&lt;/li&gt;
+&lt;li&gt;如果多个用户都能向启用工具的智能体发消息，他们都可能通过提示影响工具调用。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;scope-和审批&#34;&gt;Scope 和审批
+&lt;/h3&gt;&lt;p&gt;操作员 scope 用于控制 RPC 权限。例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;operator.read&lt;/code&gt;：读取状态、会话、事件等。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;operator.write&lt;/code&gt;：发送消息、触发 Agent 等写操作。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;operator.admin&lt;/code&gt;：配置、更新、敏感管理操作。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;operator.approvals&lt;/code&gt;：处理工具或 Exec 审批。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;operator.pairing&lt;/code&gt;：处理配对。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;operator.talk.secrets&lt;/code&gt;：读取 Talk 配置中的敏感凭据。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;节点命令也有审批时检查。比如涉及 &lt;code&gt;system.run&lt;/code&gt;、&lt;code&gt;system.run.prepare&lt;/code&gt;、&lt;code&gt;system.which&lt;/code&gt; 的节点配对批准，需要更高权限组合。&lt;/p&gt;
+&lt;h2 id=&#34;技术实现要点总结&#34;&gt;技术实现要点总结
+&lt;/h2&gt;&lt;h3 id=&#34;单-gateway-架构&#34;&gt;单 Gateway 架构
+&lt;/h3&gt;&lt;p&gt;OpenClaw 采用单 Gateway 模式，将渠道连接、控制 API、节点网络、Agent 调度和安全策略放在一个长期进程里。实现收益是状态集中、协议统一、部署简单；代价是 Gateway 主机成为强信任边界。&lt;/p&gt;
+&lt;h3 id=&#34;类型化协议&#34;&gt;类型化协议
+&lt;/h3&gt;&lt;p&gt;Gateway WebSocket 协议不是自由 JSON，而是由 TypeBox schema 定义，并生成 JSON Schema 和客户端模型。这样可以在入站校验、客户端类型和 UI 表单之间共享契约。&lt;/p&gt;
+&lt;h3 id=&#34;事件驱动运行&#34;&gt;事件驱动运行
+&lt;/h3&gt;&lt;p&gt;&lt;code&gt;agent&lt;/code&gt; 请求采用“先 ack，后流式事件”的模式。客户端不需要同步等待完整运行结束，而是通过 &lt;code&gt;event: agent&lt;/code&gt; 获取 assistant、tool 和 lifecycle 增量。&lt;/p&gt;
+&lt;h3 id=&#34;能力声明和服务端强制&#34;&gt;能力声明和服务端强制
+&lt;/h3&gt;&lt;p&gt;节点在握手时声明 &lt;code&gt;caps&lt;/code&gt;、&lt;code&gt;commands&lt;/code&gt; 和 &lt;code&gt;permissions&lt;/code&gt;，但 Gateway 将这些视为主张。真正的权限仍由服务端允许列表、scope 和审批策略决定。&lt;/p&gt;
+&lt;h3 id=&#34;会话一致性优先&#34;&gt;会话一致性优先
+&lt;/h3&gt;&lt;p&gt;Agent loop 通过每会话队列和会话写锁保护会话历史、转录和工具状态。跨会话可以并发，同一会话必须串行或通过 Steering 合流。&lt;/p&gt;
+&lt;h3 id=&#34;本地优先的远程访问&#34;&gt;本地优先的远程访问
+&lt;/h3&gt;&lt;p&gt;默认 Gateway 绑定本地回环地址。远程访问优先推荐 Tailscale 或 VPN，也可通过 SSH 隧道转发 &lt;code&gt;18789&lt;/code&gt; 端口。远程场景仍复用相同握手和认证模型。&lt;/p&gt;
+&lt;h2 id=&#34;可以借鉴的工程设计&#34;&gt;可以借鉴的工程设计
+&lt;/h2&gt;&lt;ol&gt;
+&lt;li&gt;对 Agent 系统使用单一控制平面协议，而不是让 CLI、Web、App、节点各自绕不同接口。&lt;/li&gt;
+&lt;li&gt;将长任务设计为 ack + event streaming，避免请求阻塞和客户端超时。&lt;/li&gt;
+&lt;li&gt;把设备能力声明与服务端授权分离，避免信任客户端自报。&lt;/li&gt;
+&lt;li&gt;对有副作用 RPC 强制幂等键，让重试成为协议能力。&lt;/li&gt;
+&lt;li&gt;对同一会话强串行化，对跨会话做有限并发，平衡一致性和吞吐。&lt;/li&gt;
+&lt;li&gt;将协议 schema 作为源头，再生成校验规则和客户端模型。&lt;/li&gt;
+&lt;li&gt;明确产品安全边界，避免把可信单操作员系统误包装成强多租户系统。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h2 id=&#34;学习检查表&#34;&gt;学习检查表
+&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;能否画出 Gateway、operator client、node、message channel、agent runtime 的关系。&lt;/li&gt;
+&lt;li&gt;能否解释为什么第一帧必须是 &lt;code&gt;connect&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;能否区分 &lt;code&gt;operator&lt;/code&gt; 和 &lt;code&gt;node&lt;/code&gt; 两种角色。&lt;/li&gt;
+&lt;li&gt;能否说明 &lt;code&gt;caps&lt;/code&gt;、&lt;code&gt;commands&lt;/code&gt;、&lt;code&gt;permissions&lt;/code&gt; 的区别。&lt;/li&gt;
+&lt;li&gt;能否解释 &lt;code&gt;hello-ok&lt;/code&gt; 中 &lt;code&gt;features&lt;/code&gt;、&lt;code&gt;snapshot&lt;/code&gt;、&lt;code&gt;auth&lt;/code&gt;、&lt;code&gt;policy&lt;/code&gt; 的作用。&lt;/li&gt;
+&lt;li&gt;能否说明同一会话为什么要串行化。&lt;/li&gt;
+&lt;li&gt;能否解释 &lt;code&gt;steer&lt;/code&gt;、&lt;code&gt;followup&lt;/code&gt;、&lt;code&gt;collect&lt;/code&gt;、&lt;code&gt;interrupt&lt;/code&gt; 四种队列模式。&lt;/li&gt;
+&lt;li&gt;能否说明 &lt;code&gt;sessionKey&lt;/code&gt; 为什么不是授权令牌。&lt;/li&gt;
+&lt;li&gt;能否说清 OpenClaw 的安全边界为什么是可信主机模型，而不是敌对多租户模型。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;路径缩写说明&#34;&gt;路径缩写说明
+&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;当前文档 -&amp;gt; &lt;code&gt;content/post/ai/openclaw-architecture-study.md&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;工作区根路径 -&amp;gt; &lt;code&gt;/home/agsol/workspace/ag-workspace&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+</description>
+        </item>
+        <item>
+        <title>Claude Code 架构与实现机制：从官方文档理解编码 Agent</title>
+        <link>https://Agsol701.github.io/p/claude-code-%E6%9E%B6%E6%9E%84%E4%B8%8E%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%BB%8E%E5%AE%98%E6%96%B9%E6%96%87%E6%A1%A3%E7%90%86%E8%A7%A3%E7%BC%96%E7%A0%81-agent/</link>
+        <pubDate>Wed, 01 Jul 2026 00:00:00 +0000</pubDate>
+        
+        <guid>https://Agsol701.github.io/p/claude-code-%E6%9E%B6%E6%9E%84%E4%B8%8E%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%BB%8E%E5%AE%98%E6%96%B9%E6%96%87%E6%A1%A3%E7%90%86%E8%A7%A3%E7%BC%96%E7%A0%81-agent/</guid>
+        <description>&lt;h2 id=&#34;写在前面&#34;&gt;写在前面
+&lt;/h2&gt;&lt;p&gt;Claude Code 不是一个只会回答代码问题的聊天窗口。&lt;/p&gt;
+&lt;p&gt;按照官方中文概览页的定义，Claude Code 是一个代理编码工具，可以读取代码库、编辑文件、运行命令，并与开发工具集成。它可以在终端、IDE（Integrated Development Environment，集成开发环境）、桌面应用和浏览器中使用。&lt;/p&gt;
+&lt;p&gt;这句话里其实已经包含了 Claude Code 的核心架构：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;它要理解整个代码库，而不是只理解一段粘贴进去的代码。&lt;/li&gt;
+&lt;li&gt;它要能修改文件、执行命令，而不是只生成文本建议。&lt;/li&gt;
+&lt;li&gt;它要接入终端、IDE、桌面、Web 等多个入口，而不是绑定在单一界面里。&lt;/li&gt;
+&lt;li&gt;它要能连接 MCP（Model Context Protocol，模型上下文协议）、Hooks、Skills、CI/CD（Continuous Integration / Continuous Delivery，持续集成与持续交付）等扩展能力，而不是封闭运行。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以，理解 Claude Code 的关键不是问&amp;quot;它用了哪个命令行界面&amp;quot;，而是理解它背后的编码 Agent Runtime（智能体运行时）。&lt;/p&gt;
+&lt;p&gt;本文基于 Anthropic Claude Code 官方中文文档整理，并在公开信息范围内做工程化解读。不会引用非公开源码，也不会把推测包装成官方实现细节。&lt;/p&gt;
+&lt;p&gt;官方概览地址：&lt;/p&gt;
+&lt;p&gt;&lt;a class=&#34;link&#34; href=&#34;https://code.claude.com/docs/zh-CN/overview&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;https://code.claude.com/docs/zh-CN/overview&lt;/a&gt;&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;一claude-code-是什么&#34;&gt;一、Claude Code 是什么
+&lt;/h2&gt;&lt;h3 id=&#34;11-一句话理解&#34;&gt;1.1 一句话理解
+&lt;/h3&gt;&lt;p&gt;Claude Code 是面向软件工程任务的 AI 编码 Agent。&lt;/p&gt;
+&lt;p&gt;它的工作方式不是&amp;quot;你问一句，它答一句&amp;quot;，而是围绕一个真实代码库完成一轮工程任务：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;读取项目文件&lt;/li&gt;
+&lt;li&gt;理解代码结构&lt;/li&gt;
+&lt;li&gt;修改多个文件&lt;/li&gt;
+&lt;li&gt;运行命令验证结果&lt;/li&gt;
+&lt;li&gt;连接外部系统&lt;/li&gt;
+&lt;li&gt;生成提交或拉取请求&lt;/li&gt;
+&lt;li&gt;在不同开发入口之间延续工作&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;从用户视角看，它像一个能进入项目目录工作的开发助手。&lt;/p&gt;
+&lt;p&gt;从系统视角看，它是模型推理、上下文管理、工具调用、权限控制、会话编排和扩展系统共同组成的 Agent Runtime。&lt;/p&gt;
+&lt;h3 id=&#34;12-claude-code-与普通聊天机器人的区别&#34;&gt;1.2 Claude Code 与普通聊天机器人的区别
+&lt;/h3&gt;&lt;p&gt;普通聊天机器人主要处理文本输入和文本输出。&lt;/p&gt;
+&lt;p&gt;Claude Code 的输入和输出则更接近工程环境：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;维度&lt;/th&gt;
+          &lt;th&gt;普通聊天机器人&lt;/th&gt;
+          &lt;th&gt;Claude Code&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;上下文&lt;/td&gt;
+          &lt;td&gt;用户粘贴的文本&lt;/td&gt;
+          &lt;td&gt;代码库、文件、命令输出、项目说明、会话历史&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;输出&lt;/td&gt;
+          &lt;td&gt;文本回答&lt;/td&gt;
+          &lt;td&gt;文件修改、命令执行、差异、提交、PR、任务结果&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;工具&lt;/td&gt;
+          &lt;td&gt;通常较少或不可见&lt;/td&gt;
+          &lt;td&gt;文件、Shell、搜索、MCP、IDE、CI/CD 等&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;工作模式&lt;/td&gt;
+          &lt;td&gt;问答式&lt;/td&gt;
+          &lt;td&gt;多步 Agent Loop&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;风险控制&lt;/td&gt;
+          &lt;td&gt;主要靠提示词&lt;/td&gt;
+          &lt;td&gt;权限、确认、配置、Hooks、托管策略&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;使用入口&lt;/td&gt;
+          &lt;td&gt;聊天界面&lt;/td&gt;
+          &lt;td&gt;CLI、VS Code、JetBrains、Desktop、Web、CI、Slack 等&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;官方概览页里反复出现的关键词是：读取代码库、编辑文件、运行命令、集成开发工具、自动化开发任务。这些能力共同决定了 Claude Code 不是&amp;quot;代码问答工具&amp;quot;，而是&amp;quot;编码任务执行系统&amp;quot;。&lt;/p&gt;
+&lt;h3 id=&#34;13-核心任务类型&#34;&gt;1.3 核心任务类型
+&lt;/h3&gt;&lt;p&gt;官方概览页列出的典型用法可以归纳为六类。&lt;/p&gt;
+&lt;p&gt;第一类是自动化繁琐工作。例如补测试、修复 lint 问题、解决合并冲突、更新依赖、编写发布说明。这里的 lint 指静态代码检查，通常用于发现格式、风格、未使用变量、导入顺序和部分潜在错误。&lt;/p&gt;
+&lt;p&gt;第二类是构建功能和修复缺陷。用户用自然语言描述目标，Claude Code 规划实现路径，跨多个文件修改代码，并运行验证命令。&lt;/p&gt;
+&lt;p&gt;第三类是处理 Git 工作流。Claude Code 可以暂存更改、生成提交信息、创建分支、发起拉取请求，也可以在 CI 中做代码审查和问题分类。&lt;/p&gt;
+&lt;p&gt;第四类是连接外部工具。通过 MCP，Claude Code 可以接入 Google Drive、Jira、Slack 或团队自定义工具。&lt;/p&gt;
+&lt;p&gt;第五类是自定义工作方式。通过 &lt;code&gt;CLAUDE.md&lt;/code&gt;、自动记忆、Skills 和 Hooks，把团队规范、复用流程和确定性自动化沉淀下来。&lt;/p&gt;
+&lt;p&gt;第六类是运行多代理或自定义代理。官方概览提到可以生成多个 Claude Code 代理并行处理任务，也可以通过 Agent SDK 构建自己的代理工作流。&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;二从官方概览看整体架构&#34;&gt;二、从官方概览看整体架构
+&lt;/h2&gt;&lt;h3 id=&#34;21-总体分层&#34;&gt;2.1 总体分层
+&lt;/h3&gt;&lt;p&gt;从公开文档可以把 Claude Code 抽象成七层：&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart TD
+    A[产品入口层&amp;lt;br/&amp;gt;CLI / IDE / Desktop / Web / CI / Slack] --&amp;gt; B[会话编排层&amp;lt;br/&amp;gt;任务、历史、状态、恢复]
+    B --&amp;gt; C[上下文层&amp;lt;br/&amp;gt;代码库、CLAUDE.md、自动记忆、工具结果]
+    C --&amp;gt; D[模型推理层&amp;lt;br/&amp;gt;理解目标、规划步骤、生成工具调用]
+    D --&amp;gt; E[权限与策略层&amp;lt;br/&amp;gt;确认、配置、Hooks、托管策略]
+    E --&amp;gt; F[工具执行层&amp;lt;br/&amp;gt;文件、Shell、搜索、Git、MCP、IDE]
+    F --&amp;gt; G[结果反馈层&amp;lt;br/&amp;gt;差异、日志、提交、PR、最终总结]
+    G --&amp;gt; B
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;这张图不是 Anthropic 内部源码结构图，而是基于官方功能边界整理出的工程模型。&lt;/p&gt;
+&lt;p&gt;它强调一个重点：Claude Code 的核心不是某个界面，而是一个可以被多个入口复用的编码 Agent 引擎。&lt;/p&gt;
+&lt;h3 id=&#34;22-产品入口层&#34;&gt;2.2 产品入口层
+&lt;/h3&gt;&lt;p&gt;官方概览页明确列出 Claude Code 可以在多个环境中使用：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Terminal&lt;/li&gt;
+&lt;li&gt;VS Code&lt;/li&gt;
+&lt;li&gt;Desktop app&lt;/li&gt;
+&lt;li&gt;Web&lt;/li&gt;
+&lt;li&gt;JetBrains&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;此外，概览页还提到 GitHub Actions、GitLab CI/CD、Slack、Chrome 扩展、Agent SDK 等集成方式。&lt;/p&gt;
+&lt;p&gt;这些入口面向不同工作场景：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;入口&lt;/th&gt;
+          &lt;th&gt;适合场景&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Terminal&lt;/td&gt;
+          &lt;td&gt;本地项目开发、命令行自动化、脚本管道&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;VS Code&lt;/td&gt;
+          &lt;td&gt;编辑器内差异查看、上下文选择、对话历史&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;JetBrains&lt;/td&gt;
+          &lt;td&gt;IntelliJ IDEA、PyCharm、WebStorm 等 IDE 工作流&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Desktop app&lt;/td&gt;
+          &lt;td&gt;可视化查看差异、并行会话、定期任务、云会话&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Web&lt;/td&gt;
+          &lt;td&gt;无需本地设置，适合远程仓库、长任务、多任务并行&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;CI/CD&lt;/td&gt;
+          &lt;td&gt;自动代码审查、问题分类、构建失败分析&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Slack&lt;/td&gt;
+          &lt;td&gt;从团队聊天触发错误修复或拉取请求&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Agent SDK&lt;/td&gt;
+          &lt;td&gt;构建自定义代理和内部自动化系统&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;这说明 Claude Code 的产品设计不是&amp;quot;一个 CLI 工具外加几个插件&amp;quot;，而是&amp;quot;一个底层 Agent 能力，接上多种工作入口&amp;quot;。&lt;/p&gt;
+&lt;h3 id=&#34;23-会话编排层&#34;&gt;2.3 会话编排层
+&lt;/h3&gt;&lt;p&gt;一次 Claude Code 任务通常不是单轮回答，而是一段持续会话。&lt;/p&gt;
+&lt;p&gt;会话编排层需要管理：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;用户目标&lt;/li&gt;
+&lt;li&gt;对话历史&lt;/li&gt;
+&lt;li&gt;已读取文件&lt;/li&gt;
+&lt;li&gt;工具调用结果&lt;/li&gt;
+&lt;li&gt;待办事项&lt;/li&gt;
+&lt;li&gt;文件修改状态&lt;/li&gt;
+&lt;li&gt;命令执行状态&lt;/li&gt;
+&lt;li&gt;用户审批&lt;/li&gt;
+&lt;li&gt;中断与恢复&lt;/li&gt;
+&lt;li&gt;多入口迁移&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;官方概览页提到，用户可以从手机或浏览器继续本地会话，也可以把 Web 或 iOS 上启动的长任务通过 &lt;code&gt;claude --teleport&lt;/code&gt; 拉回终端，还可以使用 &lt;code&gt;/desktop&lt;/code&gt; 把终端会话交给桌面应用做可视化差异审查。&lt;/p&gt;
+&lt;p&gt;这背后意味着会话不是只存在于单一终端输入输出流里，而是被抽象成可迁移、可恢复、可展示的任务状态。&lt;/p&gt;
+&lt;h3 id=&#34;24-上下文层&#34;&gt;2.4 上下文层
+&lt;/h3&gt;&lt;p&gt;Claude Code 能理解代码库，前提是它有一套上下文组织机制。&lt;/p&gt;
+&lt;p&gt;官方概览页提到 &lt;code&gt;CLAUDE.md&lt;/code&gt;、自动记忆、Skills、MCP 服务器、设置等内容可以在不同界面中工作。这说明上下文不是临时拼接的一段文本，而是由多种来源组成：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;当前用户输入&lt;/li&gt;
+&lt;li&gt;项目文件&lt;/li&gt;
+&lt;li&gt;命令输出&lt;/li&gt;
+&lt;li&gt;Git diff&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;CLAUDE.md&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;自动记忆&lt;/li&gt;
+&lt;li&gt;Skills&lt;/li&gt;
+&lt;li&gt;MCP 工具描述和返回结果&lt;/li&gt;
+&lt;li&gt;IDE 或 CI 提供的上下文&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;其中 &lt;code&gt;CLAUDE.md&lt;/code&gt; 的角色很关键。官方概览把它描述为可以放在项目根目录的 Markdown 文件，Claude Code 会在每个会话开始时读取它，用来设置编码标准、架构决策、首选库和审查清单。&lt;/p&gt;
+&lt;p&gt;换句话说，&lt;code&gt;CLAUDE.md&lt;/code&gt; 是项目长期上下文，不是一次性提示词。&lt;/p&gt;
+&lt;h3 id=&#34;25-模型推理层&#34;&gt;2.5 模型推理层
+&lt;/h3&gt;&lt;p&gt;模型推理层负责把上下文变成下一步行动。&lt;/p&gt;
+&lt;p&gt;它要判断：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;现在应该读哪个文件&lt;/li&gt;
+&lt;li&gt;是否需要搜索代码&lt;/li&gt;
+&lt;li&gt;应该修改哪些位置&lt;/li&gt;
+&lt;li&gt;是否需要运行测试&lt;/li&gt;
+&lt;li&gt;命令失败后如何定位原因&lt;/li&gt;
+&lt;li&gt;什么时候应该请求用户确认&lt;/li&gt;
+&lt;li&gt;任务是否已经完成&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;在 Claude Code 中，模型输出不只是自然语言回答，还可能是工具调用意图。例如读取文件、编辑文件、执行命令、请求 MCP 工具、发起子任务等。&lt;/p&gt;
+&lt;p&gt;这就是 Agent Loop 的核心：&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart LR
+    A[理解任务] --&amp;gt; B[规划下一步]
+    B --&amp;gt; C[调用工具]
+    C --&amp;gt; D[观察结果]
+    D --&amp;gt; E{是否完成}
+    E -- 否 --&amp;gt; B
+    E -- 是 --&amp;gt; F[总结结果]
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;这个循环让 Claude Code 可以处理多步工程任务，而不是只给出一段建议。&lt;/p&gt;
+&lt;h3 id=&#34;26-权限与策略层&#34;&gt;2.6 权限与策略层
+&lt;/h3&gt;&lt;p&gt;Claude Code 可以编辑文件、运行命令、连接外部工具，这些能力很强，也必须有边界。&lt;/p&gt;
+&lt;p&gt;官方概览页没有展开所有权限细节，但从它列出的能力可以看出，Claude Code 至少需要在以下位置做风险控制：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;执行 Shell 命令前&lt;/li&gt;
+&lt;li&gt;修改文件前后&lt;/li&gt;
+&lt;li&gt;连接外部系统时&lt;/li&gt;
+&lt;li&gt;创建提交和 PR 时&lt;/li&gt;
+&lt;li&gt;在 CI/CD 中自动执行时&lt;/li&gt;
+&lt;li&gt;通过 Slack 或远程入口触发任务时&lt;/li&gt;
+&lt;li&gt;Hooks 拦截工具调用时&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;权限层的目标不是让 Claude Code 变弱，而是让它可以在真实工程环境中可控地变强。&lt;/p&gt;
+&lt;p&gt;如果没有权限与策略层，文件编辑、命令执行、远程触发、外部系统写入都会变成高风险操作。&lt;/p&gt;
+&lt;h3 id=&#34;27-工具执行层&#34;&gt;2.7 工具执行层
+&lt;/h3&gt;&lt;p&gt;工具执行层负责把模型决策变成真实动作。&lt;/p&gt;
+&lt;p&gt;官方概览页中能看到的工具能力包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;读取代码库&lt;/li&gt;
+&lt;li&gt;编辑文件&lt;/li&gt;
+&lt;li&gt;运行命令&lt;/li&gt;
+&lt;li&gt;使用 Git&lt;/li&gt;
+&lt;li&gt;创建提交和拉取请求&lt;/li&gt;
+&lt;li&gt;接入 MCP 外部数据源&lt;/li&gt;
+&lt;li&gt;在 CI 中做审查和分类&lt;/li&gt;
+&lt;li&gt;调用浏览器、Slack、IDE 等集成&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;工具执行层有三个工程重点。&lt;/p&gt;
+&lt;p&gt;第一，工具输入必须结构化。模型不能只说&amp;quot;我想改文件&amp;quot;，而要形成明确的文件路径、修改内容和执行参数。&lt;/p&gt;
+&lt;p&gt;第二，工具输出必须回到上下文。否则模型不知道文件内容、命令结果、错误日志和外部系统返回了什么。&lt;/p&gt;
+&lt;p&gt;第三，工具执行必须受策略约束。越接近真实系统，越需要权限、日志、确认和审计。&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;三claude-code-的主要能力模块&#34;&gt;三、Claude Code 的主要能力模块
+&lt;/h2&gt;&lt;h3 id=&#34;31-cli终端里的-agent&#34;&gt;3.1 CLI：终端里的 Agent
+&lt;/h3&gt;&lt;p&gt;官方推荐的终端启动方式很直接：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;nb&#34;&gt;cd&lt;/span&gt; your-project
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;claude
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;CLI（Command Line Interface，命令行界面）适合本地工程开发，因为它天然靠近文件系统、Shell、Git 和测试命令。&lt;/p&gt;
+&lt;p&gt;官方概览页还给出了一些管道化使用方式，例如把日志输入 Claude Code，或者把 &lt;code&gt;git diff main --name-only&lt;/code&gt; 的文件列表交给它做安全审查。&lt;/p&gt;
+&lt;p&gt;这体现了 Claude Code 的一个重要设计取向：它遵循 Unix 式组合思路，可以被命令、脚本和 CI 流程串起来。&lt;/p&gt;
+&lt;h3 id=&#34;32-ide把-agent-放进编辑器&#34;&gt;3.2 IDE：把 Agent 放进编辑器
+&lt;/h3&gt;&lt;p&gt;VS Code 扩展提供内联差异、&lt;code&gt;@&lt;/code&gt; 提及、计划审查和对话历史。&lt;/p&gt;
+&lt;p&gt;JetBrains 插件则面向 IntelliJ IDEA、PyCharm、WebStorm 等 IDE，提供交互式差异查看和选择性上下文共享。&lt;/p&gt;
+&lt;p&gt;IDE 集成的价值在于：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;更容易看 diff&lt;/li&gt;
+&lt;li&gt;更容易选中局部上下文&lt;/li&gt;
+&lt;li&gt;更容易结合编辑器诊断&lt;/li&gt;
+&lt;li&gt;更容易在人类开发者和 Agent 之间切换注意力&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;CLI 更像任务执行入口，IDE 更像协作和审查入口。&lt;/p&gt;
+&lt;h3 id=&#34;33-desktop-与-web多会话和长任务&#34;&gt;3.3 Desktop 与 Web：多会话和长任务
+&lt;/h3&gt;&lt;p&gt;官方概览页把桌面应用描述为可以在 IDE 或终端之外运行 Claude Code 的独立应用，支持可视化查看差异、并行运行多个会话、安排定期任务和启动云会话。&lt;/p&gt;
+&lt;p&gt;Web 则适合无需本地设置的场景：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;启动长时间运行的任务&lt;/li&gt;
+&lt;li&gt;稍后回来检查结果&lt;/li&gt;
+&lt;li&gt;处理本地没有的仓库&lt;/li&gt;
+&lt;li&gt;并行运行多个任务&lt;/li&gt;
+&lt;li&gt;在桌面浏览器或 Claude iOS 应用中使用&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这类入口说明 Claude Code 的任务模型已经超出&amp;quot;本机终端的一次交互&amp;quot;。它更接近可调度、可迁移、可远程继续的开发任务系统。&lt;/p&gt;
+&lt;h3 id=&#34;34-mcp连接外部数据和工具&#34;&gt;3.4 MCP：连接外部数据和工具
+&lt;/h3&gt;&lt;p&gt;MCP 是 Claude Code 扩展工具能力的重要机制。&lt;/p&gt;
+&lt;p&gt;官方概览页把 MCP 描述为一个开放标准，用于将 AI 工具连接到外部数据源。通过 MCP，Claude Code 可以读取 Google Drive 中的设计文档、更新 Jira 工单、从 Slack 拉取数据，或使用自定义工具。&lt;/p&gt;
+&lt;p&gt;可以把 MCP 理解成 Agent 与外部世界之间的标准工具接口。&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart LR
+    A[Claude Code] --&amp;gt; B[MCP Client]
+    B --&amp;gt; C[MCP Server]
+    C --&amp;gt; D[Google Drive]
+    C --&amp;gt; E[Jira]
+    C --&amp;gt; F[Slack]
+    C --&amp;gt; G[Custom Tools]
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;在企业场景里，MCP 的价值很大：很多工程任务不是只改代码，还需要读需求、查工单、同步文档、通知团队、访问内部系统。&lt;/p&gt;
+&lt;h3 id=&#34;35-claudemd自动记忆skills-与-hooks&#34;&gt;3.5 &lt;code&gt;CLAUDE.md&lt;/code&gt;、自动记忆、Skills 与 Hooks
+&lt;/h3&gt;&lt;p&gt;官方概览页把自定义能力分成四类。&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;CLAUDE.md&lt;/code&gt; 用来保存项目说明。它适合写编码标准、架构决策、首选库、审查清单等长期规则。&lt;/p&gt;
+&lt;p&gt;自动记忆用于保存 Claude Code 在工作中学到的内容，例如构建命令、调试经验和项目习惯。它解决的是跨会话经验复用问题。&lt;/p&gt;
+&lt;p&gt;Skills 用来打包可重复工作流。比如团队可以把 &lt;code&gt;/review-pr&lt;/code&gt;、&lt;code&gt;/deploy-staging&lt;/code&gt; 这类流程做成可共享技能。&lt;/p&gt;
+&lt;p&gt;Hooks 用来在 Claude Code 操作前后运行 Shell 命令。比如每次文件编辑后自动格式化，或者提交前运行 lint。&lt;/p&gt;
+&lt;p&gt;它们的职责不同：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;模块&lt;/th&gt;
+          &lt;th&gt;主要作用&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;CLAUDE.md&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;项目长期说明和协作规则&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;自动记忆&lt;/td&gt;
+          &lt;td&gt;跨会话保存项目经验&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Skills&lt;/td&gt;
+          &lt;td&gt;打包和复用工作流&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Hooks&lt;/td&gt;
+          &lt;td&gt;在生命周期事件上执行确定性自动化&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;一个简单判断方法是：需要告诉 Claude &amp;ldquo;应该怎么想&amp;quot;时，用 &lt;code&gt;CLAUDE.md&lt;/code&gt; 或 Skills；需要系统&amp;quot;每次都自动做某件确定动作&amp;quot;时，用 Hooks。&lt;/p&gt;
+&lt;h3 id=&#34;36-多代理与-agent-sdk&#34;&gt;3.6 多代理与 Agent SDK
+&lt;/h3&gt;&lt;p&gt;官方概览页提到两种更高级的 Agent 能力。&lt;/p&gt;
+&lt;p&gt;第一种是运行多个 Claude Code 代理，让它们同时处理任务的不同部分。主代理可以协调工作、分配子任务并合并结果。&lt;/p&gt;
+&lt;p&gt;第二种是使用 Agent SDK 构建完全自定义的工作流。SDK 让开发者可以用 Claude Code 的工具和能力构建自己的代理，并控制编排、工具访问和权限。&lt;/p&gt;
+&lt;p&gt;这说明 Claude Code 不只是一个成品工具，也是一套可以被二次集成的 Agent 能力平台。&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;四一次任务如何运行&#34;&gt;四、一次任务如何运行
+&lt;/h2&gt;&lt;h3 id=&#34;41-典型执行流程&#34;&gt;4.1 典型执行流程
+&lt;/h3&gt;&lt;p&gt;假设用户输入：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;为 auth 模块补测试，运行测试，并修复失败用例。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;Claude Code 的执行过程可以抽象成：&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;sequenceDiagram
+    participant U as 用户
+    participant C as Claude Code
+    participant FS as 文件系统
+    participant SH as Shell
+    participant M as 模型
+
+    U-&amp;gt;&amp;gt;C: 提出任务
+    C-&amp;gt;&amp;gt;FS: 读取 CLAUDE.md 和项目文件
+    C-&amp;gt;&amp;gt;M: 组织上下文
+    M-&amp;gt;&amp;gt;C: 规划搜索与修改步骤
+    C-&amp;gt;&amp;gt;FS: 搜索 auth 模块和测试目录
+    C-&amp;gt;&amp;gt;M: 返回文件内容
+    M-&amp;gt;&amp;gt;C: 生成测试修改
+    C-&amp;gt;&amp;gt;FS: 编辑测试文件
+    C-&amp;gt;&amp;gt;SH: 运行测试命令
+    SH-&amp;gt;&amp;gt;C: 返回测试结果
+    C-&amp;gt;&amp;gt;M: 分析失败原因
+    M-&amp;gt;&amp;gt;C: 生成修复方案
+    C-&amp;gt;&amp;gt;FS: 修改代码或测试
+    C-&amp;gt;&amp;gt;SH: 再次运行测试
+    C-&amp;gt;&amp;gt;U: 总结修改、验证结果和风险
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;这里最关键的是闭环：模型不会只给出一次答案，而是不断根据工具结果调整下一步。&lt;/p&gt;
+&lt;h3 id=&#34;42-为什么上下文管理重要&#34;&gt;4.2 为什么上下文管理重要
+&lt;/h3&gt;&lt;p&gt;代码库往往远大于模型一次能处理的上下文窗口。&lt;/p&gt;
+&lt;p&gt;因此 Claude Code 不可能简单地把整个仓库塞给模型。它更合理的方式是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;先读取项目说明和目录结构&lt;/li&gt;
+&lt;li&gt;根据任务搜索相关文件&lt;/li&gt;
+&lt;li&gt;只加载必要文件片段&lt;/li&gt;
+&lt;li&gt;把命令输出和错误日志作为新证据&lt;/li&gt;
+&lt;li&gt;在需要时压缩或摘要历史&lt;/li&gt;
+&lt;li&gt;把可复用经验沉淀到记忆或项目说明里&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这也是为什么 &lt;code&gt;CLAUDE.md&lt;/code&gt;、自动记忆、Skills 和工具结果会成为架构上的一等公民。&lt;/p&gt;
+&lt;p&gt;Agent 的聪明程度不只来自模型本身，也来自它能不能拿到正确、适量、及时的上下文。&lt;/p&gt;
+&lt;h3 id=&#34;43-为什么-hooks-重要&#34;&gt;4.3 为什么 Hooks 重要
+&lt;/h3&gt;&lt;p&gt;模型擅长推理和生成，但工程环境里还有大量确定性规则。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;每次改 Python 文件后运行格式化&lt;/li&gt;
+&lt;li&gt;禁止执行危险命令&lt;/li&gt;
+&lt;li&gt;提交前必须跑 lint&lt;/li&gt;
+&lt;li&gt;会话结束时写操作日志&lt;/li&gt;
+&lt;li&gt;工具调用前扫描敏感路径&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这些事情不适合完全交给模型自由发挥，因为它们应该稳定、可审计、可重复。&lt;/p&gt;
+&lt;p&gt;Hooks 的价值就在这里：把确定性自动化挂到 Claude Code 的生命周期上，让团队规则不只停留在提示词里。&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;五工程实现视角下的关键设计&#34;&gt;五、工程实现视角下的关键设计
+&lt;/h2&gt;&lt;h3 id=&#34;51-多入口共享同一底层能力&#34;&gt;5.1 多入口共享同一底层能力
+&lt;/h3&gt;&lt;p&gt;官方概览页明确写到，每个界面都连接到相同的底层 Claude Code 引擎，因此 &lt;code&gt;CLAUDE.md&lt;/code&gt;、设置和 MCP 服务器可以在所有界面中工作。&lt;/p&gt;
+&lt;p&gt;这句话非常关键。&lt;/p&gt;
+&lt;p&gt;它意味着 Claude Code 的架构重心在底层引擎，而不是某个单独 UI。CLI、IDE、Desktop、Web 更像是不同的交互壳：&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart TD
+    A[Terminal] --&amp;gt; E[Claude Code Engine]
+    B[VS Code / JetBrains] --&amp;gt; E
+    C[Desktop / Web] --&amp;gt; E
+    D[CI / Slack / SDK] --&amp;gt; E
+    E --&amp;gt; F[Context]
+    E --&amp;gt; G[Tools]
+    E --&amp;gt; H[Permissions]
+    E --&amp;gt; I[MCP / Skills / Hooks]
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;这也是为什么同一套项目说明和工具配置可以跨入口复用。&lt;/p&gt;
+&lt;h3 id=&#34;52-agent-loop-是执行核心&#34;&gt;5.2 Agent Loop 是执行核心
+&lt;/h3&gt;&lt;p&gt;编码任务天然是多步的。&lt;/p&gt;
+&lt;p&gt;人类开发者修 bug 时也不会只看一个文件，而是会搜索、阅读、假设、修改、运行测试、看错误、再修改。&lt;/p&gt;
+&lt;p&gt;Claude Code 的 Agent Loop 模拟的正是这个过程。&lt;/p&gt;
+&lt;p&gt;简化成伪代码大致是：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;15
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;16
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;加载用户目标和项目上下文
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;while 任务未完成:
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    基于当前上下文规划下一步
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    如果需要更多信息:
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        调用读取、搜索或 MCP 工具
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    如果需要修改:
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        生成文件编辑
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    如果需要验证:
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        运行命令或测试
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    接收工具结果
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    更新上下文
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    如遇高风险动作:
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        请求确认或按策略处理
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;输出最终总结
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;真实实现当然会复杂得多，但这个抽象能解释大多数用户可见行为。&lt;/p&gt;
+&lt;h3 id=&#34;53-权限系统决定可落地程度&#34;&gt;5.3 权限系统决定可落地程度
+&lt;/h3&gt;&lt;p&gt;一个能运行命令、改文件、连外部工具的 Agent，如果没有权限系统，很难进入严肃工程环境。&lt;/p&gt;
+&lt;p&gt;权限系统至少要覆盖三类问题。&lt;/p&gt;
+&lt;p&gt;第一，哪些工具可以用。例如能不能执行 Shell，能不能写文件，能不能访问外部系统。&lt;/p&gt;
+&lt;p&gt;第二，哪些动作需要确认。例如删除文件、安装依赖、推送分支、访问敏感路径。&lt;/p&gt;
+&lt;p&gt;第三，哪些规则必须强制执行。例如组织托管策略、CI 中的只读审查、Hooks 拦截。&lt;/p&gt;
+&lt;p&gt;Claude Code 的能力越强，权限系统越重要。&lt;/p&gt;
+&lt;h3 id=&#34;54-扩展系统让-agent-适配团队&#34;&gt;5.4 扩展系统让 Agent 适配团队
+&lt;/h3&gt;&lt;p&gt;不同团队的工程流程差异很大。&lt;/p&gt;
+&lt;p&gt;有的团队重视代码审查，有的团队重视发布流程，有的团队需要访问内部知识库，有的团队有严格的安全命令白名单。&lt;/p&gt;
+&lt;p&gt;Claude Code 通过几类扩展点适配这些差异：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;CLAUDE.md&lt;/code&gt;：写项目知识&lt;/li&gt;
+&lt;li&gt;自动记忆：积累跨会话经验&lt;/li&gt;
+&lt;li&gt;Skills：封装复用流程&lt;/li&gt;
+&lt;li&gt;Hooks：接入确定性自动化&lt;/li&gt;
+&lt;li&gt;MCP：连接外部系统&lt;/li&gt;
+&lt;li&gt;Agent SDK：构建自定义代理工作流&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这套扩展模型的方向很明确：把通用 Agent 变成团队自己的工程 Agent。&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;六prompt-管理不要把所有指令都塞进一句话&#34;&gt;六、Prompt 管理：不要把所有指令都塞进一句话
+&lt;/h2&gt;&lt;h3 id=&#34;61-prompt-在-claude-code-里不是单一文本&#34;&gt;6.1 Prompt 在 Claude Code 里不是单一文本
+&lt;/h3&gt;&lt;p&gt;很多人把 prompt 理解成用户输入框里的一句话。&lt;/p&gt;
+&lt;p&gt;在 Claude Code 这种编码 Agent 里，prompt 更像一个由多层信息拼出来的上下文包。它至少包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;系统级行为约束&lt;/li&gt;
+&lt;li&gt;当前用户请求&lt;/li&gt;
+&lt;li&gt;会话历史&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;CLAUDE.md&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;CLAUDE.local.md&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;.claude/rules/&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;自动记忆&lt;/li&gt;
+&lt;li&gt;Skills 的名称、描述和按需加载内容&lt;/li&gt;
+&lt;li&gt;Subagent 的专用 system prompt&lt;/li&gt;
+&lt;li&gt;MCP 工具说明和返回结果&lt;/li&gt;
+&lt;li&gt;文件内容、命令输出、diff 和错误日志&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;因此，Prompt 管理的核心不是&amp;quot;写一个万能提示词&amp;rdquo;，而是回答三个问题：&lt;/p&gt;
+&lt;p&gt;第一，哪些内容每次会话都应该出现？&lt;/p&gt;
+&lt;p&gt;第二，哪些内容只在相关任务出现时加载？&lt;/p&gt;
+&lt;p&gt;第三，哪些内容不应该放进模型上下文，而应该交给 Hooks、权限或工具处理？&lt;/p&gt;
+&lt;h3 id=&#34;62-prompt-分层模型&#34;&gt;6.2 Prompt 分层模型
+&lt;/h3&gt;&lt;p&gt;可以把 Claude Code 的 prompt 管理拆成五层：&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart TD
+    A[系统层&amp;lt;br/&amp;gt;Claude Code 默认行为、工具协议、权限边界] --&amp;gt; B[用户层&amp;lt;br/&amp;gt;个人偏好、全局 CLAUDE.md、全局 settings]
+    B --&amp;gt; C[项目层&amp;lt;br/&amp;gt;项目 CLAUDE.md、rules、settings、MCP 配置]
+    C --&amp;gt; D[任务层&amp;lt;br/&amp;gt;当前用户请求、计划、文件、命令输出]
+    D --&amp;gt; E[扩展层&amp;lt;br/&amp;gt;Skills、Subagents、Plugins、MCP 返回结果]
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;这五层的职责不同。&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;层级&lt;/th&gt;
+          &lt;th&gt;适合放什么&lt;/th&gt;
+          &lt;th&gt;不适合放什么&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;系统层&lt;/td&gt;
+          &lt;td&gt;产品默认行为、工具调用格式、权限协议&lt;/td&gt;
+          &lt;td&gt;项目私有知识&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;用户层&lt;/td&gt;
+          &lt;td&gt;个人偏好、常用输出风格、通用开发习惯&lt;/td&gt;
+          &lt;td&gt;团队强制规范&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;项目层&lt;/td&gt;
+          &lt;td&gt;架构约定、测试命令、代码风格、发布流程&lt;/td&gt;
+          &lt;td&gt;临时任务细节&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;任务层&lt;/td&gt;
+          &lt;td&gt;本次要做什么、当前错误、当前 diff&lt;/td&gt;
+          &lt;td&gt;长期规则&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;扩展层&lt;/td&gt;
+          &lt;td&gt;专用流程、外部工具说明、子任务约束&lt;/td&gt;
+          &lt;td&gt;所有任务都要读的大段背景&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;这也是为什么官方文档建议从 &lt;code&gt;CLAUDE.md&lt;/code&gt; 开始，再按需要增加 Skills、Subagents、Hooks、MCP 和 Plugins。&lt;/p&gt;
+&lt;h3 id=&#34;63-claudemd-应该写什么&#34;&gt;6.3 &lt;code&gt;CLAUDE.md&lt;/code&gt; 应该写什么
+&lt;/h3&gt;&lt;p&gt;&lt;code&gt;CLAUDE.md&lt;/code&gt; 是项目级长期 prompt。&lt;/p&gt;
+&lt;p&gt;它应该帮助 Claude Code 快速进入项目，而不是替代 README，也不是堆满所有细节。&lt;/p&gt;
+&lt;p&gt;建议结构如下：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;15
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;16
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;17
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;18
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;19
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;20
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;21
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;22
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;23
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;24
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;25
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;26
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;27
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;28
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;29
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;30
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;31
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;32
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;33
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;34
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;35
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;36
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-markdown&#34; data-lang=&#34;markdown&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gh&#34;&gt;# 项目说明
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gh&#34;&gt;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;一句话说明项目用途、核心模块和技术栈。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;## 常用命令
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 安装依赖：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 本地启动：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 运行测试：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 静态检查：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 格式化：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;## 代码结构
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;sb&#34;&gt;`src/`&lt;/span&gt;：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;sb&#34;&gt;`tests/`&lt;/span&gt;：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;sb&#34;&gt;`scripts/`&lt;/span&gt;：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;## 编码约定
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 命名规则：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 错误处理：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 日志规范：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 测试要求：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;## 工作流
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 修改前先阅读哪些文件
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 提交前必须运行哪些命令
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 哪些目录不能随意修改
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;## 常见坑
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 已知兼容性问题
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 容易误用的 API
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 本地环境差异
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;好的 &lt;code&gt;CLAUDE.md&lt;/code&gt; 有三个特点。&lt;/p&gt;
+&lt;p&gt;第一，可执行。它告诉 Agent 应该运行什么命令，而不只是描述愿景。&lt;/p&gt;
+&lt;p&gt;第二，可定位。它告诉 Agent 关键文件在哪里，而不是笼统说&amp;quot;遵守项目结构&amp;quot;。&lt;/p&gt;
+&lt;p&gt;第三，可更新。项目变化后及时维护，否则长期上下文会变成错误上下文。&lt;/p&gt;
+&lt;h3 id=&#34;64-rules把大规则拆成小规则&#34;&gt;6.4 Rules：把大规则拆成小规则
+&lt;/h3&gt;&lt;p&gt;如果所有约定都写进 &lt;code&gt;CLAUDE.md&lt;/code&gt;，上下文会越来越重。&lt;/p&gt;
+&lt;p&gt;更好的方式是把规则拆到 &lt;code&gt;.claude/rules/&lt;/code&gt;：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;.claude/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  rules/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    python.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    frontend.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    database.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    security.md
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这样做的好处是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Python 规则只服务 Python 代码&lt;/li&gt;
+&lt;li&gt;前端规则只服务前端目录&lt;/li&gt;
+&lt;li&gt;数据库规则只在迁移和 SQL 相关任务中出现&lt;/li&gt;
+&lt;li&gt;安全规则可以独立维护&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;从 Prompt 管理角度看，Rules 的价值是&amp;quot;按任务加载相关约束&amp;quot;，而不是让每次会话都背着全部规则前进。&lt;/p&gt;
+&lt;h3 id=&#34;65-skills-与-prompt-的关系&#34;&gt;6.5 Skills 与 Prompt 的关系
+&lt;/h3&gt;&lt;p&gt;Skills 也是 prompt，但它不是普通 prompt。&lt;/p&gt;
+&lt;p&gt;它更像&amp;quot;带名称、描述和触发条件的工作流包&amp;quot;。官方 SDK 文档说明，Skills 与 &lt;code&gt;CLAUDE.md&lt;/code&gt; 的区别在于：&lt;code&gt;CLAUDE.md&lt;/code&gt; 每个会话都会加载，而 Skills 按需加载。Agent 启动时先看到 skill 描述，只有相关时才加载完整内容。&lt;/p&gt;
+&lt;p&gt;这意味着 Skills 适合承载比较长、比较专门的流程，例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;PR 审查&lt;/li&gt;
+&lt;li&gt;发布检查&lt;/li&gt;
+&lt;li&gt;事故复盘&lt;/li&gt;
+&lt;li&gt;API 文档生成&lt;/li&gt;
+&lt;li&gt;迁移脚本审查&lt;/li&gt;
+&lt;li&gt;安全扫描流程&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;不要把这些流程全塞进 &lt;code&gt;CLAUDE.md&lt;/code&gt;。否则每次做一个小改动，模型都要读一大段不相关流程。&lt;/p&gt;
+&lt;h3 id=&#34;66-prompt-管理的常见错误&#34;&gt;6.6 Prompt 管理的常见错误
+&lt;/h3&gt;&lt;p&gt;第一种错误是&amp;quot;万能提示词依赖&amp;quot;。&lt;/p&gt;
+&lt;p&gt;把所有规则都写进一个超长 prompt，看起来信息很全，实际会制造噪音。模型会在不相关任务中看到过多约束，反而更难抓重点。&lt;/p&gt;
+&lt;p&gt;第二种错误是&amp;quot;规则和动作混在一起&amp;quot;。&lt;/p&gt;
+&lt;p&gt;例如&amp;quot;每次提交前必须运行测试&amp;quot;可以写进 &lt;code&gt;CLAUDE.md&lt;/code&gt;，但如果团队真的要求强制执行，就应该配 Hooks 或 CI。提示词是建议，Hooks 和 CI 才是约束。&lt;/p&gt;
+&lt;p&gt;第三种错误是&amp;quot;把临时事实写进长期记忆&amp;quot;。&lt;/p&gt;
+&lt;p&gt;比如&amp;quot;今天临时跳过某个测试&amp;quot;不适合进入 &lt;code&gt;CLAUDE.md&lt;/code&gt; 或自动记忆。长期上下文应该稳定，否则以后会误导 Agent。&lt;/p&gt;
+&lt;p&gt;第四种错误是&amp;quot;不给验证命令&amp;quot;。&lt;/p&gt;
+&lt;p&gt;只写&amp;quot;保证质量&amp;quot;没有意义。应该写清楚 &lt;code&gt;npm test&lt;/code&gt;、&lt;code&gt;pytest&lt;/code&gt;、&lt;code&gt;ruff check .&lt;/code&gt;、&lt;code&gt;go test ./...&lt;/code&gt; 这类命令。&lt;/p&gt;
+&lt;h3 id=&#34;67-推荐的-prompt-管理策略&#34;&gt;6.7 推荐的 Prompt 管理策略
+&lt;/h3&gt;&lt;p&gt;一个团队可以按这个顺序建设：&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart LR
+    A[先写 CLAUDE.md] --&amp;gt; B[拆分 rules]
+    B --&amp;gt; C[沉淀常用 Skills]
+    C --&amp;gt; D[为高风险任务建 Subagents]
+    D --&amp;gt; E[用 Hooks 强制关键动作]
+    E --&amp;gt; F[用 Plugins 分发团队能力]
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;简单说：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;长期项目知识放 &lt;code&gt;CLAUDE.md&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;局部规则放 &lt;code&gt;.claude/rules/&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;可复用流程放 Skills&lt;/li&gt;
+&lt;li&gt;专业角色放 Subagents&lt;/li&gt;
+&lt;li&gt;确定性动作放 Hooks&lt;/li&gt;
+&lt;li&gt;跨项目分发放 Plugins&lt;/li&gt;
+&lt;li&gt;外部系统上下文放 MCP&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;七上下文管理让-agent-在正确的信息里工作&#34;&gt;七、上下文管理：让 Agent 在正确的信息里工作
+&lt;/h2&gt;&lt;h3 id=&#34;71-上下文管理解决什么问题&#34;&gt;7.1 上下文管理解决什么问题
+&lt;/h3&gt;&lt;p&gt;Claude Code 的能力很大一部分来自上下文。&lt;/p&gt;
+&lt;p&gt;但上下文不是越多越好。代码库、日志、diff、命令输出、需求文档、MCP 工具结果都可能进入会话，信息太少会让 Agent 判断错误，信息太多又会挤占上下文窗口、增加噪音和成本。&lt;/p&gt;
+&lt;p&gt;上下文管理要解决四个问题：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;该给 Agent 看什么&lt;/li&gt;
+&lt;li&gt;什么时候给 Agent 看&lt;/li&gt;
+&lt;li&gt;看完后哪些信息需要保留&lt;/li&gt;
+&lt;li&gt;哪些信息应该摘要、隔离或丢弃&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;官方文档提到，当上下文接近限制时，Claude Code 会自动管理上下文：先清除较旧的工具输出，必要时总结对话；用户请求和关键代码片段会被保留，但早期细节可能丢失。&lt;/p&gt;
+&lt;p&gt;这意味着团队不能把重要规则只留在聊天历史里。长期规则应该进入 &lt;code&gt;CLAUDE.md&lt;/code&gt;、Rules、Skills 或配置系统。&lt;/p&gt;
+&lt;h3 id=&#34;72-上下文来源&#34;&gt;7.2 上下文来源
+&lt;/h3&gt;&lt;p&gt;Claude Code 的上下文大致来自七类信息。&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;来源&lt;/th&gt;
+          &lt;th&gt;内容&lt;/th&gt;
+          &lt;th&gt;管理重点&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;用户输入&lt;/td&gt;
+          &lt;td&gt;本次任务、约束、目标&lt;/td&gt;
+          &lt;td&gt;表达清楚完成标准和限制&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;项目记忆&lt;/td&gt;
+          &lt;td&gt;&lt;code&gt;CLAUDE.md&lt;/code&gt;、自动记忆、rules&lt;/td&gt;
+          &lt;td&gt;保持短、准、可维护&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;代码文件&lt;/td&gt;
+          &lt;td&gt;当前读取的源代码、测试、配置&lt;/td&gt;
+          &lt;td&gt;只读相关文件，避免全仓库灌入&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;工具输出&lt;/td&gt;
+          &lt;td&gt;Shell、测试、lint、构建日志&lt;/td&gt;
+          &lt;td&gt;保留关键错误，压缩冗长日志&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Git 信息&lt;/td&gt;
+          &lt;td&gt;diff、提交、分支、PR&lt;/td&gt;
+          &lt;td&gt;关注本次变更影响面&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;扩展能力&lt;/td&gt;
+          &lt;td&gt;Skills、Subagents、Hooks&lt;/td&gt;
+          &lt;td&gt;按需加载，不要全量常驻&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;外部系统&lt;/td&gt;
+          &lt;td&gt;MCP 返回的工单、文档、日志&lt;/td&gt;
+          &lt;td&gt;结构化、带来源、控制权限&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;一个常见误区是把上下文等同于&amp;quot;文件内容&amp;quot;。&lt;/p&gt;
+&lt;p&gt;实际上，错误日志、测试失败、用户约束、项目规则和外部工单往往比源代码片段更关键。上下文管理不是单纯读文件，而是为当前任务组织证据。&lt;/p&gt;
+&lt;h3 id=&#34;73-claudemd-与自动记忆&#34;&gt;7.3 &lt;code&gt;CLAUDE.md&lt;/code&gt; 与自动记忆
+&lt;/h3&gt;&lt;p&gt;官方 memory 文档把 &lt;code&gt;CLAUDE.md&lt;/code&gt; 和自动记忆称为两个互补的记忆系统，它们都会在每次对话开始时加载，并被 Claude 当作上下文，而不是强制配置。&lt;/p&gt;
+&lt;p&gt;两者差异可以这样理解：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;机制&lt;/th&gt;
+          &lt;th&gt;谁维护&lt;/th&gt;
+          &lt;th&gt;适合内容&lt;/th&gt;
+          &lt;th&gt;风险&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;CLAUDE.md&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;人维护&lt;/td&gt;
+          &lt;td&gt;编码标准、工作流、架构说明、测试命令&lt;/td&gt;
+          &lt;td&gt;写太长、过期、像 README 一样泛&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;自动记忆&lt;/td&gt;
+          &lt;td&gt;Claude 维护&lt;/td&gt;
+          &lt;td&gt;构建命令、调试经验、项目偏好、发现的模式&lt;/td&gt;
+          &lt;td&gt;记录临时事实、记住错误经验&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;&lt;code&gt;CLAUDE.md&lt;/code&gt; 更适合放&amp;quot;团队想让 Agent 稳定遵守的项目知识&amp;quot;。&lt;/p&gt;
+&lt;p&gt;自动记忆更适合放&amp;quot;Agent 在工作中学到的经验&amp;quot;。&lt;/p&gt;
+&lt;p&gt;如果某个规则必须强制执行，例如禁止读取密钥文件或禁止执行发布命令，不应该只写进记忆。官方文档也强调，要阻止某个操作，应使用 PreToolUse hook，而不是依赖 Claude 是否记得。&lt;/p&gt;
+&lt;h3 id=&#34;74-上下文窗口与自动压缩&#34;&gt;7.4 上下文窗口与自动压缩
+&lt;/h3&gt;&lt;p&gt;上下文窗口可以理解成当前会话能携带的信息容量。&lt;/p&gt;
+&lt;p&gt;当会话变长时，Claude Code 会自动压缩上下文。压缩的目标不是删除所有旧信息，而是保留任务目标、关键代码片段、重要结论和当前状态。&lt;/p&gt;
+&lt;p&gt;但压缩会带来损耗：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;早期讨论细节可能丢失&lt;/li&gt;
+&lt;li&gt;冗长工具输出可能被删掉&lt;/li&gt;
+&lt;li&gt;未结构化的重要信息可能被摘要错&lt;/li&gt;
+&lt;li&gt;模糊的用户偏好可能被弱化&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;所以长任务里要主动管理上下文。&lt;/p&gt;
+&lt;p&gt;常用命令包括：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;命令&lt;/th&gt;
+          &lt;th&gt;作用&lt;/th&gt;
+          &lt;th&gt;适合场景&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;/context&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;查看当前上下文占用&lt;/td&gt;
+          &lt;td&gt;不知道空间被什么占满时&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;/compact&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;压缩当前会话&lt;/td&gt;
+          &lt;td&gt;长任务继续推进前&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;/compact focus on ...&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;带焦点压缩&lt;/td&gt;
+          &lt;td&gt;想保留某个主题的关键信息&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;/clear&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;开启空上下文新对话&lt;/td&gt;
+          &lt;td&gt;切换到不相关任务&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;&lt;code&gt;/resume&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;恢复历史会话&lt;/td&gt;
+          &lt;td&gt;回到之前任务&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;比如做完 auth bug 修复后，如果要继续做 billing 重构，不应该让旧 auth 日志一直占着上下文。可以先 &lt;code&gt;/clear&lt;/code&gt;，或者在同一任务内用 &lt;code&gt;/compact focus on billing refactor&lt;/code&gt;。&lt;/p&gt;
+&lt;h3 id=&#34;75-工具输出如何进入上下文&#34;&gt;7.5 工具输出如何进入上下文
+&lt;/h3&gt;&lt;p&gt;工具输出是 Agent 判断现实状态的证据。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;测试失败日志告诉 Agent 哪个断言失败&lt;/li&gt;
+&lt;li&gt;lint 输出告诉 Agent 哪些文件不合规&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;git diff&lt;/code&gt; 告诉 Agent 这次改了什么&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;ls&lt;/code&gt; 和 &lt;code&gt;rg&lt;/code&gt; 告诉 Agent 文件在哪里&lt;/li&gt;
+&lt;li&gt;MCP 工具返回工单状态或设计文档内容&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;但工具输出很容易膨胀。&lt;/p&gt;
+&lt;p&gt;例如一次全量测试可能输出几千行日志。如果直接塞进上下文，模型会被大量无用信息淹没。更好的做法是：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;优先保留失败摘要&lt;/li&gt;
+&lt;li&gt;保留最小复现命令&lt;/li&gt;
+&lt;li&gt;保留关键 stack trace&lt;/li&gt;
+&lt;li&gt;删除重复日志&lt;/li&gt;
+&lt;li&gt;把长日志保存到文件，只让 Agent 读取相关片段&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;对 Verify Agent 来说，最有价值的输出不是完整日志，而是：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;命令：pytest tests/auth -q
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;结果：失败
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;失败用例：test_refresh_expired_token
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;关键错误：expected 401, got 200
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;相关文件：app/auth/session.py, tests/auth/test_session.py
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;下一步建议：检查 token 过期判断分支
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这类结构化证据比大段原始输出更适合进入主上下文。&lt;/p&gt;
+&lt;h3 id=&#34;76-文件上下文按影响面读取&#34;&gt;7.6 文件上下文：按影响面读取
+&lt;/h3&gt;&lt;p&gt;Claude Code 理解代码库，不代表每次都应该读完整代码库。&lt;/p&gt;
+&lt;p&gt;更好的策略是按影响面逐步读取：&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart TD
+    A[用户任务] --&amp;gt; B[读 CLAUDE.md 和目录结构]
+    B --&amp;gt; C[搜索入口符号和相关文件]
+    C --&amp;gt; D[读取核心实现]
+    D --&amp;gt; E[读取相邻测试和配置]
+    E --&amp;gt; F[根据错误日志补充文件]
+    F --&amp;gt; G[形成最小可用上下文]
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;比如修登录 bug 时，通常不需要先读完整个后端项目，而是应该从路由、service、session、测试和配置开始。&lt;/p&gt;
+&lt;p&gt;文件上下文管理有三个原则。&lt;/p&gt;
+&lt;p&gt;第一，先读入口，再读依赖。不要一开始就撒网式读取。&lt;/p&gt;
+&lt;p&gt;第二，读代码也要读测试。测试往往解释了项目期望行为。&lt;/p&gt;
+&lt;p&gt;第三，读配置。很多 bug 不在业务代码，而在开关、环境变量、依赖版本或构建配置。&lt;/p&gt;
+&lt;h3 id=&#34;77-外部上下文mcp-不等于复制粘贴&#34;&gt;7.7 外部上下文：MCP 不等于复制粘贴
+&lt;/h3&gt;&lt;p&gt;没有 MCP 时，用户经常把 Jira、Slack、设计文档、监控日志复制进聊天框。&lt;/p&gt;
+&lt;p&gt;这样有几个问题：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;内容容易过期&lt;/li&gt;
+&lt;li&gt;来源不清楚&lt;/li&gt;
+&lt;li&gt;格式不稳定&lt;/li&gt;
+&lt;li&gt;复制时可能遗漏关键字段&lt;/li&gt;
+&lt;li&gt;大段文本会占用上下文&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;MCP 的价值是让 Claude Code 按需读取外部系统，并用结构化结果进入上下文。&lt;/p&gt;
+&lt;p&gt;例如 Jira MCP 工具可以返回：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-json&#34; data-lang=&#34;json&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;issue&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;AUTH-123&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;title&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;Refresh token expires too late&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;status&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;In Progress&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;priority&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;High&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;acceptanceCriteria&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;s2&#34;&gt;&amp;#34;expired refresh token returns 401&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    &lt;span class=&#34;s2&#34;&gt;&amp;#34;client should clear local session&amp;#34;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;p&#34;&gt;],&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  &lt;span class=&#34;nt&#34;&gt;&amp;#34;links&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;:&lt;/span&gt; &lt;span class=&#34;p&#34;&gt;[&lt;/span&gt;&lt;span class=&#34;s2&#34;&gt;&amp;#34;design-doc-url&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;,&lt;/span&gt; &lt;span class=&#34;s2&#34;&gt;&amp;#34;incident-url&amp;#34;&lt;/span&gt;&lt;span class=&#34;p&#34;&gt;]&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;p&#34;&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这比用户粘贴一段聊天记录更稳定。&lt;/p&gt;
+&lt;p&gt;但 MCP 上下文也要管控。外部系统返回太多字段、太多历史评论、太多无关附件，同样会污染上下文。MCP 工具应该尽量返回当前任务需要的最小结构化信息。&lt;/p&gt;
+&lt;h3 id=&#34;78-subagent-隔离上下文&#34;&gt;7.8 Subagent 隔离上下文
+&lt;/h3&gt;&lt;p&gt;官方上下文窗口文档建议，可以把大型读取委托给 subagents，让文件内容保留在子代理上下文中，而不是主上下文里。&lt;/p&gt;
+&lt;p&gt;这点非常重要。&lt;/p&gt;
+&lt;p&gt;例如主 Agent 要分析一个大模块，可以让 Research Agent 做大范围阅读：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;任务：阅读支付模块，找出 refund 流程涉及哪些文件。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Research Agent 自己读取：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- routes/payment.py
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- services/refund.py
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- models/payment.py
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- tests/payment/test_refund.py
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- docs/payment.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;返回主 Agent：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- 涉及文件列表
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- 调用链摘要
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- 关键风险
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- 建议修改点
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;主 Agent 不需要知道每个文件的全部内容，只需要知道&amp;quot;哪些文件重要、为什么重要、下一步怎么做&amp;quot;。&lt;/p&gt;
+&lt;p&gt;这就是上下文隔离的价值：让探索发生在子上下文里，让主上下文保持干净。&lt;/p&gt;
+&lt;h3 id=&#34;79-上下文污染&#34;&gt;7.9 上下文污染
+&lt;/h3&gt;&lt;p&gt;上下文污染指的是：进入会话的信息误导了 Agent。&lt;/p&gt;
+&lt;p&gt;常见污染来源包括：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;过期的 &lt;code&gt;CLAUDE.md&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;自动记忆里保存了临时 workaround&lt;/li&gt;
+&lt;li&gt;用户粘贴了不完整日志&lt;/li&gt;
+&lt;li&gt;子 Agent 返回了没有证据的结论&lt;/li&gt;
+&lt;li&gt;MCP 工具返回了过期工单状态&lt;/li&gt;
+&lt;li&gt;长会话里残留了上一个任务的假设&lt;/li&gt;
+&lt;li&gt;过度压缩导致关键限制被弱化&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;上下文污染比上下文不足更隐蔽，因为 Agent 看起来掌握了信息，但信息是错的。&lt;/p&gt;
+&lt;p&gt;减少污染的方法：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;长期规则保持短而准&lt;/li&gt;
+&lt;li&gt;任务切换时用 &lt;code&gt;/clear&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;长任务压缩时用明确焦点&lt;/li&gt;
+&lt;li&gt;子 Agent 输出必须带证据&lt;/li&gt;
+&lt;li&gt;MCP 返回结果带时间和来源&lt;/li&gt;
+&lt;li&gt;重要结论用测试、diff 或命令输出验证&lt;/li&gt;
+&lt;li&gt;定期审查自动记忆和 &lt;code&gt;CLAUDE.md&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;710-上下文管理的推荐流程&#34;&gt;7.10 上下文管理的推荐流程
+&lt;/h3&gt;&lt;p&gt;一个比较稳的上下文管理流程是：&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart TD
+    A[接收任务] --&amp;gt; B[加载长期上下文]
+    B --&amp;gt; C[识别任务类型和影响面]
+    C --&amp;gt; D[读取最小相关文件]
+    D --&amp;gt; E[调用工具或 MCP 补充证据]
+    E --&amp;gt; F[结构化保留关键结果]
+    F --&amp;gt; G{上下文是否膨胀}
+    G -- 是 --&amp;gt; H[委托 Subagent 或 /compact]
+    G -- 否 --&amp;gt; I[继续实现和验证]
+    H --&amp;gt; I
+    I --&amp;gt; J[输出结果和残余风险]
+    J --&amp;gt; K[必要时更新 CLAUDE.md 或记忆]
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;实践中可以记住一句话：把规则放在长期上下文，把证据放在任务上下文，把探索放在子 Agent，把强制动作放在 Hooks。&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;八多-agent-分工把一个大任务拆成多个专业角色&#34;&gt;八、多 Agent 分工：把一个大任务拆成多个专业角色
+&lt;/h2&gt;&lt;h3 id=&#34;81-为什么需要多-agent&#34;&gt;8.1 为什么需要多 Agent
+&lt;/h3&gt;&lt;p&gt;单个 Agent 可以完成很多任务，但它也会遇到三个限制。&lt;/p&gt;
+&lt;p&gt;第一，上下文会膨胀。一个大型任务可能需要读大量文件、日志和文档，主会话很容易变长。&lt;/p&gt;
+&lt;p&gt;第二，角色会混杂。实现、测试、审查、安全分析、文档编写需要不同关注点，让一个 Agent 同时扮演所有角色，容易顾此失彼。&lt;/p&gt;
+&lt;p&gt;第三，任务无法并行。多个相对独立的模块如果串行处理，会浪费时间。&lt;/p&gt;
+&lt;p&gt;多 Agent 的价值就是把任务拆成多个边界清楚的工作单元：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;主 Agent 负责目标理解、任务拆分和结果整合&lt;/li&gt;
+&lt;li&gt;实现 Agent 负责代码修改&lt;/li&gt;
+&lt;li&gt;验证 Agent 负责测试和质量检查&lt;/li&gt;
+&lt;li&gt;Review Agent 负责审查 diff 和潜在缺陷&lt;/li&gt;
+&lt;li&gt;Research Agent 负责查资料、读文档和分析依赖&lt;/li&gt;
+&lt;li&gt;Migration Agent 负责数据库或接口迁移&lt;/li&gt;
+&lt;li&gt;Security Agent 负责安全风险扫描&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;官方 subagents 文档也说明，可以创建具有自定义提示、工具限制、权限模式、hooks 和 skills 的专门 subagents。&lt;/p&gt;
+&lt;p&gt;需要注意：下面这些 &lt;code&gt;Research Agent&lt;/code&gt;、&lt;code&gt;Implement Agent&lt;/code&gt;、&lt;code&gt;Verify Agent&lt;/code&gt;、&lt;code&gt;Review Agent&lt;/code&gt;、&lt;code&gt;Security Agent&lt;/code&gt; 不是 Claude Code 官方固定内置的一组系统 Agent，而是基于 subagents 机制整理出的工程角色。Claude Code 提供 subagent 机制和部分内置 subagents；具体专业角色通常需要用户或团队通过自定义 subagent、command、skill 或 batch 工作流定义出来。&lt;/p&gt;
+&lt;h3 id=&#34;82-多-agent-分工模型基于-subagents-机制的工程抽象&#34;&gt;8.2 多 Agent 分工模型：基于 subagents 机制的工程抽象
+&lt;/h3&gt;&lt;p&gt;可以把多 Agent 系统理解成一个小型工程团队：&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart TD
+    A[Main Agent&amp;lt;br/&amp;gt;任务理解与调度] --&amp;gt; B[Research Agent&amp;lt;br/&amp;gt;代码和文档调研]
+    A --&amp;gt; C[Implement Agent&amp;lt;br/&amp;gt;实现修改]
+    A --&amp;gt; D[Verify Agent&amp;lt;br/&amp;gt;测试和验证]
+    A --&amp;gt; E[Review Agent&amp;lt;br/&amp;gt;代码审查]
+    A --&amp;gt; F[Security Agent&amp;lt;br/&amp;gt;安全检查]
+    B --&amp;gt; A
+    C --&amp;gt; A
+    D --&amp;gt; A
+    E --&amp;gt; A
+    F --&amp;gt; A
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;这张图不是官方拓扑图，也不表示 Claude Code 默认内置了这些固定名称的 Agent。它表达的是：主会话 Agent 可以基于 subagents 机制，把调研、实现、验证、审查、安全检查等不同职责委派给专门的工作单元。这里的 &lt;code&gt;Verify Agent&lt;/code&gt; 表示专门负责验证的子 Agent：运行测试、检查 lint、分析失败原因，并给主 Agent 一个明确结论。&lt;/p&gt;
+&lt;h3 id=&#34;83-常见-agent-角色设计&#34;&gt;8.3 常见 Agent 角色设计
+&lt;/h3&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;角色&lt;/th&gt;
+          &lt;th&gt;主要职责&lt;/th&gt;
+          &lt;th&gt;推荐工具权限&lt;/th&gt;
+          &lt;th&gt;输出形式&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Main Agent&lt;/td&gt;
+          &lt;td&gt;拆任务、调度、合并结果、对用户总结&lt;/td&gt;
+          &lt;td&gt;读写文件、调用子 Agent、有限 Shell&lt;/td&gt;
+          &lt;td&gt;计划、决策、最终总结&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Research Agent&lt;/td&gt;
+          &lt;td&gt;搜索代码、阅读文档、定位影响面&lt;/td&gt;
+          &lt;td&gt;只读文件、搜索、MCP&lt;/td&gt;
+          &lt;td&gt;相关文件列表、依赖关系、风险点&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Implement Agent&lt;/td&gt;
+          &lt;td&gt;修改代码、补测试、处理失败&lt;/td&gt;
+          &lt;td&gt;读写文件、测试命令&lt;/td&gt;
+          &lt;td&gt;修改说明、diff 摘要、验证建议&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Verify Agent&lt;/td&gt;
+          &lt;td&gt;跑测试、lint、类型检查、构建&lt;/td&gt;
+          &lt;td&gt;Shell、只读文件、必要日志读取&lt;/td&gt;
+          &lt;td&gt;PASS / FAIL / PARTIAL 和证据&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Review Agent&lt;/td&gt;
+          &lt;td&gt;审查正确性、可维护性、边界条件&lt;/td&gt;
+          &lt;td&gt;只读 diff、只读文件&lt;/td&gt;
+          &lt;td&gt;问题清单和严重级别&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Security Agent&lt;/td&gt;
+          &lt;td&gt;检查密钥、注入、权限、依赖风险&lt;/td&gt;
+          &lt;td&gt;只读文件、扫描工具、MCP&lt;/td&gt;
+          &lt;td&gt;安全风险和修复建议&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Release Agent&lt;/td&gt;
+          &lt;td&gt;生成 changelog、检查版本、发布前清单&lt;/td&gt;
+          &lt;td&gt;Git、只读文件、有限 Shell&lt;/td&gt;
+          &lt;td&gt;发布摘要和检查项&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;角色设计要避免两个极端。&lt;/p&gt;
+&lt;p&gt;一种极端是所有 Agent 都拥有全部工具权限。这会让隔离失去意义。&lt;/p&gt;
+&lt;p&gt;另一种极端是角色太碎。每个小任务都新建一个 Agent，会增加调度成本和上下文合并成本。&lt;/p&gt;
+&lt;h3 id=&#34;84-verify-agent验证不是看起来没问题&#34;&gt;8.4 Verify Agent：验证不是&amp;quot;看起来没问题&amp;quot;
+&lt;/h3&gt;&lt;p&gt;验证 Agent 的核心职责不是赞同实现，而是主动寻找实现是否真的成立。&lt;/p&gt;
+&lt;p&gt;一个好的 Verify Agent 应该做这些事：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;识别本次变更影响哪些模块&lt;/li&gt;
+&lt;li&gt;找到应该运行的测试、lint、类型检查和构建命令&lt;/li&gt;
+&lt;li&gt;执行验证命令&lt;/li&gt;
+&lt;li&gt;保存关键错误日志&lt;/li&gt;
+&lt;li&gt;判断失败是实现问题、测试环境问题还是既有问题&lt;/li&gt;
+&lt;li&gt;必要时建议最小修复方向&lt;/li&gt;
+&lt;li&gt;给出明确状态：&lt;code&gt;PASS&lt;/code&gt;、&lt;code&gt;FAIL&lt;/code&gt; 或 &lt;code&gt;PARTIAL&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;验证 Agent 的输出不应该是：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;看起来没问题。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;而应该是：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;状态：PARTIAL
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;已运行：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- pytest tests/auth -q：通过
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- ruff check app/auth tests/auth：通过
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- npm run build：未运行，当前变更不涉及前端
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;未覆盖：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- 没有运行全量集成测试
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- 没有验证真实 OAuth 回调
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;结论：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;本次 auth 单元测试和静态检查通过，但外部 OAuth 流程仍需要人工或集成环境验证。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这类输出给主 Agent 的价值很高，因为主 Agent 可以据此决定是否继续修复、是否告知用户残余风险。&lt;/p&gt;
+&lt;h3 id=&#34;85-多-agent-的上下文隔离&#34;&gt;8.5 多 Agent 的上下文隔离
+&lt;/h3&gt;&lt;p&gt;Subagent 的一个重要价值是上下文隔离。&lt;/p&gt;
+&lt;p&gt;主 Agent 不需要把所有搜索过程、日志细节和失败尝试都保留在主上下文里。它可以把探索任务交给子 Agent，最后只接收结构化摘要。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;15
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;Research Agent 输出：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;相关文件：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- app/auth/service.py
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- app/auth/session.py
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- tests/auth/test_session.py
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;关键发现：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- 登录态由 SessionService.refresh() 更新
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- 过期时间依赖 settings.AUTH_TTL
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- 现有测试没有覆盖 refresh token 过期路径
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;建议下一步：
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- 为 refresh token 过期添加测试
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;- 修改 SessionService.refresh() 的异常分支
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这种摘要比把所有搜索过程原样塞回主会话更有效。&lt;/p&gt;
+&lt;h3 id=&#34;86-多-agent-的权限隔离&#34;&gt;8.6 多 Agent 的权限隔离
+&lt;/h3&gt;&lt;p&gt;多 Agent 不是只为了并行，也为了权限收敛。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Research Agent 只读，不允许编辑&lt;/li&gt;
+&lt;li&gt;Verify Agent 可以运行测试，但不允许修改代码&lt;/li&gt;
+&lt;li&gt;Implement Agent 可以编辑代码，但不允许推送分支&lt;/li&gt;
+&lt;li&gt;Security Agent 可以读配置，但不能读取密钥文件内容&lt;/li&gt;
+&lt;li&gt;Release Agent 可以生成 changelog，但发布命令需要人工确认&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;权限越清楚，系统越可控。&lt;/p&gt;
+&lt;p&gt;如果一个子 Agent 的职责只是审查，就不应该给它写文件权限。这样即使它判断错误，也不会直接改坏项目。&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;九agent-调度链从用户目标到可验证结果&#34;&gt;九、Agent 调度链：从用户目标到可验证结果
+&lt;/h2&gt;&lt;h3 id=&#34;91-调度链是什么&#34;&gt;9.1 调度链是什么
+&lt;/h3&gt;&lt;p&gt;Agent 调度链指的是：主 Agent 如何把用户目标拆成任务，选择合适的子 Agent 或工具，收集结果，再决定下一步。&lt;/p&gt;
+&lt;p&gt;它不是简单的&amp;quot;多开几个 Agent&amp;quot;，而是一条有状态的任务链路：&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart TD
+    A[用户目标] --&amp;gt; B[主 Agent 澄清目标和约束]
+    B --&amp;gt; C[拆分任务]
+    C --&amp;gt; D{选择执行方式}
+    D --&amp;gt; E[直接调用工具]
+    D --&amp;gt; F[委派 Subagent]
+    D --&amp;gt; G[调用 Skill]
+    D --&amp;gt; H[调用 MCP]
+    E --&amp;gt; I[收集结果]
+    F --&amp;gt; I
+    G --&amp;gt; I
+    H --&amp;gt; I
+    I --&amp;gt; J{是否需要继续}
+    J -- 是 --&amp;gt; C
+    J -- 否 --&amp;gt; K[验证、总结、交付]
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;调度链的质量，决定了 Claude Code 是&amp;quot;想到哪做到哪&amp;quot;，还是像工程师一样有节奏地推进。&lt;/p&gt;
+&lt;h3 id=&#34;92-调度链的四个阶段&#34;&gt;9.2 调度链的四个阶段
+&lt;/h3&gt;&lt;p&gt;第一阶段是 intake，也就是接收任务。&lt;/p&gt;
+&lt;p&gt;主 Agent 要判断用户真正想要什么：是修 bug、加功能、查原因、写文档，还是做审查。它还要识别约束：不能改哪些文件、必须跑哪些测试、是否允许联网、是否需要保持兼容。&lt;/p&gt;
+&lt;p&gt;第二阶段是 planning，也就是拆解任务。&lt;/p&gt;
+&lt;p&gt;主 Agent 把目标拆成若干可执行单元。例如&amp;quot;升级登录模块&amp;quot;可以拆成：阅读现有实现、定位测试、修改代码、补测试、运行验证、整理风险。&lt;/p&gt;
+&lt;p&gt;第三阶段是 dispatch，也就是调度。&lt;/p&gt;
+&lt;p&gt;主 Agent 决定每个单元交给谁：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;简单读文件：直接工具调用&lt;/li&gt;
+&lt;li&gt;大范围搜索：Research Agent&lt;/li&gt;
+&lt;li&gt;代码修改：Implement Agent 或主 Agent 自己做&lt;/li&gt;
+&lt;li&gt;质量检查：Verify Agent&lt;/li&gt;
+&lt;li&gt;外部系统查询：MCP&lt;/li&gt;
+&lt;li&gt;固定流程：Skill&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;第四阶段是 reduce，也就是归并。&lt;/p&gt;
+&lt;p&gt;主 Agent 汇总子 Agent 输出、工具结果和验证证据，决定是否继续修复，最后给用户交付结论。&lt;/p&gt;
+&lt;h3 id=&#34;93-什么时候直接做什么时候调-agent&#34;&gt;9.3 什么时候直接做，什么时候调 Agent
+&lt;/h3&gt;&lt;p&gt;不是所有任务都需要多 Agent。&lt;/p&gt;
+&lt;p&gt;可以用这个判断表：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;情况&lt;/th&gt;
+          &lt;th&gt;推荐方式&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;改一个小文件、上下文清楚&lt;/td&gt;
+          &lt;td&gt;主 Agent 直接做&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;需要搜索很多模块&lt;/td&gt;
+          &lt;td&gt;Research Agent&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;需要跨多个目录并行修改&lt;/td&gt;
+          &lt;td&gt;多个 Implement Agent&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;需要独立质量判断&lt;/td&gt;
+          &lt;td&gt;Verify / Review Agent&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;需要访问外部系统&lt;/td&gt;
+          &lt;td&gt;MCP&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;流程固定且可复用&lt;/td&gt;
+          &lt;td&gt;Skill&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;要跨项目分享能力&lt;/td&gt;
+          &lt;td&gt;Plugin&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;多 Agent 的成本是真实存在的：调度需要 token，结果合并需要判断，子 Agent 可能理解偏差。&lt;/p&gt;
+&lt;p&gt;所以最佳实践不是&amp;quot;所有任务都多 Agent&amp;quot;，而是&amp;quot;复杂任务才多 Agent&amp;quot;。&lt;/p&gt;
+&lt;h3 id=&#34;94-调度链中的状态设计&#34;&gt;9.4 调度链中的状态设计
+&lt;/h3&gt;&lt;p&gt;一个清晰的调度链应该维护任务状态。&lt;/p&gt;
+&lt;p&gt;可以用下面这种状态机理解：&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;stateDiagram-v2
+    [*] --&amp;gt; Intake
+    Intake --&amp;gt; Plan
+    Plan --&amp;gt; Dispatch
+    Dispatch --&amp;gt; Execute
+    Execute --&amp;gt; Verify
+    Verify --&amp;gt; Rework: 验证失败
+    Rework --&amp;gt; Dispatch
+    Verify --&amp;gt; Review: 验证通过
+    Review --&amp;gt; Rework: 审查发现阻塞问题
+    Review --&amp;gt; Deliver
+    Deliver --&amp;gt; [*]
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;这条链路里，验证失败不是异常，而是正常反馈。&lt;/p&gt;
+&lt;p&gt;一个成熟的 Agent 系统应该允许失败结果回流到实现环节，而不是在第一次测试失败后就把错误日志丢给用户。&lt;/p&gt;
+&lt;h3 id=&#34;95-调度输出要结构化&#34;&gt;9.5 调度输出要结构化
+&lt;/h3&gt;&lt;p&gt;子 Agent 返回主 Agent 的内容应该尽量结构化。&lt;/p&gt;
+&lt;p&gt;不推荐：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;我看了一下，应该是 session 相关的问题。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;推荐：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;15
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-markdown&#34; data-lang=&#34;markdown&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;## 结论
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;问题在 &lt;span class=&#34;sb&#34;&gt;`SessionService.refresh()`&lt;/span&gt; 的过期判断。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;## 证据
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; &lt;span class=&#34;sb&#34;&gt;`tests/auth/test_session.py::test_refresh_expired_token`&lt;/span&gt; 失败
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 错误日志显示 expired_at 比较方向相反
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 相关代码位于 &lt;span class=&#34;sb&#34;&gt;`app/auth/session.py`&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;## 建议
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 修正过期判断
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 增加边界时间测试
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 运行 &lt;span class=&#34;sb&#34;&gt;`pytest tests/auth -q`&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;结构化输出能减少主 Agent 的合并成本，也方便最终给用户解释。&lt;/p&gt;
+&lt;h3 id=&#34;96-调度链与命令系统&#34;&gt;9.6 调度链与命令系统
+&lt;/h3&gt;&lt;p&gt;官方 commands 文档展示了 Claude Code 在任务期间和任务之间的命令体系。&lt;/p&gt;
+&lt;p&gt;从调度角度看，这些命令可以理解成不同的调度入口：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;/plan&lt;/code&gt;：先进入规划再执行，适合大改动&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;/agents&lt;/code&gt;：管理子 Agent&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;/tasks&lt;/code&gt;：查看后台任务&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;/batch&lt;/code&gt;：把大型修改拆成独立单元并行运行&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;/background&lt;/code&gt;：把整个会话放到后台继续运行&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;/diff&lt;/code&gt;：查看当前改动&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;/code-review&lt;/code&gt;：对 diff 做代码审查&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;/security-review&lt;/code&gt;：做更深的安全检查&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;/compact&lt;/code&gt;：压缩长会话上下文&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;/resume&lt;/code&gt;：恢复历史会话&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这些命令说明 Claude Code 的调度不只是模型内部推理，也暴露成用户可控的工作流界面。&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;十skillspluginsmcp生态管理和使用&#34;&gt;十、Skills、Plugins、MCP：生态管理和使用
+&lt;/h2&gt;&lt;h3 id=&#34;101-三者分别解决什么问题&#34;&gt;10.1 三者分别解决什么问题
+&lt;/h3&gt;&lt;p&gt;Skills、Plugins 和 MCP 很容易混在一起，但它们解决的是不同问题。&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;机制&lt;/th&gt;
+          &lt;th&gt;核心问题&lt;/th&gt;
+          &lt;th&gt;典型内容&lt;/th&gt;
+          &lt;th&gt;使用方式&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Skills&lt;/td&gt;
+          &lt;td&gt;如何复用一套 Agent 工作流&lt;/td&gt;
+          &lt;td&gt;&lt;code&gt;SKILL.md&lt;/code&gt;、脚本、参考资料&lt;/td&gt;
+          &lt;td&gt;Claude 按需加载，或用户用 &lt;code&gt;/skill-name&lt;/code&gt; 调用&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;Plugins&lt;/td&gt;
+          &lt;td&gt;如何分发一组能力&lt;/td&gt;
+          &lt;td&gt;skills、agents、hooks、MCP servers、主题等&lt;/td&gt;
+          &lt;td&gt;安装、启用、禁用、版本化管理&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;MCP&lt;/td&gt;
+          &lt;td&gt;如何连接外部工具和数据源&lt;/td&gt;
+          &lt;td&gt;外部服务工具、资源、提示&lt;/td&gt;
+          &lt;td&gt;作为工具服务器被 Claude 调用&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;简单说：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Skill 是&amp;quot;工作方法&amp;quot;&lt;/li&gt;
+&lt;li&gt;Plugin 是&amp;quot;能力包&amp;quot;&lt;/li&gt;
+&lt;li&gt;MCP 是&amp;quot;外部工具接口&amp;quot;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;102-skills把流程做成可调用能力&#34;&gt;10.2 Skills：把流程做成可调用能力
+&lt;/h3&gt;&lt;p&gt;一个 Skill 通常是一个目录，里面有 &lt;code&gt;SKILL.md&lt;/code&gt;：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;7
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;.claude/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  skills/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    review-pr/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      SKILL.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      checklist.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      scripts/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        collect_diff.sh
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;&lt;code&gt;SKILL.md&lt;/code&gt; 应该写清楚：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;这个 Skill 解决什么问题&lt;/li&gt;
+&lt;li&gt;什么时候应该使用&lt;/li&gt;
+&lt;li&gt;输入是什么&lt;/li&gt;
+&lt;li&gt;步骤是什么&lt;/li&gt;
+&lt;li&gt;输出格式是什么&lt;/li&gt;
+&lt;li&gt;需要调用哪些命令或脚本&lt;/li&gt;
+&lt;li&gt;失败时如何处理&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;示例：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;15
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;16
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;17
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;18
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;19
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-markdown&#34; data-lang=&#34;markdown&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gh&#34;&gt;# PR Review
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gh&#34;&gt;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;## 何时使用
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;当用户要求审查当前 diff、PR 或 merge request 时使用。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;## 工作步骤
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;1.&lt;/span&gt; 读取当前 diff。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;2.&lt;/span&gt; 判断改动类型：功能、修复、重构、依赖、配置。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;3.&lt;/span&gt; 检查正确性、边界条件、测试覆盖和兼容性。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;4.&lt;/span&gt; 只报告有证据的问题，不做泛泛建议。
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;## 输出格式
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;gu&#34;&gt;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 阻塞问题
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 非阻塞建议
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 已验证项
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;&lt;span class=&#34;k&#34;&gt;-&lt;/span&gt; 未覆盖风险
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;好的 Skill 要像一个可执行流程，而不是一段空泛建议。&lt;/p&gt;
+&lt;h3 id=&#34;103-skills-的管理策略&#34;&gt;10.3 Skills 的管理策略
+&lt;/h3&gt;&lt;p&gt;Skills 不应该无限增长。&lt;/p&gt;
+&lt;p&gt;建议按三个层级管理：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;层级&lt;/th&gt;
+          &lt;th&gt;位置&lt;/th&gt;
+          &lt;th&gt;内容&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;个人 Skills&lt;/td&gt;
+          &lt;td&gt;&lt;code&gt;~/.claude/skills/&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;个人写作、调试、常用工作流&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;项目 Skills&lt;/td&gt;
+          &lt;td&gt;&lt;code&gt;&amp;lt;repo&amp;gt;/.claude/skills/&lt;/code&gt;&lt;/td&gt;
+          &lt;td&gt;当前仓库专用流程&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;插件 Skills&lt;/td&gt;
+          &lt;td&gt;plugin 目录内&lt;/td&gt;
+          &lt;td&gt;团队或社区分发能力&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;命名要稳定，描述要明确。&lt;/p&gt;
+&lt;p&gt;例如 &lt;code&gt;/deploy&lt;/code&gt; 太宽泛，容易误触；&lt;code&gt;/deploy-staging&lt;/code&gt;、&lt;code&gt;/review-pr&lt;/code&gt;、&lt;code&gt;/generate-api-docs&lt;/code&gt; 更清晰。&lt;/p&gt;
+&lt;p&gt;还要定期清理：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;长期不用的 Skill 关掉或删除&lt;/li&gt;
+&lt;li&gt;重复 Skill 合并&lt;/li&gt;
+&lt;li&gt;过时命令更新&lt;/li&gt;
+&lt;li&gt;高风险 Skill 加权限说明&lt;/li&gt;
+&lt;li&gt;输出格式保持一致&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;104-plugins把能力打包版本化分发&#34;&gt;10.4 Plugins：把能力打包、版本化、分发
+&lt;/h3&gt;&lt;p&gt;如果 Skill 只是项目里的一个工作流，Plugin 则是可分发的能力包。&lt;/p&gt;
+&lt;p&gt;官方 plugins 文档说明，插件可以包含：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Skills&lt;/li&gt;
+&lt;li&gt;Agents&lt;/li&gt;
+&lt;li&gt;Hooks&lt;/li&gt;
+&lt;li&gt;MCP servers&lt;/li&gt;
+&lt;li&gt;LSP servers&lt;/li&gt;
+&lt;li&gt;Monitors&lt;/li&gt;
+&lt;li&gt;Themes&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;典型目录可以这样组织：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;my-team-plugin/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  .claude-plugin/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    plugin.json
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  skills/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    review-pr/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      SKILL.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  agents/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    verify.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    security-reviewer.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  hooks/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    post-edit-format.sh
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  mcp/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    jira-server.json
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;Plugin 适合这些场景：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;团队要共享一套 Claude Code 能力&lt;/li&gt;
+&lt;li&gt;多个项目使用同样的审查流程&lt;/li&gt;
+&lt;li&gt;希望版本化发布和回滚&lt;/li&gt;
+&lt;li&gt;希望把 agents、hooks、skills、MCP 一起打包&lt;/li&gt;
+&lt;li&gt;想建立内部插件市场&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果只是一个项目的临时配置，用 &lt;code&gt;.claude/&lt;/code&gt; 就够了。只有当它需要跨项目复用、版本化、分发时，才值得做 Plugin。&lt;/p&gt;
+&lt;h3 id=&#34;105-plugins-的治理重点&#34;&gt;10.5 Plugins 的治理重点
+&lt;/h3&gt;&lt;p&gt;Plugin 带来复用，也带来治理问题。&lt;/p&gt;
+&lt;p&gt;建议至少管理五件事。&lt;/p&gt;
+&lt;p&gt;第一，版本。&lt;/p&gt;
+&lt;p&gt;团队插件要有版本号和变更日志。否则不同项目使用不同版本时，很难定位行为差异。&lt;/p&gt;
+&lt;p&gt;第二，权限。&lt;/p&gt;
+&lt;p&gt;插件可能带 hooks、agents 和 MCP servers，必须审查它会执行什么命令、访问什么系统、读取哪些路径。&lt;/p&gt;
+&lt;p&gt;第三，默认启用范围。&lt;/p&gt;
+&lt;p&gt;不是所有能力都应该默认打开。高风险 hooks、发布类 Skill、外部写入类 MCP 工具应该谨慎启用。&lt;/p&gt;
+&lt;p&gt;第四，配置。&lt;/p&gt;
+&lt;p&gt;插件应该把环境差异放到用户配置或项目配置里，不要把团队私有路径、token、机器名写死。&lt;/p&gt;
+&lt;p&gt;第五，回滚。&lt;/p&gt;
+&lt;p&gt;如果某个插件版本导致 Claude Code 行为异常，团队需要能快速禁用或回退。&lt;/p&gt;
+&lt;h3 id=&#34;106-mcp让-agent-使用外部系统&#34;&gt;10.6 MCP：让 Agent 使用外部系统
+&lt;/h3&gt;&lt;p&gt;MCP 的核心是把外部系统包装成 Claude Code 可以理解和调用的工具。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Jira：查任务、改状态、写评论&lt;/li&gt;
+&lt;li&gt;Slack：读取讨论、发送通知&lt;/li&gt;
+&lt;li&gt;Google Drive：读取设计文档&lt;/li&gt;
+&lt;li&gt;数据库元数据服务：查询表结构&lt;/li&gt;
+&lt;li&gt;内部发布平台：查询发布状态&lt;/li&gt;
+&lt;li&gt;日志平台：拉取错误日志&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;典型调用链是：&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;sequenceDiagram
+    participant C as Claude Code
+    participant M as MCP Server
+    participant S as 外部系统
+
+    C-&amp;gt;&amp;gt;M: 调用工具，例如 get_issue
+    M-&amp;gt;&amp;gt;S: 请求外部 API
+    S-&amp;gt;&amp;gt;M: 返回结构化数据
+    M-&amp;gt;&amp;gt;C: 返回工具结果
+    C-&amp;gt;&amp;gt;C: 把结果纳入上下文并继续推理
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;MCP 的价值不是&amp;quot;让 Claude 多几个插件&amp;quot;，而是把业务上下文纳入 Agent Loop。&lt;/p&gt;
+&lt;h3 id=&#34;107-mcp-的使用原则&#34;&gt;10.7 MCP 的使用原则
+&lt;/h3&gt;&lt;p&gt;第一，工具描述要清楚。&lt;/p&gt;
+&lt;p&gt;模型是否会正确调用 MCP，很大程度取决于工具名称、参数说明和返回结构。&lt;/p&gt;
+&lt;p&gt;第二，返回结果要结构化。&lt;/p&gt;
+&lt;p&gt;不要返回一大段不可解析文本。更好的方式是返回字段明确的数据，例如 issue id、标题、状态、负责人、相关链接、错误栈、时间戳。&lt;/p&gt;
+&lt;p&gt;第三，权限要最小化。&lt;/p&gt;
+&lt;p&gt;读 Jira 和改 Jira 状态不是同一类权限。读取日志和删除日志更不是同一类权限。&lt;/p&gt;
+&lt;p&gt;第四，写操作要谨慎。&lt;/p&gt;
+&lt;p&gt;凡是会修改外部系统的 MCP 工具，例如关闭工单、发布版本、发送通知，最好加确认或限制触发条件。&lt;/p&gt;
+&lt;p&gt;第五，MCP 不能替代项目上下文。&lt;/p&gt;
+&lt;p&gt;MCP 提供外部事实，&lt;code&gt;CLAUDE.md&lt;/code&gt; 和代码库提供项目规则。两者应该配合，而不是互相替代。&lt;/p&gt;
+&lt;h3 id=&#34;108-三者如何组合&#34;&gt;10.8 三者如何组合
+&lt;/h3&gt;&lt;p&gt;Skills、Plugins、MCP 可以组合使用。&lt;/p&gt;
+&lt;p&gt;例如团队要做一个&amp;quot;发布前检查&amp;quot;能力：&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart TD
+    A[release-check Plugin] --&amp;gt; B[Skill: /release-check]
+    A --&amp;gt; C[Agent: Release Agent]
+    A --&amp;gt; D[Agent: Verify Agent]
+    A --&amp;gt; E[Hook: 阻止未验证发布]
+    A --&amp;gt; F[MCP: Jira / Slack / 发布平台]
+    B --&amp;gt; C
+    C --&amp;gt; D
+    C --&amp;gt; F
+    E --&amp;gt; C
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;实际工作流可能是：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;用户运行 &lt;code&gt;/release-check&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;Skill 定义发布检查流程&lt;/li&gt;
+&lt;li&gt;Release Agent 汇总版本、diff、变更说明&lt;/li&gt;
+&lt;li&gt;Verify Agent 运行测试和构建&lt;/li&gt;
+&lt;li&gt;MCP 查询 Jira 是否还有阻塞 issue&lt;/li&gt;
+&lt;li&gt;MCP 查询发布平台当前状态&lt;/li&gt;
+&lt;li&gt;Hook 在缺少验证结果时阻止发布命令&lt;/li&gt;
+&lt;li&gt;主 Agent 输出发布是否可继续&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;这就是生态能力的组合：Skill 定流程，Agent 做分工，MCP 接外部系统，Hook 做强约束，Plugin 负责打包分发。&lt;/p&gt;
+&lt;h3 id=&#34;109-生态管理的推荐目录&#34;&gt;10.9 生态管理的推荐目录
+&lt;/h3&gt;&lt;p&gt;一个比较清晰的项目结构可以是：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt; 1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt; 9
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;10
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;11
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;12
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;13
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;14
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;15
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;16
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;17
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;18
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;19
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;repo/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  CLAUDE.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  .claude/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    settings.json
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    rules/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      backend.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      frontend.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      security.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    skills/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      review-pr/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        SKILL.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      release-check/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;        SKILL.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    agents/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      verify.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      security-reviewer.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    hooks/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      block-dangerous-command.sh
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;      post-edit-format.sh
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;团队级可分发能力则放到插件仓库：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;6
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;7
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;8
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;9
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;claude-code-team-plugin/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  .claude-plugin/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;    plugin.json
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  skills/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  agents/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  hooks/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  mcp/
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  README.md
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;  CHANGELOG.md
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;项目内 &lt;code&gt;.claude/&lt;/code&gt; 解决&amp;quot;这个项目怎么工作&amp;quot;。&lt;/p&gt;
+&lt;p&gt;Plugin 解决&amp;quot;这套能力如何跨项目共享&amp;quot;。&lt;/p&gt;
+&lt;p&gt;MCP 解决&amp;quot;Agent 如何访问外部业务系统&amp;quot;。&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;十一实践建议&#34;&gt;十一、实践建议
+&lt;/h2&gt;&lt;h3 id=&#34;111-先写好-claudemd&#34;&gt;11.1 先写好 &lt;code&gt;CLAUDE.md&lt;/code&gt;
+&lt;/h3&gt;&lt;p&gt;如果一个项目首次接入 Claude Code，最值得优先做的是写好 &lt;code&gt;CLAUDE.md&lt;/code&gt;。&lt;/p&gt;
+&lt;p&gt;建议至少包含：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;项目是什么&lt;/li&gt;
+&lt;li&gt;主要目录结构&lt;/li&gt;
+&lt;li&gt;本地启动命令&lt;/li&gt;
+&lt;li&gt;测试命令&lt;/li&gt;
+&lt;li&gt;lint / format（静态检查 / 格式化）命令&lt;/li&gt;
+&lt;li&gt;代码风格&lt;/li&gt;
+&lt;li&gt;常见坑&lt;/li&gt;
+&lt;li&gt;提交或 PR 规范&lt;/li&gt;
+&lt;li&gt;禁止事项&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这能显著降低 Claude Code 每次重新摸索项目的成本。&lt;/p&gt;
+&lt;h3 id=&#34;112-把重复流程沉淀成-skills&#34;&gt;11.2 把重复流程沉淀成 Skills
+&lt;/h3&gt;&lt;p&gt;如果团队经常让 Claude Code 做同一类任务，例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;审查 PR&lt;/li&gt;
+&lt;li&gt;写接口文档&lt;/li&gt;
+&lt;li&gt;生成发布说明&lt;/li&gt;
+&lt;li&gt;分析 CI 失败&lt;/li&gt;
+&lt;li&gt;做依赖升级&lt;/li&gt;
+&lt;li&gt;扫描安全风险&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;就应该考虑把流程沉淀成 Skills。&lt;/p&gt;
+&lt;p&gt;Skills 的意义不是&amp;quot;多写一个提示词文件&amp;quot;，而是让团队把可复用的工作方法标准化。&lt;/p&gt;
+&lt;h3 id=&#34;113-用-hooks-处理确定性动作&#34;&gt;11.3 用 Hooks 处理确定性动作
+&lt;/h3&gt;&lt;p&gt;不要把所有规则都写进提示词。&lt;/p&gt;
+&lt;p&gt;提示词适合表达偏好和方法，Hooks 适合表达强制动作和自动化流程。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;编辑后自动格式化&lt;/li&gt;
+&lt;li&gt;提交前运行测试&lt;/li&gt;
+&lt;li&gt;禁止访问密钥文件&lt;/li&gt;
+&lt;li&gt;高风险命令前阻断&lt;/li&gt;
+&lt;li&gt;会话结束时记录审计日志&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;这些事情越确定，越适合 Hooks。&lt;/p&gt;
+&lt;h3 id=&#34;114-用-mcp-接入真实业务上下文&#34;&gt;11.4 用 MCP 接入真实业务上下文
+&lt;/h3&gt;&lt;p&gt;很多开发任务失败，不是因为模型不会写代码，而是因为它缺少业务上下文。&lt;/p&gt;
+&lt;p&gt;例如：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;需求文档在 Google Drive&lt;/li&gt;
+&lt;li&gt;任务状态在 Jira&lt;/li&gt;
+&lt;li&gt;错误报告在 Slack&lt;/li&gt;
+&lt;li&gt;接口契约在内部平台&lt;/li&gt;
+&lt;li&gt;发布记录在自建系统&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;MCP 的价值就是把这些外部上下文变成 Claude Code 可以调用的工具。&lt;/p&gt;
+&lt;h3 id=&#34;115-为不同入口设计不同工作流&#34;&gt;11.5 为不同入口设计不同工作流
+&lt;/h3&gt;&lt;p&gt;不要把所有场景都塞进终端。&lt;/p&gt;
+&lt;p&gt;更合理的分工是：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th&gt;场景&lt;/th&gt;
+          &lt;th&gt;推荐入口&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td&gt;快速本地修改&lt;/td&gt;
+          &lt;td&gt;CLI&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;查看差异和手工审查&lt;/td&gt;
+          &lt;td&gt;IDE 或 Desktop&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;长时间任务&lt;/td&gt;
+          &lt;td&gt;Web 或 Desktop&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;自动 PR 审查&lt;/td&gt;
+          &lt;td&gt;GitHub Actions / GitLab CI/CD&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;团队聊天触发&lt;/td&gt;
+          &lt;td&gt;Slack&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td&gt;内部平台集成&lt;/td&gt;
+          &lt;td&gt;Agent SDK&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;Claude Code 的优势正是多入口共享底层能力。&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;十二总结&#34;&gt;十二、总结
+&lt;/h2&gt;&lt;p&gt;Claude Code 的本质是一个面向软件工程的编码 Agent Runtime。&lt;/p&gt;
+&lt;p&gt;它的核心不是&amp;quot;会写代码的模型&amp;quot;，而是这一整套系统：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;多入口产品层：CLI、IDE、Desktop、Web、CI、Slack、SDK&lt;/li&gt;
+&lt;li&gt;会话编排层：任务状态、历史、恢复、迁移&lt;/li&gt;
+&lt;li&gt;上下文层：代码库、&lt;code&gt;CLAUDE.md&lt;/code&gt;、自动记忆、Skills、MCP&lt;/li&gt;
+&lt;li&gt;上下文管理层：上下文窗口、压缩、清理、子 Agent 隔离和证据保留&lt;/li&gt;
+&lt;li&gt;模型推理层：规划、判断、生成工具调用&lt;/li&gt;
+&lt;li&gt;Prompt 管理层：长期规则、任务上下文、按需加载流程和局部规则&lt;/li&gt;
+&lt;li&gt;权限策略层：确认、配置、Hooks、托管约束&lt;/li&gt;
+&lt;li&gt;工具执行层：文件、Shell、Git、外部系统&lt;/li&gt;
+&lt;li&gt;调度协作层：多 Agent 分工、验证闭环、后台任务和调度链&lt;/li&gt;
+&lt;li&gt;扩展生态层：MCP、Hooks、Skills、Plugins、Agent SDK&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;如果只把 Claude Code 当成&amp;quot;更聪明的代码补全&amp;quot;，会低估它。&lt;/p&gt;
+&lt;p&gt;更准确的理解是：Claude Code 把大语言模型放进真实工程环境里，通过 prompt 管理、上下文、工具、权限、多 Agent 调度和扩展生态，让模型能够参与完整的软件开发流程。&lt;/p&gt;
+&lt;p&gt;这也是它和普通 AI 聊天工具最大的区别。&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;参考资料&#34;&gt;参考资料
+&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://code.claude.com/docs/zh-CN/overview&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Claude Code 官方中文概览&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://code.claude.com/docs/zh-CN/how-claude-code-works&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Claude Code 如何工作&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://code.claude.com/docs/zh-CN/context-window&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;探索上下文窗口&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://code.claude.com/docs/zh-CN/memory&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Claude 如何记住你的项目&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://code.claude.com/docs/zh-CN/best-practices&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Claude Code 最佳实践&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://code.claude.com/docs/zh-CN/features-overview&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;扩展 Claude Code&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://code.claude.com/docs/zh-CN/claude-directory&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;探索 .claude 目录&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://code.claude.com/docs/zh-CN/mcp&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;通过 MCP 将 Claude Code 连接到工具&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://code.claude.com/docs/zh-CN/sub-agents&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;创建自定义 subagents&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://code.claude.com/docs/zh-CN/skills&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;使用 Skills 扩展 Claude&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://code.claude.com/docs/zh-CN/plugins&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;创建 Plugins&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://code.claude.com/docs/zh-CN/plugins-reference&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Plugins 参考&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://code.claude.com/docs/zh-CN/commands&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;命令&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://code.claude.com/docs/zh-CN/settings&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Claude Code 设置&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://code.claude.com/docs/zh-CN/headless&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;以编程方式运行 Claude Code&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://code.claude.com/docs/zh-CN/agent-sdk/plugins&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;SDK 中的 Plugins&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id=&#34;路径缩写说明&#34;&gt;路径缩写说明
+&lt;/h2&gt;&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;hugo-main -&amp;gt; /home/agsol/workspace/hugo-main&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;claude-code-architecture-and-implementation.md（hugo-main） -&amp;gt; content/post/ai/claude-code-architecture-and-implementation.md&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+</description>
+        </item>
+        <item>
         <title>Codex 使用指南：架构、配置、Hooks、Skills、MCP 与常见面试题</title>
         <link>https://Agsol701.github.io/p/codex-%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97%E6%9E%B6%E6%9E%84%E9%85%8D%E7%BD%AEhooksskillsmcp-%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/</link>
         <pubDate>Wed, 01 Jul 2026 00:00:00 +0000</pubDate>
@@ -3832,6 +5974,135 @@
 &lt;/div&gt;&lt;p&gt;访问 &lt;code&gt;http://YOUR_SERVER_IP:8080&lt;/code&gt; 进入管理面板。&lt;/p&gt;
 &lt;blockquote&gt;
 &lt;p&gt;&lt;strong&gt;远程部署 OAuth 注意事项&lt;/strong&gt;：OpenAI OAuth 回调地址为 &lt;code&gt;localhost:1455&lt;/code&gt;，如果通过远程 IP 访问面板进行 OAuth 授权，回调无法到达服务端。建议在本地（macOS）部署 sub2api 完成 OAuth 授权，或在服务器上使用带桌面环境的浏览器操作。&lt;/p&gt;&lt;/blockquote&gt;
+&lt;h3 id=&#34;远程访问面板时的-oauth-回调问题&#34;&gt;远程访问面板时的 OAuth 回调问题
+&lt;/h3&gt;&lt;p&gt;在服务器上部署 Sub2API 后，如果从本机浏览器访问远程面板，例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;http://YOUR_SERVER_IP:8080/admin/accounts
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;再进行 OpenAI / Codex OAuth 授权，可能会遇到授权完成但 Sub2API 无法验证通过的问题。原因是 OAuth 流程里的 &lt;code&gt;localhost&lt;/code&gt; 总是相对于当前浏览器所在机器，而不是相对于 Sub2API 服务器。&lt;/p&gt;
+&lt;p&gt;例如授权回调地址为：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;http://localhost:1455
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;如果浏览器运行在本机，&lt;code&gt;localhost:1455&lt;/code&gt; 指向本机；如果浏览器运行在服务器桌面环境，&lt;code&gt;localhost:1455&lt;/code&gt; 才指向服务器。远程访问 Sub2API 面板时，浏览器会把授权结果回调到本机，服务器上的 Sub2API 或 OAuth 辅助流程就可能拿不到 code，导致验证失败、卡住或需要手动复制 code。&lt;/p&gt;
+&lt;p&gt;推荐两种处理方式。&lt;/p&gt;
+&lt;h4 id=&#34;方式一在服务器浏览器中操作&#34;&gt;方式一：在服务器浏览器中操作
+&lt;/h4&gt;&lt;p&gt;如果服务器有桌面环境，可以直接在服务器上打开浏览器访问：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;http://localhost:8080/admin/accounts
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;此时浏览器、Sub2API 和 &lt;code&gt;localhost:1455&lt;/code&gt; 都在同一台服务器上，OAuth 回调路径最简单。&lt;/p&gt;
+&lt;h4 id=&#34;方式二通过-ssh-转发回调端口&#34;&gt;方式二：通过 SSH 转发回调端口
+&lt;/h4&gt;&lt;p&gt;如果仍想在本机浏览器操作，可以将本机的 &lt;code&gt;1455&lt;/code&gt; 端口转发到服务器：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;ssh -L 1455:127.0.0.1:1455 user@YOUR_SERVER_IP
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;保持 SSH 会话不要关闭，然后在本机浏览器继续访问远程 Sub2API 面板：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;http://YOUR_SERVER_IP:8080/admin/accounts
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;这样浏览器访问 &lt;code&gt;localhost:1455&lt;/code&gt; 时，请求会通过 SSH 隧道转发到服务器的 &lt;code&gt;127.0.0.1:1455&lt;/code&gt;。&lt;/p&gt;
+&lt;p&gt;需要注意，端口转发只解决 OAuth 回调地址的问题，不解决上游请求出口问题。如果 token exchange 报 &lt;code&gt;unsupported_country_region_territory&lt;/code&gt;，还需要在 Sub2API 后台「代理管理」中配置可用代理，并在添加 OpenAI / Codex OAuth 账号时选择该代理。&lt;/p&gt;
+&lt;h3 id=&#34;docker-部署下的代理配置&#34;&gt;Docker 部署下的代理配置
+&lt;/h3&gt;&lt;p&gt;如果服务器上已经运行 Clash Verge、Mihomo 或其他代理客户端，Sub2API 仍然可能需要在后台单独配置代理。原因是代理客户端只是监听了一个本地端口，并不会自动接管 Docker 容器内应用的所有出站请求。Sub2API 容器默认会直接访问 OpenAI、Claude、Gemini 等上游服务；如果服务器公网出口所在地区不被上游支持，就可能在 OAuth token exchange 或后续请求中遇到 &lt;code&gt;unsupported_country_region_territory&lt;/code&gt;、&lt;code&gt;request_forbidden&lt;/code&gt; 等错误。&lt;/p&gt;
+&lt;p&gt;常见结构如下：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;服务器宿主机
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;├─ Clash Verge / Mihomo 监听代理端口，例如 7897
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;└─ Docker 容器 sub2api
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;   └─ 默认直连上游服务，除非在 Sub2API 中显式选择代理
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;因此，需要先确认代理客户端监听的端口，例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;ss -lntp &lt;span class=&#34;p&#34;&gt;|&lt;/span&gt; grep -Ei &lt;span class=&#34;s2&#34;&gt;&amp;#34;789|clash|mihomo|verge&amp;#34;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;再从宿主机测试代理出口：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;curl -x http://127.0.0.1:7897 https://ifconfig.me
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;如果 Sub2API 运行在 Docker 容器中，容器里的 &lt;code&gt;127.0.0.1&lt;/code&gt; 指向容器自身，不是宿主机。后台「代理管理」中应填写容器能够访问到的宿主机地址，例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;4
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;5
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;协议: http
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;主机地址: YOUR_SERVER_LAN_IP
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;端口: 7897
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;用户名: 留空或按代理配置填写
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;密码: 留空或按代理配置填写
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;也可以使用 Docker 网关地址，例如：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;2
+&lt;/span&gt;&lt;span class=&#34;lnt&#34;&gt;3
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-text&#34; data-lang=&#34;text&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;协议: http
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;主机地址: 172.19.0.1
+&lt;/span&gt;&lt;/span&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;端口: 7897
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;实际地址以当前 Docker 网络为准。可以从 Sub2API 容器内测试：&lt;/p&gt;
+&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
+&lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code&gt;&lt;span class=&#34;lnt&#34;&gt;1
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class=&#34;lntd&#34;&gt;
+&lt;pre tabindex=&#34;0&#34; class=&#34;chroma&#34;&gt;&lt;code class=&#34;language-bash&#34; data-lang=&#34;bash&#34;&gt;&lt;span class=&#34;line&#34;&gt;&lt;span class=&#34;cl&#34;&gt;docker &lt;span class=&#34;nb&#34;&gt;exec&lt;/span&gt; sub2api sh -lc &lt;span class=&#34;s1&#34;&gt;&amp;#39;curl -x http://YOUR_SERVER_LAN_IP:7897 https://ifconfig.me&amp;#39;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;测试返回的出口 IP 应当是代理节点的公网 IP，而不是服务器原始公网 IP。确认可用后，在 Sub2API 后台进入「代理管理」新增代理；添加 OpenAI / Codex OAuth 账号时选择该代理，再生成授权链接并完成 code exchange。这样 token exchange 和后续刷新 token 才会走代理。&lt;/p&gt;
 &lt;h3 id=&#34;升级&#34;&gt;升级
 &lt;/h3&gt;&lt;div class=&#34;highlight&#34;&gt;&lt;div class=&#34;chroma&#34;&gt;
 &lt;table class=&#34;lntable&#34;&gt;&lt;tr&gt;&lt;td class=&#34;lntd&#34;&gt;
