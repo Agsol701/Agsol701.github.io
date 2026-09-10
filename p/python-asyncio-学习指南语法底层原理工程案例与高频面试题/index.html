@@ -1,0 +1,1405 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 Python 中并不存在一个名为 async 的标准包。日常所说的“Python async”，通常包含两部分：async / await 异步语法，以及 asyncio（Asynchronous I/O，异步输入输出）标准库。\nasyncio 最适合网络请求、数据库访问、远程过程调用和长连接等 I/O（Input/Output，输入输出）密集型任务。它的关键价值不是让一段代码执行得更快，而是在一个任务等待 I/O 时，让同一线程继续处理其他已经就绪的任务。\n这篇文章从基本语法开始，逐层讲清协程、Task、Future、事件循环和操作系统 I/O 多路复用之间的关系，并结合 console、dte、ce、workflow 四个项目中的真实代码说明 async 在工程里如何使用、如何被误用。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 I/O、CPU、GIL、HTTP 和 DAG。\n一、先建立正确的异步模型 1.1 并发不等于并行 并发强调一段时间内处理多个任务；并行强调同一时刻真的有多个任务在执行。\n默认情况下，一个 asyncio 事件循环在一个线程中运行，并采用协作式调度：事件循环一次运行一个 Task，Task 执行到尚未完成的 await 时主动暂停，事件循环才有机会运行其他 Task。\n模型 谁负责调度 常见切换点 典型用途 asyncio 事件循环 await 等待未完成对象时 高并发 I/O 多线程 操作系统 线程可能被抢占 阻塞 I/O、调用同步库 多进程 操作系统 进程时间片切换 CPU 密集型计算 CPU（Central Processing Unit，中央处理器）密集型工作不会因为改写成 async def 自动变快。纯 Python 代码还会受到 GIL（Global Interpreter Lock，全局解释器锁）的影响；需要真正并行计算时，通常应考虑多进程或能释放 GIL 的底层库。\n">
+<title>Python Asyncio 学习指南：语法、底层原理、工程案例与高频面试题</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/python-asyncio-%E5%AD%A6%E4%B9%A0%E6%8C%87%E5%8D%97%E8%AF%AD%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%B7%A5%E7%A8%8B%E6%A1%88%E4%BE%8B%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><style>.mermaid { text-align: center; }</style>
+<script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
+    });
+</script><meta property='og:title' content="Python Asyncio 学习指南：语法、底层原理、工程案例与高频面试题">
+<meta property='og:description' content="写在前面 Python 中并不存在一个名为 async 的标准包。日常所说的“Python async”，通常包含两部分：async / await 异步语法，以及 asyncio（Asynchronous I/O，异步输入输出）标准库。\nasyncio 最适合网络请求、数据库访问、远程过程调用和长连接等 I/O（Input/Output，输入输出）密集型任务。它的关键价值不是让一段代码执行得更快，而是在一个任务等待 I/O 时，让同一线程继续处理其他已经就绪的任务。\n这篇文章从基本语法开始，逐层讲清协程、Task、Future、事件循环和操作系统 I/O 多路复用之间的关系，并结合 console、dte、ce、workflow 四个项目中的真实代码说明 async 在工程里如何使用、如何被误用。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 I/O、CPU、GIL、HTTP 和 DAG。\n一、先建立正确的异步模型 1.1 并发不等于并行 并发强调一段时间内处理多个任务；并行强调同一时刻真的有多个任务在执行。\n默认情况下，一个 asyncio 事件循环在一个线程中运行，并采用协作式调度：事件循环一次运行一个 Task，Task 执行到尚未完成的 await 时主动暂停，事件循环才有机会运行其他 Task。\n模型 谁负责调度 常见切换点 典型用途 asyncio 事件循环 await 等待未完成对象时 高并发 I/O 多线程 操作系统 线程可能被抢占 阻塞 I/O、调用同步库 多进程 操作系统 进程时间片切换 CPU 密集型计算 CPU（Central Processing Unit，中央处理器）密集型工作不会因为改写成 async def 自动变快。纯 Python 代码还会受到 GIL（Global Interpreter Lock，全局解释器锁）的影响；需要真正并行计算时，通常应考虑多进程或能释放 GIL 的底层库。\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/python-asyncio-%E5%AD%A6%E4%B9%A0%E6%8C%87%E5%8D%97%E8%AF%AD%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%B7%A5%E7%A8%8B%E6%A1%88%E4%BE%8B%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='python' /><meta property='article:tag' content='asyncio' /><meta property='article:tag' content='concurrency' /><meta property='article:tag' content='event-loop' /><meta property='article:published_time' content='2026-09-01T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-09-01T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="Python Asyncio 学习指南：语法、底层原理、工程案例与高频面试题">
+<meta name="twitter:description" content="写在前面 Python 中并不存在一个名为 async 的标准包。日常所说的“Python async”，通常包含两部分：async / await 异步语法，以及 asyncio（Asynchronous I/O，异步输入输出）标准库。\nasyncio 最适合网络请求、数据库访问、远程过程调用和长连接等 I/O（Input/Output，输入输出）密集型任务。它的关键价值不是让一段代码执行得更快，而是在一个任务等待 I/O 时，让同一线程继续处理其他已经就绪的任务。\n这篇文章从基本语法开始，逐层讲清协程、Task、Future、事件循环和操作系统 I/O 多路复用之间的关系，并结合 console、dte、ce、workflow 四个项目中的真实代码说明 async 在工程里如何使用、如何被误用。\n文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 I/O、CPU、GIL、HTTP 和 DAG。\n一、先建立正确的异步模型 1.1 并发不等于并行 并发强调一段时间内处理多个任务；并行强调同一时刻真的有多个任务在执行。\n默认情况下，一个 asyncio 事件循环在一个线程中运行，并采用协作式调度：事件循环一次运行一个 Task，Task 执行到尚未完成的 await 时主动暂停，事件循环才有机会运行其他 Task。\n模型 谁负责调度 常见切换点 典型用途 asyncio 事件循环 await 等待未完成对象时 高并发 I/O 多线程 操作系统 线程可能被抢占 阻塞 I/O、调用同步库 多进程 操作系统 进程时间片切换 CPU 密集型计算 CPU（Central Processing Unit，中央处理器）密集型工作不会因为改写成 async def 自动变快。纯 Python 代码还会受到 GIL（Global Interpreter Lock，全局解释器锁）的影响；需要真正并行计算时，通常应考虑多进程或能释放 GIL 的底层库。\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about-me/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About Me</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ul>
+    <li><a href="#写在前面">写在前面</a></li>
+    <li><a href="#一先建立正确的异步模型">一、先建立正确的异步模型</a>
+      <ul>
+        <li><a href="#11-并发不等于并行">1.1 并发不等于并行</a>
+          <ul>
+            <li><a href="#111-gil-锁解决什么问题">1.1.1 GIL 锁解决什么问题</a></li>
+            <li><a href="#112-gil-如何影响多线程">1.1.2 GIL 如何影响多线程</a></li>
+            <li><a href="#113-gil-与-asyncio-的关系">1.1.3 GIL 与 asyncio 的关系</a></li>
+          </ul>
+        </li>
+        <li><a href="#12-协程是可暂停可恢复的计算">1.2 协程是可暂停、可恢复的计算</a></li>
+        <li><a href="#13-await-等待的是什么">1.3 <code>await</code> 等待的是什么</a></li>
+      </ul>
+    </li>
+    <li><a href="#二从语法到可运行程序">二、从语法到可运行程序</a>
+      <ul>
+        <li><a href="#21-使用-asynciorun-启动程序">2.1 使用 <code>asyncio.run()</code> 启动程序</a></li>
+        <li><a href="#22-顺序等待与并发等待">2.2 顺序等待与并发等待</a></li>
+        <li><a href="#23-使用-task-管理任务生命周期">2.3 使用 Task 管理任务生命周期</a></li>
+        <li><a href="#24-异步上下文与异步迭代">2.4 异步上下文与异步迭代</a></li>
+      </ul>
+    </li>
+    <li><a href="#三taskfuture-与事件循环">三、Task、Future 与事件循环</a>
+      <ul>
+        <li><a href="#31-future-是未来结果的容器">3.1 Future 是未来结果的容器</a></li>
+        <li><a href="#32-task-负责驱动协程">3.2 Task 负责驱动协程</a></li>
+        <li><a href="#33-事件循环维护什么">3.3 事件循环维护什么</a></li>
+        <li><a href="#34-一次-await-的完整链路">3.4 一次 <code>await</code> 的完整链路</a></li>
+      </ul>
+    </li>
+    <li><a href="#四操作系统如何支撑异步-io">四、操作系统如何支撑异步 I/O</a>
+      <ul>
+        <li><a href="#41-io-多路复用">4.1 I/O 多路复用</a></li>
+        <li><a href="#42-asynciosleep-为什么不阻塞线程">4.2 <code>asyncio.sleep()</code> 为什么不阻塞线程</a></li>
+        <li><a href="#43-async-为什么不天然提升-cpu-性能">4.3 async 为什么不天然提升 CPU 性能</a></li>
+      </ul>
+    </li>
+    <li><a href="#五超时取消与异常">五、超时、取消与异常</a>
+      <ul>
+        <li><a href="#51-超时是异步系统的基本边界">5.1 超时是异步系统的基本边界</a></li>
+        <li><a href="#52-取消是一种控制信号">5.2 取消是一种控制信号</a></li>
+        <li><a href="#53-并发任务的异常策略">5.3 并发任务的异常策略</a></li>
+      </ul>
+    </li>
+    <li><a href="#六四个项目中的真实案例">六、四个项目中的真实案例</a>
+      <ul>
+        <li><a href="#61-console异步-http-与连接会话复用">6.1 console：异步 HTTP 与连接会话复用</a></li>
+        <li><a href="#62-dte用-gather-并发执行同批-dag-任务">6.2 dte：用 <code>gather()</code> 并发执行同批 DAG 任务</a></li>
+        <li><a href="#63-dte用-async-for-消费流式结果">6.3 dte：用 <code>async for</code> 消费流式结果</a></li>
+        <li><a href="#64-ce异步请求-embedding-服务">6.4 ce：异步请求 Embedding 服务</a></li>
+        <li><a href="#65-ce异步调用链保持-async-贯通">6.5 ce：异步调用链保持 async 贯通</a></li>
+        <li><a href="#66-workflow异步接口不等于异步实现">6.6 workflow：异步接口不等于异步实现</a></li>
+        <li><a href="#67-案例对照">6.7 案例对照</a></li>
+      </ul>
+    </li>
+    <li><a href="#七常见陷阱与实践建议">七、常见陷阱与实践建议</a>
+      <ul>
+        <li><a href="#71-不要在协程中调用阻塞-io">7.1 不要在协程中调用阻塞 I/O</a></li>
+        <li><a href="#72-并发必须有限制">7.2 并发必须有限制</a></li>
+        <li><a href="#73-共享状态仍然会发生竞态">7.3 共享状态仍然会发生竞态</a></li>
+        <li><a href="#74-做好超时重试和取消传播">7.4 做好超时、重试和取消传播</a></li>
+        <li><a href="#75-为-task-保留引用并消费异常">7.5 为 Task 保留引用并消费异常</a></li>
+        <li><a href="#76-开启调试与可观测性">7.6 开启调试与可观测性</a></li>
+      </ul>
+    </li>
+    <li><a href="#八常见高频面试题">八、常见高频面试题</a>
+      <ul>
+        <li><a href="#81-async-def-函数调用后为什么没有立即执行">8.1 <code>async def</code> 函数调用后为什么没有立即执行</a></li>
+        <li><a href="#82-await-是否每次都会切换协程">8.2 <code>await</code> 是否每次都会切换协程</a></li>
+        <li><a href="#83-taskfuture-和协程有什么区别">8.3 Task、Future 和协程有什么区别</a></li>
+        <li><a href="#84-asynciogather-为什么能缩短总耗时">8.4 <code>asyncio.gather()</code> 为什么能缩短总耗时</a></li>
+        <li><a href="#85-async-与多线程有什么区别">8.5 async 与多线程有什么区别</a></li>
+        <li><a href="#86-为什么在-async-def-中调用-requestsget-仍会阻塞">8.6 为什么在 <code>async def</code> 中调用 <code>requests.get()</code> 仍会阻塞</a></li>
+        <li><a href="#87-单线程-asyncio-是否还需要锁">8.7 单线程 asyncio 是否还需要锁</a></li>
+        <li><a href="#88-如何限制异步任务的并发量">8.8 如何限制异步任务的并发量</a></li>
+        <li><a href="#89-如何优雅地取消异步任务">8.9 如何优雅地取消异步任务</a></li>
+        <li><a href="#810-如何判断一段-async-代码是否真正非阻塞">8.10 如何判断一段 async 代码是否真正非阻塞</a></li>
+      </ul>
+    </li>
+    <li><a href="#九附录进一步阅读">九、附录：进一步阅读</a>
+      <ul>
+        <li><a href="#91-python-官方文档一手来源">9.1 Python 官方文档（一手来源）</a></li>
+        <li><a href="#92-相关概念文章">9.2 相关概念文章</a></li>
+        <li><a href="#93-路径缩写说明">9.3 路径缩写说明</a></li>
+        <li><a href="#94-一句话总结">9.4 一句话总结</a></li>
+      </ul>
+    </li>
+  </ul>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/pythonxia/" >
+                Pythonxia
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/python-asyncio-%E5%AD%A6%E4%B9%A0%E6%8C%87%E5%8D%97%E8%AF%AD%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E5%B7%A5%E7%A8%8B%E6%A1%88%E4%BE%8B%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">Python Asyncio 学习指南：语法、底层原理、工程案例与高频面试题</a>
+        </h2>
+    
+        
+
+        
+            
+            <div class="article-source">source: python-asyncio-learning-guide</div>
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">Sep 01, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h2 id="写在前面">写在前面
+</h2><p>Python 中并不存在一个名为 <code>async</code> 的标准包。日常所说的“Python async”，通常包含两部分：<code>async</code> / <code>await</code> 异步语法，以及 <code>asyncio</code>（Asynchronous I/O，异步输入输出）标准库。</p>
+<p><code>asyncio</code> 最适合网络请求、数据库访问、远程过程调用和长连接等 I/O（Input/Output，输入输出）密集型任务。它的关键价值不是让一段代码执行得更快，而是在一个任务等待 I/O 时，让同一线程继续处理其他已经就绪的任务。</p>
+<p>这篇文章从基本语法开始，逐层讲清协程、Task、Future、事件循环和操作系统 I/O 多路复用之间的关系，并结合 console、dte、ce、workflow 四个项目中的真实代码说明 async 在工程里如何使用、如何被误用。</p>
+<blockquote>
+<p>文中术语首次出现时给出全称，后续直接使用缩写。常见缩写包括 I/O、CPU、GIL、HTTP 和 DAG。</p></blockquote>
+<hr>
+<h2 id="一先建立正确的异步模型">一、先建立正确的异步模型
+</h2><h3 id="11-并发不等于并行">1.1 并发不等于并行
+</h3><p>并发强调一段时间内处理多个任务；并行强调同一时刻真的有多个任务在执行。</p>
+<p>默认情况下，一个 <code>asyncio</code> 事件循环在一个线程中运行，并采用协作式调度：事件循环一次运行一个 Task，Task 执行到尚未完成的 <code>await</code> 时主动暂停，事件循环才有机会运行其他 Task。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>模型</th>
+          <th>谁负责调度</th>
+          <th>常见切换点</th>
+          <th>典型用途</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td><code>asyncio</code></td>
+          <td>事件循环</td>
+          <td><code>await</code> 等待未完成对象时</td>
+          <td>高并发 I/O</td>
+      </tr>
+      <tr>
+          <td>多线程</td>
+          <td>操作系统</td>
+          <td>线程可能被抢占</td>
+          <td>阻塞 I/O、调用同步库</td>
+      </tr>
+      <tr>
+          <td>多进程</td>
+          <td>操作系统</td>
+          <td>进程时间片切换</td>
+          <td>CPU 密集型计算</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>CPU（Central Processing Unit，中央处理器）密集型工作不会因为改写成 <code>async def</code> 自动变快。纯 Python 代码还会受到 GIL（Global Interpreter Lock，全局解释器锁）的影响；需要真正并行计算时，通常应考虑多进程或能释放 GIL 的底层库。</p>
+<h4 id="111-gil-锁解决什么问题">1.1.1 GIL 锁解决什么问题
+</h4><p>在传统 CPython 实现中，GIL 是解释器进程内的一把全局锁。一个进程即使创建了多个 Python 线程，同一时刻通常也只有一个线程能够持有 GIL 并执行 Python 字节码。</p>
+<p>GIL 的主要作用是保护解释器内部状态，尤其是对象引用计数等共享数据，避免多个线程同时修改这些状态而破坏内存一致性。它降低了 CPython 内存管理和 C 扩展开发的复杂度，但也限制了多个线程并行执行纯 Python 计算的能力。</p>
+<p>需要注意，GIL 不是业务代码的数据锁：</p>
+<ul>
+<li>它不能保证一组业务操作具有原子性；</li>
+<li>它不能替代 <code>threading.Lock</code>、数据库锁或分布式锁；</li>
+<li>线程可能在多条语句之间发生切换，共享可变状态仍可能产生竞态条件；</li>
+<li>C 扩展可以在执行耗时计算时主动释放 GIL，因此 NumPy 等底层库仍可能利用多核并行。</li>
+</ul>
+<h4 id="112-gil-如何影响多线程">1.1.2 GIL 如何影响多线程
+</h4><p>对于纯 Python CPU 密集型任务，多线程通常不能让多个核心同时执行 Python 字节码。线程数增加后，还会引入调度和锁竞争开销，因此不一定比单线程更快。</p>
+<p>对于 I/O 密集型任务，线程仍然有价值。线程执行网络读取、文件读取等阻塞 I/O 时，解释器通常会释放 GIL，其他线程便可以继续执行。所以 GIL 限制的是 Python 字节码的并行执行，而不是禁止线程并发，也不是锁住所有系统调用。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>任务类型</th>
+          <th>多线程的典型效果</th>
+          <th>更常见的选择</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>纯 Python CPU 计算</td>
+          <td>难以利用多核并行</td>
+          <td>多进程</td>
+      </tr>
+      <tr>
+          <td>会释放 GIL 的 C 扩展计算</td>
+          <td>可能实现多核并行</td>
+          <td>依赖库线程或线程池</td>
+      </tr>
+      <tr>
+          <td>同步阻塞 I/O</td>
+          <td>等待期间可运行其他线程</td>
+          <td>多线程或异步 I/O</td>
+      </tr>
+      <tr>
+          <td>大量原生异步 I/O</td>
+          <td>无需为每个请求创建线程</td>
+          <td><code>asyncio</code></td>
+      </tr>
+  </tbody>
+</table></div>
+<h4 id="113-gil-与-asyncio-的关系">1.1.3 GIL 与 asyncio 的关系
+</h4><p><code>asyncio</code> 的性能优势并不来自绕过 GIL。默认事件循环本来就主要在一个线程中执行，它通过协程在 <code>await</code> 处主动让出控制权，将 I/O 等待时间用于运行其他 Task。</p>
+<p>两者解决的是不同层次的问题：</p>
+<ul>
+<li>GIL 控制线程执行 Python 字节码的互斥关系；</li>
+<li>事件循环负责在同一线程中调度多个协程；</li>
+<li><code>await</code> 是协程主动暂停并交还执行权的边界；</li>
+<li>操作系统的 I/O 多路复用负责通知事件循环哪些资源已经就绪。</li>
+</ul>
+<p>因此，即使没有线程竞争 GIL，一个协程中的长时间 CPU 计算仍会阻塞事件循环。遇到这类任务时，可以根据任务性质采用以下方式：</p>
+<ul>
+<li>短小计算直接同步执行，避免不必要的调度成本；</li>
+<li>同步 I/O 通过 <code>asyncio.to_thread()</code> 放入线程池；</li>
+<li>纯 Python CPU 密集型任务放入进程池或独立计算服务；</li>
+<li>调用能够释放 GIL 的 C 扩展，并确认该库自身的线程安全和并行策略。</li>
+</ul>
+<p>可以把调用关系概括为：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[协程开始执行] --&gt; B{任务类型}
+    B -- 原生异步 I/O --&gt; C[await 暂停当前 Task]
+    C --&gt; D[事件循环执行其他 Task]
+    B -- 同步阻塞 I/O --&gt; E[使用 to_thread 放入线程池]
+    E --&gt; F[工作线程等待 I/O 时可释放 GIL]
+    B -- 纯 Python CPU 计算 --&gt; G[使用进程池或独立服务]
+    G --&gt; H[多个进程分别拥有解释器和 GIL]
+</code></pre><h3 id="12-协程是可暂停可恢复的计算">1.2 协程是可暂停、可恢复的计算
+</h3><p>使用 <code>async def</code> 定义的是协程函数。调用协程函数只会创建协程对象，不会立即把它执行完：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">asyncio</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">async</span> <span class="k">def</span> <span class="nf">fetch_data</span><span class="p">():</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;模拟异步获取数据。&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="s2">&#34;数据获取完成&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;运行示例协程。&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">coroutine</span> <span class="o">=</span> <span class="n">fetch_data</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">coroutine</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>协程对象保存了当前执行位置、局部变量和等待关系。可以把它理解为一个由解释器驱动的状态机：执行到 <code>await</code>，保存状态；等待对象完成后，再从原位置恢复。</p>
+<h3 id="13-await-等待的是什么">1.3 <code>await</code> 等待的是什么
+</h3><p><code>await</code> 后面必须是 Awaitable（可等待对象），常见的三类是：</p>
+<ul>
+<li>Coroutine（协程）对象；</li>
+<li><code>asyncio.Task</code>；</li>
+<li><code>asyncio.Future</code>，或其他实现了 <code>__await__()</code> 协议的对象。</li>
+</ul>
+<p><code>await</code> 不保证发生任务切换。如果等待对象已经完成，当前协程可以直接取得结果并继续运行；只有等待对象尚未完成时，当前 Task 才会暂停并把控制权交回事件循环。</p>
+<hr>
+<h2 id="二从语法到可运行程序">二、从语法到可运行程序
+</h2><h3 id="21-使用-asynciorun-启动程序">2.1 使用 <code>asyncio.run()</code> 启动程序
+</h3><p>应用代码通常把一个顶层协程交给 <code>asyncio.run()</code>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">asyncio</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;作为异步程序的顶层入口。&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="s2">&#34;done&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>它负责创建事件循环、运行顶层协程、完成异步生成器清理并关闭事件循环。在已经存在事件循环的环境中，例如某些 Web 框架或交互式环境，不应在协程内部再次调用 <code>asyncio.run()</code>，而应直接 <code>await</code> 对应协程。</p>
+<h3 id="22-顺序等待与并发等待">2.2 顺序等待与并发等待
+</h3><p>连续两个 <code>await</code> 默认仍然是顺序执行：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="n">first</span> <span class="o">=</span> <span class="k">await</span> <span class="n">fetch_data</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="n">second</span> <span class="o">=</span> <span class="k">await</span> <span class="n">fetch_data</span><span class="p">()</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>需要同时推进多个独立协程时，可以使用 <code>asyncio.gather()</code>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">asyncio</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">async</span> <span class="k">def</span> <span class="nf">fetch_data</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">delay</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;模拟一个有延迟的异步任务。&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">delay</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="sa">f</span><span class="s2">&#34;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> 完成&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;并发运行两个互不依赖的任务。&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">        <span class="n">fetch_data</span><span class="p">(</span><span class="s2">&#34;任务一&#34;</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">        <span class="n">fetch_data</span><span class="p">(</span><span class="s2">&#34;任务二&#34;</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">    <span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="n">results</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>总耗时接近最慢任务的两秒，而不是两个任务相加的三秒。这里的前提是等待过程不会阻塞事件循环。</p>
+<h3 id="23-使用-task-管理任务生命周期">2.3 使用 Task 管理任务生命周期
+</h3><p><code>asyncio.create_task()</code> 会把协程包装为 Task，并安排它尽快运行：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">asyncio</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">async</span> <span class="k">def</span> <span class="nf">work</span><span class="p">(</span><span class="n">name</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;执行一个异步任务。&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="sa">f</span><span class="s2">&#34;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> 完成&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;创建、持有并等待任务。&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">task</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="n">work</span><span class="p">(</span><span class="s2">&#34;任务一&#34;</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">task</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>Task 适合需要单独等待、取消、命名或检查状态的任务。创建后台 Task 后应保存强引用，并明确处理它的完成、异常和取消；不要把“创建了 Task”误认为“它一定会在程序退出前执行完”。</p>
+<h3 id="24-异步上下文与异步迭代">2.4 异步上下文与异步迭代
+</h3><p><code>async with</code> 用于异步获取和释放资源，例如 HTTP（Hypertext Transfer Protocol，超文本传输协议）连接：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">async</span> <span class="k">with</span> <span class="n">session</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">)</span> <span class="k">as</span> <span class="n">response</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="n">data</span> <span class="o">=</span> <span class="k">await</span> <span class="n">response</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>async for</code> 用于消费每次取下一项时可能需要等待的异步迭代器：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">async</span> <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">response_stream</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="n">handle</span><span class="p">(</span><span class="n">chunk</span><span class="p">)</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这两种语法分别对应异步上下文管理协议和异步迭代协议，常见于连接池、流式模型输出和消息队列消费。</p>
+<hr>
+<h2 id="三taskfuture-与事件循环">三、Task、Future 与事件循环
+</h2><h3 id="31-future-是未来结果的容器">3.1 Future 是未来结果的容器
+</h3><p>Future 表示一个尚未完成、未来可能产生结果的异步操作。它最终可能进入三类状态：正常完成、以异常结束，或被取消。</p>
+<p>应用层一般不需要手动创建 Future。它的主要作用是连接回调式底层代码与 <code>async</code> / <code>await</code> 代码：底层事件到达后设置 Future 的结果，正在等待它的 Task 随后恢复。</p>
+<h3 id="32-task-负责驱动协程">3.2 Task 负责驱动协程
+</h3><p>Task 是 Future-like（类似 Future）的对象，但它额外封装并驱动一个协程。协程等待尚未完成的 Future 时，Task 暂停；Future 完成时，事件循环再安排 Task 继续运行。</p>
+<p>可以用下面的关系理解三者：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">协程：保存“代码执行到哪里”
+</span></span><span class="line"><span class="cl">Task：负责“下一步驱动协程”
+</span></span><span class="line"><span class="cl">Future：保存“等待中的操作最终得到什么”
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="33-事件循环维护什么">3.3 事件循环维护什么
+</h3><p>事件循环是整个异步程序的调度中心，主要维护：</p>
+<ul>
+<li>可以立即执行的回调和 Task；</li>
+<li>由 <code>call_later()</code>、<code>asyncio.sleep()</code> 等注册的定时器；</li>
+<li>正在等待可读、可写状态的文件描述符；</li>
+<li>Future 完成后需要触发的回调。</li>
+</ul>
+<p>它的概念性伪代码如下：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">while 程序尚未结束:
+</span></span><span class="line"><span class="cl">    执行就绪队列中的回调
+</span></span><span class="line"><span class="cl">    计算下一次定时器到期时间
+</span></span><span class="line"><span class="cl">    等待 I/O 事件或定时器到期
+</span></span><span class="line"><span class="cl">    将新完成事件对应的回调放入就绪队列
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h3 id="34-一次-await-的完整链路">3.4 一次 <code>await</code> 的完整链路
+</h3><pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[事件循环运行 Task A] --&gt; B[协程执行到 await Future]
+    B --&gt; C{Future 是否完成}
+    C -- 是 --&gt; D[立即取得结果并继续]
+    C -- 否 --&gt; E[保存协程状态并暂停 Task A]
+    E --&gt; F[事件循环运行其他 Task 或等待 I/O]
+    F --&gt; G[底层事件完成 Future]
+    G --&gt; H[Task A 的回调进入就绪队列]
+    H --&gt; I[事件循环恢复 Task A]
+</code></pre><p>这也是 async 的核心：<strong>等待一个任务时，不把整个线程一起等住。</strong></p>
+<hr>
+<h2 id="四操作系统如何支撑异步-io">四、操作系统如何支撑异步 I/O
+</h2><h3 id="41-io-多路复用">4.1 I/O 多路复用
+</h3><p>在 Unix 平台上，<code>asyncio</code> 的 <code>SelectorEventLoop</code> 基于 <code>selectors</code> 模块，并选择当前平台可用的高效 Selector。Linux 常见实现是 <code>epoll</code>，macOS 和 BSD 常见实现是 <code>kqueue</code>。Windows 的 <code>ProactorEventLoop</code> 基于 IOCP（Input/Output Completion Port，输入输出完成端口）。</p>
+<p>假设三个协程分别等待三个 socket：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Task A → 等待 socket A 可读
+</span></span><span class="line"><span class="cl">Task B → 等待 socket B 可读
+</span></span><span class="line"><span class="cl">Task C → 等待 socket C 可读
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>事件循环不需要创建三个线程分别阻塞，而是把多个文件描述符交给操作系统统一监听。socket B 到达数据时，操作系统报告 B 已就绪，事件循环便恢复对应 Task；A 和 C 继续等待。</p>
+<h3 id="42-asynciosleep-为什么不阻塞线程">4.2 <code>asyncio.sleep()</code> 为什么不阻塞线程
+</h3><p><code>time.sleep(5)</code> 会阻塞当前线程。<code>await asyncio.sleep(5)</code> 则会登记一个定时回调并暂停当前 Task，事件循环在这五秒内仍可处理其他任务。定时器到期后，对应 Future 完成，Task 被重新放回就绪队列。</p>
+<p>因此，异步睡眠并不是“让线程睡五秒”，而是“告诉事件循环五秒后再唤醒我”。</p>
+<h3 id="43-async-为什么不天然提升-cpu-性能">4.3 async 为什么不天然提升 CPU 性能
+</h3><p>事件循环依赖协程主动让出控制权。如果一个协程连续执行大量 Python 计算且没有到达真正可暂停的 <code>await</code>，其他 Task 就无法得到运行机会。</p>
+<p>同步阻塞函数可以通过 <code>asyncio.to_thread()</code> 暂时卸载到线程：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">to_thread</span><span class="p">(</span><span class="n">blocking_function</span><span class="p">,</span> <span class="n">argument</span><span class="p">)</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这不会让阻塞函数变成非阻塞实现，而是让工作线程承担阻塞，事件循环线程继续服务其他 Task。CPU 密集型任务则通常更适合进程池。</p>
+<hr>
+<h2 id="五超时取消与异常">五、超时、取消与异常
+</h2><h3 id="51-超时是异步系统的基本边界">5.1 超时是异步系统的基本边界
+</h3><p>等待远程服务时应设置超时，否则一个永不完成的操作可能长期占用连接和任务状态：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">asyncio</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">async</span> <span class="k">def</span> <span class="nf">slow_operation</span><span class="p">():</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;模拟一个耗时操作。&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;为异步操作设置超时。&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">try</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">wait_for</span><span class="p">(</span><span class="n">slow_operation</span><span class="p">(),</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">TimeoutError</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="nb">print</span><span class="p">(</span><span class="s2">&#34;操作超时&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>超时往往通过取消等待中的 Task 实现。因此，业务代码不仅要处理普通异常，还要设计好取消后的资源释放和状态一致性。</p>
+<h3 id="52-取消是一种控制信号">5.2 取消是一种控制信号
+</h3><p>调用 <code>task.cancel()</code> 后，事件循环会在合适的恢复点向协程抛出 <code>CancelledError</code>。协程应使用 <code>try/finally</code> 释放连接、锁等资源，不应在没有充分理由时吞掉取消信号。</p>
+<h3 id="53-并发任务的异常策略">5.3 并发任务的异常策略
+</h3><p>使用 <code>gather()</code> 时要提前确定：一个子任务失败后，是让整体失败，还是收集所有任务的结果与异常。无论选择哪种策略，都应避免异常无人读取以及任务遗留在后台。</p>
+<p>较新的 Python 项目也可以考虑结构化并发工具 <code>asyncio.TaskGroup</code>，使一组相关任务共享清晰的生命周期边界。</p>
+<hr>
+<h2 id="六四个项目中的真实案例">六、四个项目中的真实案例
+</h2><p>下面的案例基于当前工作区代码快照。为了突出 async 机制，代码片段省略了与主题无关的参数和业务处理。</p>
+<h3 id="61-console异步-http-与连接会话复用">6.1 console：异步 HTTP 与连接会话复用
+</h3><p><code>aio_http_util.py（console）</code> 使用 <code>aiohttp.ClientSession</code> 复用客户端会话，并通过 <code>async with</code> 管理单次响应资源：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span><span class="lnt">18
+</span><span class="lnt">19
+</span><span class="lnt">20
+</span><span class="lnt">21
+</span><span class="lnt">22
+</span><span class="lnt">23
+</span><span class="lnt">24
+</span><span class="lnt">25
+</span><span class="lnt">26
+</span><span class="lnt">27
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">AioClientSessionManager</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;管理进程内复用的异步 HTTP 会话。&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="n">_session</span> <span class="o">=</span> <span class="kc">None</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nd">@classmethod</span>
+</span></span><span class="line"><span class="cl">    <span class="k">async</span> <span class="k">def</span> <span class="nf">get_session</span><span class="p">(</span><span class="bp">cls</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">&#34;&#34;&#34;获取异步客户端会话。&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="bp">cls</span><span class="o">.</span><span class="n">_session</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">            <span class="n">connector</span> <span class="o">=</span> <span class="n">aiohttp</span><span class="o">.</span><span class="n">TCPConnector</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="n">timeout</span> <span class="o">=</span> <span class="n">aiohttp</span><span class="o">.</span><span class="n">ClientTimeout</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="bp">cls</span><span class="o">.</span><span class="n">_session</span> <span class="o">=</span> <span class="n">aiohttp</span><span class="o">.</span><span class="n">ClientSession</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">                <span class="n">connector</span><span class="o">=</span><span class="n">connector</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">                <span class="n">timeout</span><span class="o">=</span><span class="n">timeout</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="bp">cls</span><span class="o">.</span><span class="n">_session</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">async</span> <span class="k">def</span> <span class="nf">get</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">params</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;发起异步 GET 请求并解析响应。&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">session</span> <span class="o">=</span> <span class="k">await</span> <span class="n">AioClientSessionManager</span><span class="o">.</span><span class="n">get_session</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">async</span> <span class="k">with</span> <span class="n">session</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">        <span class="n">url</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="n">headers</span><span class="o">=</span><span class="n">headers</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="n">params</span><span class="o">=</span><span class="n">params</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">)</span> <span class="k">as</span> <span class="n">response</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="k">await</span> <span class="n">response</span><span class="o">.</span><span class="n">json</span><span class="p">(),</span> <span class="n">response</span><span class="o">.</span><span class="n">status</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这个案例包含三层等待关系：获取 Session、等待 HTTP 响应、异步读取并解析响应体。连接数上限和请求超时则用于限制资源占用。</p>
+<p>工程上还应为 Session 设计明确的关闭时机，例如在应用生命周期结束时执行 <code>await session.close()</code>；单例复用不能替代生命周期管理。</p>
+<h3 id="62-dte用-gather-并发执行同批-dag-任务">6.2 dte：用 <code>gather()</code> 并发执行同批 DAG 任务
+</h3><p><code>agent_dag.py（dte）</code> 先为同一批任务生成协程，再交给 <code>asyncio.gather()</code> 并发推进：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">async</span> <span class="k">def</span> <span class="nf">_process_task_batch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tasks</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;并发处理同一批可执行任务。&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">exec_tasks</span> <span class="o">=</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">        <span class="bp">self</span><span class="o">.</span><span class="n">_process_task</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">context</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">for</span> <span class="n">task</span> <span class="ow">in</span> <span class="n">tasks</span>
+</span></span><span class="line"><span class="cl">    <span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="n">exec_tasks</span><span class="p">)</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>DAG（Directed Acyclic Graph，有向无环图）中的依赖关系决定哪些任务可以进入同一批。批内任务互不依赖时并发执行，可以把多个模型或工具调用的等待时间重叠起来；跨批任务仍需遵守依赖顺序。</p>
+<p>同一文件还会计算任务耗时、更新执行状态并处理异常。这说明 <code>gather()</code> 只解决调度问题，业务层仍需负责失败传播、状态落库和依赖任务取消。</p>
+<h3 id="63-dte用-async-for-消费流式结果">6.3 dte：用 <code>async for</code> 消费流式结果
+</h3><p><code>agent.py（dte）</code> 对异步工具的流式返回值执行 <code>async for</code>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">tool_result</span><span class="p">,</span> <span class="n">AsyncIterator</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="k">async</span> <span class="k">for</span> <span class="n">stream_item</span> <span class="ow">in</span> <span class="n">tool_result</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="k">yield</span> <span class="n">stream_item</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>异步迭代器每次产出下一块数据前都可以暂停，因此适合消费大模型 token、工具流式事件等结果。与“等完整结果回来再返回”相比，它能降低首块数据延迟，也能在上游尚未结束时把内容逐步传给下游。</p>
+<h3 id="64-ce异步请求-embedding-服务">6.4 ce：异步请求 Embedding 服务
+</h3><p><code>openai_embedding.py（ce）</code> 使用异步客户端请求 Embedding（向量嵌入）接口：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span><span class="lnt">17
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">async</span> <span class="k">def</span> <span class="nf">aget_embeddings</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">list_of_text</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">engine</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">api_key</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl"><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;异步批量获取文本向量。&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">data</span> <span class="o">=</span> <span class="p">(</span>
+</span></span><span class="line"><span class="cl">        <span class="k">await</span> <span class="n">openai</span><span class="o">.</span><span class="n">Embedding</span><span class="o">.</span><span class="n">acreate</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">            <span class="nb">input</span><span class="o">=</span><span class="n">list_of_text</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="n">engine</span><span class="o">=</span><span class="n">engine</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="n">api_key</span><span class="o">=</span><span class="n">api_key</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">)</span><span class="o">.</span><span class="n">data</span>
+</span></span><span class="line"><span class="cl">    <span class="n">data</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">item</span><span class="p">:</span> <span class="n">item</span><span class="p">[</span><span class="s2">&#34;index&#34;</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="p">[</span><span class="n">item</span><span class="p">[</span><span class="s2">&#34;embedding&#34;</span><span class="p">]</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">data</span><span class="p">]</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这里的 <code>await</code> 让请求等待期间的事件循环可以处理其他任务。返回后代码按 <code>index</code> 排序，以保证结果顺序与输入顺序一致。异步只改变等待方式，不会替业务代码维护数据对应关系。</p>
+<h3 id="65-ce异步调用链保持-async-贯通">6.5 ce：异步调用链保持 async 贯通
+</h3><p><code>tool_chain.py（ce）</code> 的异步调用入口继续 <code>await</code> 工具的 <code>arun()</code>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">async</span> <span class="k">def</span> <span class="nf">_acall</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">inputs</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;异步调用工具并包装输出。&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">tool_input</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">input_key</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="n">output</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">tool</span><span class="o">.</span><span class="n">arun</span><span class="p">(</span><span class="n">tool_input</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">verbose</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="p">{</span><span class="bp">self</span><span class="o">.</span><span class="n">output_key</span><span class="p">:</span> <span class="n">output</span><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这是 async 工程化的重要原则：从入口、业务编排到最底层 I/O 客户端都保持异步链路。如果中间某层改用同步网络请求，整个事件循环依然会被阻塞。</p>
+<h3 id="66-workflow异步接口不等于异步实现">6.6 workflow：异步接口不等于异步实现
+</h3><p>workflow 的节点类普遍保留 <code>arun()</code> 接口，但当前实现呈现出三种状态。</p>
+<p>第一类是轻量同步逻辑的异步适配，例如 <code>merge_variable_node.py（workflow）</code>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">async</span> <span class="k">def</span> <span class="nf">arun</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">messages</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;通过异步接口复用同步节点逻辑。&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">messages</span><span class="p">)</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>第二类是直接返回数据，例如 <code>start_node.py（workflow）</code>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">async</span> <span class="k">def</span> <span class="nf">arun</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">input_messages</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;异步返回入口消息。&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">input_messages</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>第三类尚未实现，例如部分网络或组件节点的 <code>arun()</code> 仍然是 <code>pass</code>。</p>
+<p>这些代码说明：<code>async def</code> 本身只创建可等待接口。如果内部执行的是短小、非阻塞同步逻辑，直接复用问题不大；如果内部调用 <code>requests.post()</code>、同步数据库驱动或长时间计算，仅仅套上 <code>async def</code> 不会获得异步能力，反而可能阻塞整个事件循环。workflow 当前更准确的定位是“保留了异步节点协议”，不能据此认定所有节点都已异步化。</p>
+<h3 id="67-案例对照">6.7 案例对照
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>项目</th>
+          <th>代表用法</th>
+          <th>解决的问题</th>
+          <th>关键提醒</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>console</td>
+          <td><code>async with</code> + <code>aiohttp</code></td>
+          <td>异步 HTTP、连接复用</td>
+          <td>Session 需要关闭</td>
+      </tr>
+      <tr>
+          <td>dte</td>
+          <td><code>asyncio.gather()</code></td>
+          <td>DAG 同批任务并发</td>
+          <td>明确失败和取消策略</td>
+      </tr>
+      <tr>
+          <td>dte</td>
+          <td><code>async for</code></td>
+          <td>流式消费工具结果</td>
+          <td>处理背压与中断</td>
+      </tr>
+      <tr>
+          <td>ce</td>
+          <td><code>await</code> 异步 SDK</td>
+          <td>模型与向量接口等待</td>
+          <td>异步链路要贯通</td>
+      </tr>
+      <tr>
+          <td>workflow</td>
+          <td>统一 <code>arun()</code> 协议</td>
+          <td>为异步执行预留接口</td>
+          <td>签名不代表真正非阻塞</td>
+      </tr>
+  </tbody>
+</table></div>
+<hr>
+<h2 id="七常见陷阱与实践建议">七、常见陷阱与实践建议
+</h2><h3 id="71-不要在协程中调用阻塞-io">7.1 不要在协程中调用阻塞 I/O
+</h3><p>下面的代码会阻塞事件循环：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">requests</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">async</span> <span class="k">def</span> <span class="nf">bad_request</span><span class="p">(</span><span class="n">url</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;&#34;&#34;演示会阻塞事件循环的同步请求。&#34;&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>优先换用真正的异步客户端；无法替换同步库时，再考虑 <code>asyncio.to_thread()</code>，同时限制线程池并发量。</p>
+<h3 id="72-并发必须有限制">7.2 并发必须有限制
+</h3><p>一次性对数万个请求执行 <code>gather()</code> 可能耗尽连接、内存或下游服务容量。常见做法是使用 <code>asyncio.Semaphore</code>、队列或分批处理限制在途任务数。</p>
+<h3 id="73-共享状态仍然会发生竞态">7.3 共享状态仍然会发生竞态
+</h3><p>单线程不等于没有竞态。只要“读取状态”和“写回状态”之间存在 <code>await</code>，其他 Task 就可能插入并修改状态。需要原子性时，应重新设计状态所有权，或使用 <code>asyncio.Lock</code> 等同步原语。</p>
+<h3 id="74-做好超时重试和取消传播">7.4 做好超时、重试和取消传播
+</h3><p>超时负责限制单次等待，重试负责处理暂时性失败，取消负责尽快停止已经没有价值的工作。三者不能相互替代。重试还应考虑指数退避、幂等性以及下游服务的压力。</p>
+<h3 id="75-为-task-保留引用并消费异常">7.5 为 Task 保留引用并消费异常
+</h3><p>后台 Task 应放入集合或任务管理器，并在完成回调中移除。程序关闭时要等待或取消仍在运行的 Task，确保异常被读取、资源被释放。</p>
+<h3 id="76-开启调试与可观测性">7.6 开启调试与可观测性
+</h3><p>开发阶段可以开启 asyncio 调试模式，定位未等待协程、慢回调和资源泄漏。生产环境则应记录任务名称、请求标识、超时、取消原因和关键耗时，使异步调用链可以被追踪。</p>
+<hr>
+<h2 id="八常见高频面试题">八、常见高频面试题
+</h2><h3 id="81-async-def-函数调用后为什么没有立即执行">8.1 <code>async def</code> 函数调用后为什么没有立即执行
+</h3><p><strong>答：</strong></p>
+<p>调用协程函数会创建协程对象，但不会自动调度它。协程需要被 <code>await</code>，被 <code>asyncio.create_task()</code> 包装，或作为顶层协程交给 <code>asyncio.run()</code>，才会被真正驱动。</p>
+<h3 id="82-await-是否每次都会切换协程">8.2 <code>await</code> 是否每次都会切换协程
+</h3><p><strong>答：</strong></p>
+<p>不会。等待对象已经完成时，<code>await</code> 可以直接返回结果。只有等待对象尚未完成时，当前 Task 才会暂停，事件循环转而处理其他 Task、回调或 I/O。</p>
+<h3 id="83-taskfuture-和协程有什么区别">8.3 Task、Future 和协程有什么区别
+</h3><p><strong>答：</strong></p>
+<p>协程保存可暂停函数的执行状态；Future 表示未来才会完成的结果；Task 同时继承 Future 的结果接口，并负责驱动一个协程。协程等待 Future 时暂停，Future 完成后 Task 恢复协程。</p>
+<h3 id="84-asynciogather-为什么能缩短总耗时">8.4 <code>asyncio.gather()</code> 为什么能缩短总耗时
+</h3><p><strong>答：</strong></p>
+<p>它让多个可等待对象并发推进。当任务主要耗时来自网络或数据库等待时，一个任务暂停后，事件循环可以运行另一个任务，总耗时因此接近最慢任务，而不是所有等待时间之和。它不会自动加速 CPU 计算。</p>
+<h3 id="85-async-与多线程有什么区别">8.5 async 与多线程有什么区别
+</h3><p><strong>答：</strong></p>
+<p>asyncio 通常是单线程协作式调度，Task 主要在 <code>await</code> 处让出执行权；线程由操作系统抢占式调度。asyncio 适合大量可异步等待的 I/O，线程适合包装缺少异步接口的阻塞调用。两者也可以结合使用。</p>
+<h3 id="86-为什么在-async-def-中调用-requestsget-仍会阻塞">8.6 为什么在 <code>async def</code> 中调用 <code>requests.get()</code> 仍会阻塞
+</h3><p><strong>答：</strong></p>
+<p><code>async def</code> 只让函数具备协程语义，并不会改写内部库。<code>requests.get()</code> 是同步调用，它执行时不会把控制权交回事件循环。因此，同一事件循环中的其他 Task 也要等待它返回。</p>
+<h3 id="87-单线程-asyncio-是否还需要锁">8.7 单线程 asyncio 是否还需要锁
+</h3><p><strong>答：</strong></p>
+<p>可能需要。如果共享状态的复合操作跨越 <code>await</code>，另一个 Task 可以在中间运行并修改状态，仍会形成逻辑竞态。锁保护的是跨暂停点的临界区，而不只是多线程内存访问。</p>
+<h3 id="88-如何限制异步任务的并发量">8.8 如何限制异步任务的并发量
+</h3><p><strong>答：</strong></p>
+<p>可以使用 <code>asyncio.Semaphore</code> 限制同时进入关键区的 Task 数，使用 <code>asyncio.Queue</code> 构建固定数量的消费者，或对输入分批执行。还应同时配置客户端连接池与下游超时，避免只在应用层限流。</p>
+<h3 id="89-如何优雅地取消异步任务">8.9 如何优雅地取消异步任务
+</h3><p><strong>答：</strong></p>
+<p>调用 <code>task.cancel()</code> 发出取消请求，协程在恢复点收到 <code>CancelledError</code>。协程应在 <code>finally</code> 中释放资源，完成必要清理后继续传播取消；调用方则应等待任务结束并确认其最终状态。</p>
+<h3 id="810-如何判断一段-async-代码是否真正非阻塞">8.10 如何判断一段 async 代码是否真正非阻塞
+</h3><p><strong>答：</strong></p>
+<p>不能只看是否写了 <code>async def</code>。应沿调用链检查每个耗时操作：网络、数据库、文件和 SDK 是否提供真正异步接口；是否存在 <code>requests</code>、<code>time.sleep()</code> 或长时间 CPU 计算；等待点是否能把控制权交还事件循环。workflow 的 <code>arun()</code> 占位实现就是典型提醒。</p>
+<hr>
+<h2 id="九附录进一步阅读">九、附录：进一步阅读
+</h2><h3 id="91-python-官方文档一手来源">9.1 Python 官方文档（一手来源）
+</h3><ul>
+<li><a class="link" href="https://docs.python.org/3/library/asyncio.html"  target="_blank" rel="noopener"
+    >asyncio — Asynchronous I/O</a></li>
+<li><a class="link" href="https://docs.python.org/3/library/asyncio-task.html"  target="_blank" rel="noopener"
+    >Coroutines and Tasks</a></li>
+<li><a class="link" href="https://docs.python.org/3/library/asyncio-eventloop.html"  target="_blank" rel="noopener"
+    >Event Loop</a></li>
+<li><a class="link" href="https://docs.python.org/3/howto/a-conceptual-overview-of-asyncio.html"  target="_blank" rel="noopener"
+    >A Conceptual Overview of asyncio</a></li>
+<li><a class="link" href="https://docs.python.org/3/reference/expressions.html#await-expression"  target="_blank" rel="noopener"
+    >Python 表达式参考：Await expression</a></li>
+<li><a class="link" href="https://docs.python.org/3/glossary.html#term-global-interpreter-lock"  target="_blank" rel="noopener"
+    >Python 术语表：Global Interpreter Lock</a></li>
+</ul>
+<h3 id="92-相关概念文章">9.2 相关概念文章
+</h3><ul>
+<li><a class="link" href="../go/go%e7%9a%84%e5%8d%8f%e7%a8%8b.md" >Go 的协程</a></li>
+</ul>
+<h3 id="93-路径缩写说明">9.3 路径缩写说明
+</h3><p>项目根路径映射：</p>
+<ul>
+<li>console → <code>/home/agsol/workspace/baidu/ab-private/agi-dev-platform</code></li>
+<li>dte → <code>/home/agsol/workspace/baidu/acg-agi/next-gen-dte</code></li>
+<li>ce → <code>/home/agsol/workspace/baidu/acg-agi/copilot-engine</code></li>
+<li>workflow → <code>/home/agsol/workspace/baidu/acg-agi/workflow-engine</code></li>
+</ul>
+<p>关键文件映射：</p>
+<ul>
+<li><code>aio_http_util.py（console）</code> → <code>agi_dev_platform/utils/aio_http_util.py</code></li>
+<li><code>agent_dag.py（dte）</code> → <code>next_gen_dte/core/agent/planning_agent/agent_dag.py</code></li>
+<li><code>agent.py（dte）</code> → <code>next_gen_dte/core/agent/planning_agent/agent.py</code></li>
+<li><code>openai_embedding.py（ce）</code> → <code>copilot_engine/api-server/api/core/embedding/openai_embedding.py</code></li>
+<li><code>tool_chain.py（ce）</code> → <code>copilot_engine/api-server/api/core/chain/tool_chain.py</code></li>
+<li><code>merge_variable_node.py（workflow）</code> → <code>workflow_engine/core/nodes/merge_variable_node.py</code></li>
+<li><code>start_node.py（workflow）</code> → <code>workflow_engine/core/nodes/start_node.py</code></li>
+</ul>
+<h3 id="94-一句话总结">9.4 一句话总结
+</h3><p>Python async 的本质是：协程在等待点保存状态并主动让出执行权，事件循环利用等待时间推进其他任务，底层再由 Future、Task 与操作系统 I/O 事件共同完成暂停和恢复。</p>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/python/">Python</a>
+        
+            <a href="/tags/asyncio/">Asyncio</a>
+        
+            <a href="/tags/concurrency/">Concurrency</a>
+        
+            <a href="/tags/event-loop/">Event-Loop</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>

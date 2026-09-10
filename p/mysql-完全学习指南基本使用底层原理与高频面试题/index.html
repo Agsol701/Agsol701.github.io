@@ -270,6 +270,7 @@
             <li><a href="#字段类型选择">字段类型选择</a></li>
             <li><a href="#null-与默认值">NULL 与默认值</a></li>
             <li><a href="#主键与业务id">主键与业务ID</a></li>
+            <li><a href="#数据库设计范式">数据库设计范式</a></li>
             <li><a href="#常见设计误区">常见设计误区</a></li>
           </ul>
         </li>
@@ -825,6 +826,125 @@
 <li><code>id</code>：内部主键，用于聚簇索引、表关联和高效查询</li>
 <li><code>public_id</code>：外部业务标识，用于接口暴露、防枚举和链路追踪</li>
 </ul>
+<h4 id="数据库设计范式">数据库设计范式
+</h4><p>数据库范式（Normal Form）是一组减少数据冗余、避免数据异常的关系模型设计规则。常见异常包括：</p>
+<ul>
+<li><strong>插入异常</strong>：必须先写入无关数据，才能保存目标数据</li>
+<li><strong>更新异常</strong>：同一事实存储在多行中，修改时容易遗漏，导致数据不一致</li>
+<li><strong>删除异常</strong>：删除一条业务记录时，意外丢失了其他仍需保留的信息</li>
+</ul>
+<p>范式建立在函数依赖之上。若属性 <code>A</code> 的值能够唯一确定属性 <code>B</code> 的值，则称 <code>B</code> 函数依赖于 <code>A</code>，记为 <code>A -&gt; B</code>。例如，订单号能够唯一确定下单用户和下单时间，可以表示为 <code>order_no -&gt; user_id, created_at</code>。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>范式</th>
+          <th>核心要求</th>
+          <th>主要解决的问题</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>第一范式（1NF）</td>
+          <td>每个字段都是不可再分的原子值，不在一个字段中保存列表或重复字段组</td>
+          <td>字段难以查询、约束和索引</td>
+      </tr>
+      <tr>
+          <td>第二范式（2NF）</td>
+          <td>满足 1NF，且非主属性完全依赖于整个候选键，不能只依赖联合键的一部分</td>
+          <td>部分依赖造成的数据冗余</td>
+      </tr>
+      <tr>
+          <td>第三范式（3NF）</td>
+          <td>满足 2NF，且非主属性不能传递依赖于候选键</td>
+          <td>传递依赖造成的更新异常</td>
+      </tr>
+      <tr>
+          <td>BCNF（Boyce-Codd Normal Form）</td>
+          <td>每个函数依赖的决定因素都必须是候选键</td>
+          <td>3NF 在存在多个重叠候选键时仍可能出现的异常</td>
+      </tr>
+  </tbody>
+</table></div>
+<h5 id="第一范式1nf">第一范式（1NF）
+</h5><p>例如，不应在订单表的 <code>product_ids</code> 字段中使用逗号分隔存储多个商品 ID：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">错误设计：order_id | product_ids
+</span></span><span class="line"><span class="cl">          1001     | 11,12,15
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">推荐设计：order_item
+</span></span><span class="line"><span class="cl">          order_id | product_id | quantity
+</span></span><span class="line"><span class="cl">          1001     | 11         | 1
+</span></span><span class="line"><span class="cl">          1001     | 12         | 2
+</span></span><span class="line"><span class="cl">          1001     | 15         | 1
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>拆分后，每件商品可以独立查询、建立外键或索引，也能直接使用聚合函数统计数量。</p>
+<h5 id="第二范式2nf">第二范式（2NF）
+</h5><p>假设订单明细表以 <code>(order_id, product_id)</code> 作为联合主键，却同时保存 <code>product_name</code>：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">order_item(order_id, product_id, product_name, quantity)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>其中 <code>quantity</code> 依赖完整联合键，但 <code>product_name</code> 只依赖 <code>product_id</code>，属于部分依赖。应拆分为：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">product(product_id, product_name)
+</span></span><span class="line"><span class="cl">order_item(order_id, product_id, quantity)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><h5 id="第三范式3nf">第三范式（3NF）
+</h5><p>假设用户表同时保存部门 ID 和部门名称：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">user(user_id, department_id, department_name)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>依赖关系为 <code>user_id -&gt; department_id -&gt; department_name</code>，部门名称通过部门 ID 传递依赖于用户 ID。应拆分为：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">user(user_id, department_id)
+</span></span><span class="line"><span class="cl">department(department_id, department_name)
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这样修改部门名称时只需更新一处，避免同一部门在多条用户记录中出现不同名称。</p>
+<h5 id="bcnf-与实际应用">BCNF 与实际应用
+</h5><p>BCNF 比 3NF 更严格，主要处理候选键交叉、决定因素不是候选键等少见场景。多数 OLTP 业务表设计到 3NF 已能兼顾一致性与可维护性；遇到复杂候选键时，再检查是否需要满足 BCNF。</p>
+<p>范式并不是越高越好。过度拆表会增加 JOIN、事务处理和查询复杂度，因此实际设计通常遵循以下原则：</p>
+<ul>
+<li>核心交易数据优先满足 3NF，保证事实只存储一份</li>
+<li>冗余字段必须有明确的性能或历史快照需求，例如订单中保留下单时的商品名称和价格</li>
+<li>读多写少、JOIN 成本较高的场景，可以有控制地进行反范式设计</li>
+<li>冗余数据需要明确唯一数据源，并通过事务、事件或定时校验保证一致性</li>
+<li>JSON 字段适合结构多变、较少参与筛选的扩展属性，不应替代正常的关系建模</li>
+</ul>
+<blockquote>
+<p>判断一个字段是否应该冗余时，重点考虑它表示“当前事实”还是“历史快照”。例如商品当前价格属于商品表，而订单成交价必须保存在订单明细中；后者不是违反范式的无意义重复，而是独立的业务事实。</p></blockquote>
 <h4 id="常见设计误区">常见设计误区
 </h4><ul>
 <li>用 <code>VARCHAR</code> 存金额，导致计算和排序困难</li>
