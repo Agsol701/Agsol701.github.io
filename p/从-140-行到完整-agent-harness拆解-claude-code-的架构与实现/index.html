@@ -1,0 +1,1181 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 Claude Code 看起来像一个终端聊天框，但“聊天”只是入口。它真正有价值的部分，是让模型能够在代码库里反复观察、行动、验证，直到完成任务。\n理解这类产品时，一个常见误区是把所有能力都归因于外围编排：只要堆足够多的 Prompt、工作流和条件分支，就能“造出智能”。另一个误区则恰好相反：只谈模型能力，忽略工具、上下文和权限对实际效果的决定性影响。\n更准确的表达是：\n1 编码 Agent 产品 = 模型 + Agent Harness 模型负责判断下一步做什么；Harness（运行支架）负责提供工作环境，包括工具、知识、观察结果、权限边界和持久状态。\n本文结合开源教学项目 shareAI-lab/learn-claude-code，从可以运行的代码出发，解释一个类 Claude Code 系统如何从最小循环逐步长成完整运行时。\n需要先说明边界：learn-claude-code 不是 Anthropic 官方仓库，也不是 Claude Code 源码复刻。它是一个用于学习 Harness Engineering 的独立实现。本文所说的“实现”，默认指该教学仓库中的实现；涉及 Claude Code 产品能力时，以 Anthropic 官方文档 为准。\n本文核对的教学仓库版本为 0dcafa2ae053a1ddd6a72f265431104b08a5aa13。仓库仍在更新，章节和代码可能继续变化。\n一、先把 Agent 还原成一个循环 1.1 最小闭环 learn-claude-code 的第一章只有一个 Bash 工具和一个循环。删去异常处理、终端输出等细节后，核心结构可以概括为：\n1 2 3 4 5 6 7 8 9 10 11 def agent_loop(messages): while True: response = model(messages=messages, tools=tools) messages.append(as_assistant_message(response)) calls = find_tool_calls(response) if not calls: return results = [execute(call) for call in calls] messages.append(as_tool_results(results)) 这个循环只有四步：\n">
+<title>从 140 行到完整 Agent Harness：拆解 Claude Code 的架构与实现</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/%E4%BB%8E-140-%E8%A1%8C%E5%88%B0%E5%AE%8C%E6%95%B4-agent-harness%E6%8B%86%E8%A7%A3-claude-code-%E7%9A%84%E6%9E%B6%E6%9E%84%E4%B8%8E%E5%AE%9E%E7%8E%B0/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><style>.mermaid { text-align: center; }</style>
+<script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
+    });
+</script><meta property='og:title' content="从 140 行到完整 Agent Harness：拆解 Claude Code 的架构与实现">
+<meta property='og:description' content="写在前面 Claude Code 看起来像一个终端聊天框，但“聊天”只是入口。它真正有价值的部分，是让模型能够在代码库里反复观察、行动、验证，直到完成任务。\n理解这类产品时，一个常见误区是把所有能力都归因于外围编排：只要堆足够多的 Prompt、工作流和条件分支，就能“造出智能”。另一个误区则恰好相反：只谈模型能力，忽略工具、上下文和权限对实际效果的决定性影响。\n更准确的表达是：\n1 编码 Agent 产品 = 模型 + Agent Harness 模型负责判断下一步做什么；Harness（运行支架）负责提供工作环境，包括工具、知识、观察结果、权限边界和持久状态。\n本文结合开源教学项目 shareAI-lab/learn-claude-code，从可以运行的代码出发，解释一个类 Claude Code 系统如何从最小循环逐步长成完整运行时。\n需要先说明边界：learn-claude-code 不是 Anthropic 官方仓库，也不是 Claude Code 源码复刻。它是一个用于学习 Harness Engineering 的独立实现。本文所说的“实现”，默认指该教学仓库中的实现；涉及 Claude Code 产品能力时，以 Anthropic 官方文档 为准。\n本文核对的教学仓库版本为 0dcafa2ae053a1ddd6a72f265431104b08a5aa13。仓库仍在更新，章节和代码可能继续变化。\n一、先把 Agent 还原成一个循环 1.1 最小闭环 learn-claude-code 的第一章只有一个 Bash 工具和一个循环。删去异常处理、终端输出等细节后，核心结构可以概括为：\n1 2 3 4 5 6 7 8 9 10 11 def agent_loop(messages): while True: response = model(messages=messages, tools=tools) messages.append(as_assistant_message(response)) calls = find_tool_calls(response) if not calls: return results = [execute(call) for call in calls] messages.append(as_tool_results(results)) 这个循环只有四步：\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/%E4%BB%8E-140-%E8%A1%8C%E5%88%B0%E5%AE%8C%E6%95%B4-agent-harness%E6%8B%86%E8%A7%A3-claude-code-%E7%9A%84%E6%9E%B6%E6%9E%84%E4%B8%8E%E5%AE%9E%E7%8E%B0/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='claude-code' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='mcp' /><meta property='article:tag' content='skills' /><meta property='article:published_time' content='2026-07-01T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-09-15T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="从 140 行到完整 Agent Harness：拆解 Claude Code 的架构与实现">
+<meta name="twitter:description" content="写在前面 Claude Code 看起来像一个终端聊天框，但“聊天”只是入口。它真正有价值的部分，是让模型能够在代码库里反复观察、行动、验证，直到完成任务。\n理解这类产品时，一个常见误区是把所有能力都归因于外围编排：只要堆足够多的 Prompt、工作流和条件分支，就能“造出智能”。另一个误区则恰好相反：只谈模型能力，忽略工具、上下文和权限对实际效果的决定性影响。\n更准确的表达是：\n1 编码 Agent 产品 = 模型 + Agent Harness 模型负责判断下一步做什么；Harness（运行支架）负责提供工作环境，包括工具、知识、观察结果、权限边界和持久状态。\n本文结合开源教学项目 shareAI-lab/learn-claude-code，从可以运行的代码出发，解释一个类 Claude Code 系统如何从最小循环逐步长成完整运行时。\n需要先说明边界：learn-claude-code 不是 Anthropic 官方仓库，也不是 Claude Code 源码复刻。它是一个用于学习 Harness Engineering 的独立实现。本文所说的“实现”，默认指该教学仓库中的实现；涉及 Claude Code 产品能力时，以 Anthropic 官方文档 为准。\n本文核对的教学仓库版本为 0dcafa2ae053a1ddd6a72f265431104b08a5aa13。仓库仍在更新，章节和代码可能继续变化。\n一、先把 Agent 还原成一个循环 1.1 最小闭环 learn-claude-code 的第一章只有一个 Bash 工具和一个循环。删去异常处理、终端输出等细节后，核心结构可以概括为：\n1 2 3 4 5 6 7 8 9 10 11 def agent_loop(messages): while True: response = model(messages=messages, tools=tools) messages.append(as_assistant_message(response)) calls = find_tool_calls(response) if not calls: return results = [execute(call) for call in calls] messages.append(as_tool_results(results)) 这个循环只有四步：\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about-me/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About Me</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ul>
+    <li><a href="#写在前面">写在前面</a></li>
+    <li><a href="#一先把-agent-还原成一个循环">一、先把 Agent 还原成一个循环</a>
+      <ul>
+        <li><a href="#11-最小闭环">1.1 最小闭环</a></li>
+        <li><a href="#12-messages-是运行中的状态">1.2 <code>messages</code> 是运行中的状态</a></li>
+        <li><a href="#13-为什么-bash-已经足以形成-agent">1.3 为什么 Bash 已经足以形成 Agent</a></li>
+      </ul>
+    </li>
+    <li><a href="#二工具系统给模型一组清晰的动作接口">二、工具系统：给模型一组清晰的动作接口</a>
+      <ul>
+        <li><a href="#21-schemahandler-和结果协议">2.1 Schema、Handler 和结果协议</a></li>
+        <li><a href="#22-好工具应当原子可组合可观察">2.2 好工具应当原子、可组合、可观察</a></li>
+        <li><a href="#23-路径约束必须在工具层落实">2.3 路径约束必须在工具层落实</a></li>
+      </ul>
+    </li>
+    <li><a href="#三权限与-hooks自由行动不等于无边界">三、权限与 Hooks：自由行动不等于无边界</a>
+      <ul>
+        <li><a href="#31-权限决策管线">3.1 权限决策管线</a></li>
+        <li><a href="#32-hooks-环绕核心循环">3.2 Hooks 环绕核心循环</a></li>
+      </ul>
+    </li>
+    <li><a href="#四复杂任务todo子-agent-与上下文压缩">四、复杂任务：Todo、子 Agent 与上下文压缩</a>
+      <ul>
+        <li><a href="#41-todo-是可见的短期计划">4.1 Todo 是可见的短期计划</a></li>
+        <li><a href="#42-子-agent-的本质是隔离上下文">4.2 子 Agent 的本质是隔离上下文</a></li>
+        <li><a href="#43-上下文压缩不是简单删除历史">4.3 上下文压缩不是简单删除历史</a></li>
+      </ul>
+    </li>
+    <li><a href="#五知识与记忆按需加载跨会话沉淀">五、知识与记忆：按需加载，跨会话沉淀</a>
+      <ul>
+        <li><a href="#51-skill-采用两阶段加载">5.1 Skill 采用两阶段加载</a></li>
+        <li><a href="#52-memory-包含选择提取和合并">5.2 Memory 包含选择、提取和合并</a></li>
+      </ul>
+    </li>
+    <li><a href="#六长任务持久任务图后台执行与定时调度">六、长任务：持久任务图、后台执行与定时调度</a>
+      <ul>
+        <li><a href="#61-task-system-把计划变成持久状态">6.1 Task System 把计划变成持久状态</a></li>
+        <li><a href="#62-后台任务让循环保持响应">6.2 后台任务让循环保持响应</a></li>
+        <li><a href="#63-cron-是时间驱动的任务入口">6.3 Cron 是时间驱动的任务入口</a></li>
+      </ul>
+    </li>
+    <li><a href="#七多-agent协议原子认领与工作区隔离">七、多 Agent：协议、原子认领与工作区隔离</a></li>
+    <li><a href="#八mcp把外部能力并入同一个工具池">八、MCP：把外部能力并入同一个工具池</a></li>
+    <li><a href="#九集成运行时很多机制仍然只有一个循环">九、集成运行时：很多机制，仍然只有一个循环</a></li>
+    <li><a href="#十什么时候不该让模型自由编排">十、什么时候不该让模型自由编排</a></li>
+    <li><a href="#十一goal-loop模型说完成了还不够">十一、Goal Loop：模型说“完成了”还不够</a></li>
+    <li><a href="#十二17-章的演进路线">十二、17 章的演进路线</a></li>
+    <li><a href="#十三自己实现时最该关注什么">十三、自己实现时最该关注什么</a>
+      <ul>
+        <li><a href="#131-先做最小闭环">13.1 先做最小闭环</a></li>
+        <li><a href="#132-把安全约束写进执行层">13.2 把安全约束写进执行层</a></li>
+        <li><a href="#133-把工具返回当作-api-设计">13.3 把工具返回当作 API 设计</a></li>
+        <li><a href="#134-用隔离解决上下文和并发问题">13.4 用隔离解决上下文和并发问题</a></li>
+        <li><a href="#135-为长任务设计恢复">13.5 为长任务设计恢复</a></li>
+        <li><a href="#136-用证据定义完成">13.6 用证据定义完成</a></li>
+      </ul>
+    </li>
+    <li><a href="#十四教学实现没有替你解决什么">十四、教学实现没有替你解决什么</a></li>
+    <li><a href="#总结">总结</a></li>
+    <li><a href="#参考资料">参考资料</a></li>
+    <li><a href="#路径缩写说明">路径缩写说明</a></li>
+  </ul>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/ai/" >
+                Ai
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/%E4%BB%8E-140-%E8%A1%8C%E5%88%B0%E5%AE%8C%E6%95%B4-agent-harness%E6%8B%86%E8%A7%A3-claude-code-%E7%9A%84%E6%9E%B6%E6%9E%84%E4%B8%8E%E5%AE%9E%E7%8E%B0/">从 140 行到完整 Agent Harness：拆解 Claude Code 的架构与实现</a>
+        </h2>
+    
+        
+
+        
+            
+            <div class="article-source">source: claude-code-architecture-and-implementation</div>
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">Jul 01, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h2 id="写在前面">写在前面
+</h2><p>Claude Code 看起来像一个终端聊天框，但“聊天”只是入口。它真正有价值的部分，是让模型能够在代码库里反复观察、行动、验证，直到完成任务。</p>
+<p>理解这类产品时，一个常见误区是把所有能力都归因于外围编排：只要堆足够多的 Prompt、工作流和条件分支，就能“造出智能”。另一个误区则恰好相反：只谈模型能力，忽略工具、上下文和权限对实际效果的决定性影响。</p>
+<p>更准确的表达是：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">编码 Agent 产品 = 模型 + Agent Harness
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>模型负责判断下一步做什么；Harness（运行支架）负责提供工作环境，包括工具、知识、观察结果、权限边界和持久状态。</p>
+<p>本文结合开源教学项目 <a class="link" href="https://github.com/shareAI-lab/learn-claude-code"  target="_blank" rel="noopener"
+    >shareAI-lab/learn-claude-code</a>，从可以运行的代码出发，解释一个类 Claude Code 系统如何从最小循环逐步长成完整运行时。</p>
+<p>需要先说明边界：<code>learn-claude-code</code> 不是 Anthropic 官方仓库，也不是 Claude Code 源码复刻。它是一个用于学习 Harness Engineering 的独立实现。本文所说的“实现”，默认指该教学仓库中的实现；涉及 Claude Code 产品能力时，以 <a class="link" href="https://docs.anthropic.com/en/docs/claude-code/overview"  target="_blank" rel="noopener"
+    >Anthropic 官方文档</a> 为准。</p>
+<p>本文核对的教学仓库版本为 <code>0dcafa2ae053a1ddd6a72f265431104b08a5aa13</code>。仓库仍在更新，章节和代码可能继续变化。</p>
+<hr>
+<h2 id="一先把-agent-还原成一个循环">一、先把 Agent 还原成一个循环
+</h2><h3 id="11-最小闭环">1.1 最小闭环
+</h3><p><code>learn-claude-code</code> 的第一章只有一个 Bash 工具和一个循环。删去异常处理、终端输出等细节后，核心结构可以概括为：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">agent_loop</span><span class="p">(</span><span class="n">messages</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="n">response</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">messages</span><span class="o">=</span><span class="n">messages</span><span class="p">,</span> <span class="n">tools</span><span class="o">=</span><span class="n">tools</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="n">messages</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">as_assistant_message</span><span class="p">(</span><span class="n">response</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="n">calls</span> <span class="o">=</span> <span class="n">find_tool_calls</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="ow">not</span> <span class="n">calls</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="n">results</span> <span class="o">=</span> <span class="p">[</span><span class="n">execute</span><span class="p">(</span><span class="n">call</span><span class="p">)</span> <span class="k">for</span> <span class="n">call</span> <span class="ow">in</span> <span class="n">calls</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">        <span class="n">messages</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">as_tool_results</span><span class="p">(</span><span class="n">results</span><span class="p">))</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>这个循环只有四步：</p>
+<ol>
+<li>把当前消息和工具定义交给模型。</li>
+<li>模型返回文本或结构化工具调用。</li>
+<li>Harness 执行工具，并把结果追加到消息历史。</li>
+<li>再次调用模型，直到模型不再请求工具。</li>
+</ol>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    U[用户目标] --&gt; M[模型推理]
+    M --&gt; D{包含工具调用?}
+    D -- 是 --&gt; T[Harness 执行工具]
+    T --&gt; O[结果写回 messages]
+    O --&gt; M
+    D -- 否 --&gt; R[返回最终回答]
+</code></pre><p>这里最重要的设计不是 <code>while True</code>，而是<strong>停止权和决策权在模型一侧</strong>。Harness 不应把“先搜索、再读文件、再改代码、最后测试”硬编码成唯一流程。面对不同任务，模型可以自行决定工具调用的次序和次数。</p>
+<p>当然，模型有决策权不等于它拥有无限权限。能不能执行、是否需要审批、结果如何裁剪，仍由 Harness 控制。后文会看到，这正是权限、Hooks 和上下文管理存在的原因。</p>
+<h3 id="12-messages-是运行中的状态">1.2 <code>messages</code> 是运行中的状态
+</h3><p>在这个最小实现里，<code>messages</code> 不只是聊天记录，它也是 Agent 的短期工作记忆：</p>
+<ul>
+<li>用户消息描述目标；</li>
+<li>assistant 消息保存模型的文字和 <code>tool_use</code>；</li>
+<li>tool result 保存 Shell 输出、文件内容和错误；</li>
+<li>下一轮模型调用基于这些观察继续决策。</li>
+</ul>
+<p>因此，工具执行结果必须与对应的调用 ID 正确配对，消息顺序也不能随意破坏。否则模型会失去“我刚才做了什么、环境返回了什么”的因果链。</p>
+<h3 id="13-为什么-bash-已经足以形成-agent">1.3 为什么 Bash 已经足以形成 Agent
+</h3><p>Bash 几乎可以间接完成所有本地编码动作：列目录、搜索、读写文件、运行测试、调用 Git。只要模型会正确使用 Shell，一个工具就能构成可工作的编码 Agent。</p>
+<p>但“能工作”不等于“适合生产”：Shell 参数是自由文本；读取大文件缺少输出边界；文件修改难以表达精确意图；所有动作都走 Shell，也不利于权限分类和审计。</p>
+<p>所以第二章没有修改 Agent Loop，而是增加 <code>read</code>、<code>write</code>、<code>edit</code>、<code>glob</code> 等原子工具。</p>
+<hr>
+<h2 id="二工具系统给模型一组清晰的动作接口">二、工具系统：给模型一组清晰的动作接口
+</h2><h3 id="21-schemahandler-和结果协议">2.1 Schema、Handler 和结果协议
+</h3><p>一个工具至少包含三部分：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>部分</th>
+          <th>作用</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>工具 Schema</td>
+          <td>告诉模型工具名称、用途和参数格式</td>
+      </tr>
+      <tr>
+          <td>Handler</td>
+          <td>在宿主环境中执行真实动作</td>
+      </tr>
+      <tr>
+          <td>Tool result</td>
+          <td>把成功、失败和输出返回给模型</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>教学实现用分发表把工具名称映射到 Python 函数：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="n">TOOL_HANDLERS</span> <span class="o">=</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;bash&#34;</span><span class="p">:</span> <span class="n">run_bash</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;read&#34;</span><span class="p">:</span> <span class="n">run_read</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;write&#34;</span><span class="p">:</span> <span class="n">run_write</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;edit&#34;</span><span class="p">:</span> <span class="n">run_edit</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">&#34;glob&#34;</span><span class="p">:</span> <span class="n">run_glob</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p>新增工具时，只需要补充 Schema 和 Handler，主循环不必知道工具内部细节。这是一个很小但很重要的架构边界：<strong>循环负责调度，工具负责能力</strong>。</p>
+<h3 id="22-好工具应当原子可组合可观察">2.2 好工具应当原子、可组合、可观察
+</h3><p>把文件操作拆成 <code>read</code>、<code>write</code>、<code>edit</code>，比提供一个含糊的 <code>manage_project</code> 更适合模型使用：参数更容易生成正确，风险等级更容易判断，日志能明确记录动作，失败后也可以只重试一步。</p>
+<p>Handler 不应让异常直接导致进程崩溃。文件不存在、旧文本不唯一、命令超时等情况，都应该转换为模型可理解的观察结果，让 Agent 有机会修正策略。</p>
+<h3 id="23-路径约束必须在工具层落实">2.3 路径约束必须在工具层落实
+</h3><p>教学代码中的文件工具会解析路径，并检查它是否位于工作目录内。这比在 System Prompt 中写一句“不要访问项目外文件”可靠得多。</p>
+<p>Prompt 是行为指导，代码检查才是安全边界。任何涉及文件系统、网络、数据库或外部账户的能力，都应该遵循这个原则。</p>
+<hr>
+<h2 id="三权限与-hooks自由行动不等于无边界">三、权限与 Hooks：自由行动不等于无边界
+</h2><h3 id="31-权限决策管线">3.1 权限决策管线
+</h3><p>第三章把工具调用分为三类：</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    C[模型请求调用工具] --&gt; R{权限规则}
+    R -- allow --&gt; E[直接执行]
+    R -- ask --&gt; A[请求用户批准]
+    R -- deny --&gt; X[拒绝并返回原因]
+    A -- 批准 --&gt; E
+    A -- 拒绝 --&gt; X
+    E --&gt; O[结果返回模型]
+    X --&gt; O
+</code></pre><p>一个实用的权限系统需要按工具和参数匹配规则，明确区分允许、拒绝和询问，并把拒绝原因返回给模型，使其寻找替代方案。对删除、覆盖、外部写入等不可逆操作，则应提高门槛。</p>
+<p>教学代码用字符串和正则识别危险 Shell 命令，适合解释机制，但不是完整沙箱。生产实现还需要操作系统隔离、工作目录限制、环境变量治理、网络策略和审计日志。</p>
+<h3 id="32-hooks-环绕核心循环">3.2 Hooks 环绕核心循环
+</h3><p>如果每增加一项横切能力就修改 Agent Loop，核心很快会变成无法维护的条件分支。第四章因此引入四类生命周期事件：</p>
+<ul>
+<li><code>UserPromptSubmit</code>：用户请求进入循环前；</li>
+<li><code>PreToolUse</code>：工具执行前；</li>
+<li><code>PostToolUse</code>：工具执行后；</li>
+<li><code>Stop</code>：Agent 停止时。</li>
+</ul>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">sequenceDiagram
+    participant U as 用户
+    participant H as Hooks
+    participant L as Agent Loop
+    participant T as Tool
+    U-&gt;&gt;H: UserPromptSubmit
+    H-&gt;&gt;L: 注入补充上下文
+    L-&gt;&gt;H: PreToolUse
+    H-&gt;&gt;T: 允许执行
+    T-&gt;&gt;H: PostToolUse
+    H-&gt;&gt;L: 处理后的观察结果
+    L-&gt;&gt;H: Stop
+    H-&gt;&gt;U: 总结或记录
+</code></pre><p>权限检查、调用日志、大输出截断和停止总结都可以注册为 Hook。关键原则是：<strong>Hook 围绕循环扩展，不重写循环本身</strong>。</p>
+<p>Hooks 也不能取代权限系统。日志、格式化等 Hook 可以失败后继续，而安全 Hook 往往必须 fail closed；两者需要明确的执行顺序和异常策略。</p>
+<hr>
+<h2 id="四复杂任务todo子-agent-与上下文压缩">四、复杂任务：Todo、子 Agent 与上下文压缩
+</h2><h3 id="41-todo-是可见的短期计划">4.1 Todo 是可见的短期计划
+</h3><p>跨模块任务容易漂移。第五章增加 <code>todo_write</code> 工具，让模型维护带状态的步骤列表。它把隐含计划变成可检查状态：是否遗漏验证、当前正在做什么、哪些项目已完成、结束时是否仍有未完成项。</p>
+<p>教学实现还约束同一时间最多一个 <code>in_progress</code> 项，并在退出时提示未完成 Todo。这是一种轻量的完成度检查，但仍依赖模型诚实更新状态。</p>
+<h3 id="42-子-agent-的本质是隔离上下文">4.2 子 Agent 的本质是隔离上下文
+</h3><p>第六章将 <code>task</code> 暴露为普通工具。主 Agent 调用它时，Harness 创建全新的 <code>messages</code>，运行一个独立循环，最后只把子 Agent 的最终文本作为工具结果交回主 Agent。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    P[主 Agent 上下文] --&gt;|task prompt| S[子 Agent 新 messages]
+    S --&gt; ST[独立使用工具]
+    ST --&gt; SR[最终文本]
+    SR --&gt;|一个 tool result| P
+</code></pre><p>子任务中的大量搜索不会污染主上下文，主 Agent 只接收结论。因此，子 Agent 首先是一种上下文工程手段，其次才是并行手段。如果任务很小、共享状态很多，拆分反而会增加信息损失和协调成本。</p>
+<h3 id="43-上下文压缩不是简单删除历史">4.3 上下文压缩不是简单删除历史
+</h3><p>第八章实现了分层压缩：</p>
+<ol>
+<li>将较大的工具结果写入磁盘，只保留预览和路径。</li>
+<li>对过长结果做裁剪。</li>
+<li>清理更早的工具输出，保留近期观察。</li>
+<li>若仍超预算，让模型生成结构化摘要并替换旧历史。</li>
+</ol>
+<p>好的摘要至少要保留用户目标、已完成修改、关键决定、失败尝试、当前文件状态和下一步。否则 token 数虽然降低，Agent 却可能重复劳动，甚至撤销已经完成的工作。</p>
+<p>上下文窗口再大，压缩仍然必要：瓶颈不只是“能不能塞下”，还包括注意力是否集中、请求成本是否稳定、旧输出是否淹没当前证据。</p>
+<hr>
+<h2 id="五知识与记忆按需加载跨会话沉淀">五、知识与记忆：按需加载，跨会话沉淀
+</h2><h3 id="51-skill-采用两阶段加载">5.1 Skill 采用两阶段加载
+</h3><p>第七章扫描 Skill 目录中的元数据，只把名称和简介放入初始 System Prompt。模型判断相关后，再调用工具加载完整说明。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    S[扫描 Skill 元数据] --&gt; C[小型能力目录]
+    C --&gt; M[模型选择相关 Skill]
+    M --&gt; L[加载完整 SKILL.md]
+    L --&gt; A[按工作流执行]
+</code></pre><p>这是一种渐进式披露：先知道“有什么”，需要时再知道“具体怎么做”。Skill 与工具的职责也不同：工具提供动作接口，Skill 提供使用这些动作的领域知识和流程。</p>
+<h3 id="52-memory-包含选择提取和合并">5.2 Memory 包含选择、提取和合并
+</h3><p>第九章把跨会话记忆拆成三个子系统：</p>
+<ul>
+<li>Selection：会话开始时选择与请求相关的记忆；</li>
+<li>Extraction：会话结束后提取值得复用的信息；</li>
+<li>Consolidation：合并重复内容并清理过时信息。</li>
+</ul>
+<p>构建命令、稳定的架构约束、反复验证过的排障结论值得记住；临时日志、猜测、一次性凭证和可从仓库直接读取的内容通常不值得。</p>
+<p>记忆是缓存，不是真相源。它必须允许更新、覆盖和删除，使用时也应与当前代码和文档核对。</p>
+<hr>
+<h2 id="六长任务持久任务图后台执行与定时调度">六、长任务：持久任务图、后台执行与定时调度
+</h2><h3 id="61-task-system-把计划变成持久状态">6.1 Task System 把计划变成持久状态
+</h3><p>Todo 适合单次会话，真正的长任务还需要磁盘持久化和依赖关系。第十章中的 Task 包含 ID、主题、描述、状态、负责人和 <code>blockedBy</code>。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    A[分析需求] --&gt; B[实现后端]
+    A --&gt; C[实现前端]
+    B --&gt; D[集成测试]
+    C --&gt; D
+</code></pre><p>只有依赖全部完成的任务才可认领。任务图让进度能够跨会话恢复，也为多 Agent 协作提供共同状态。系统必须防御两个 Worker 同时认领同一任务，以及依赖更新形成环；教学实现用文件锁和依赖检查展示了基本处理方式。</p>
+<h3 id="62-后台任务让循环保持响应">6.2 后台任务让循环保持响应
+</h3><p>测试、构建和服务启动可能持续很久。第十一章将慢命令放入后台线程，完成后写入通知队列；主循环再把通知注入 <code>messages</code>。</p>
+<p>工具第一次返回的是“任务已启动”，之后才收到真实结果。因此还必须处理进程组终止、退出码、超时、通知去重和会话结束时的资源清理。</p>
+<h3 id="63-cron-是时间驱动的任务入口">6.3 Cron 是时间驱动的任务入口
+</h3><p>第十二章增加定时任务。调度器只判断何时到期并把 Prompt 放入队列，真正任务仍交给同一个 Agent Loop。Cron 负责触发，Agent 负责决策，工具负责执行。</p>
+<p>持久定时任务还要保存到磁盘，并记录某一分钟是否已经触发，以避免重启或重复轮询造成二次执行。</p>
+<hr>
+<h2 id="七多-agent协议原子认领与工作区隔离">七、多 Agent：协议、原子认领与工作区隔离
+</h2><p>第十三章不只是“同时启动几个线程”，而是补齐协作所需的基础设施：持久化队友和收件箱、消息协议、任务依赖与原子认领、负责人状态、任务绑定 Git worktree，以及结果回传和资源清理。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    L[主 Agent] --&gt; Q[共享任务图]
+    A[队友 A] --&gt;|原子认领| Q
+    B[队友 B] --&gt;|原子认领| Q
+    Q --&gt; WA[任务 Worktree A]
+    Q --&gt; WB[任务 Worktree B]
+    A &lt;--&gt; MA[Mailbox A]
+    B &lt;--&gt; MB[Mailbox B]
+    L &lt;--&gt; MA
+    L &lt;--&gt; MB
+</code></pre><p>多 Agent 系统的难点不是创建 Agent，而是避免互相踩踏：认领必须原子化；每个 Agent 的当前任务要清晰；并行修改最好进入独立目录；消息需要接收者、类型和确认机制；删除 worktree 前必须检查未提交修改。</p>
+<p>如果这些条件不成立，更多 Agent 通常只意味着更多冲突、重复劳动和上下文成本。</p>
+<hr>
+<h2 id="八mcp把外部能力并入同一个工具池">八、MCP：把外部能力并入同一个工具池
+</h2><p>第十四章展示了一个小型 MCP 客户端和两个 Mock Server。连接过程分为三步：连接 Server 并发现工具；给工具名加命名空间避免重名；将远程 Schema 与本地工具合并，再把调用路由回对应 Server。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    M[模型] --&gt; P[统一工具池]
+    P --&gt; L[本地 read / edit / bash]
+    P --&gt; D[mcp__docs__search]
+    P --&gt; X[mcp__deploy__release]
+    D --&gt; DS[Docs Server]
+    X --&gt; DP[Deploy Server]
+</code></pre><p>MCP 改变的是能力来源，不应改变 Agent Loop。对模型而言，本地工具和 MCP 工具都是带 Schema 的动作；对 Harness 而言，差异主要存在于发现、连接、命名、超时、认证和权限边界。</p>
+<p>外部工具尤其要警惕信任升级：读取公开文档与部署生产环境显然不是同一风险等级。MCP Server 声明了能力，不代表 Harness 应无条件授权。</p>
+<hr>
+<h2 id="九集成运行时很多机制仍然只有一个循环">九、集成运行时：很多机制，仍然只有一个循环
+</h2><p>第十五章把工具、权限、Hooks、Skills、压缩、记忆、任务、后台执行、定时器、团队和 MCP 重新接回一个 Harness。它说明这些机制都可以围绕稳定的核心循环组合。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    UI[CLI / IDE / Web] --&gt; LOOP[Agent Loop]
+    LOOP &lt;--&gt; CTX[Context&lt;br/&gt;messages / compact / memory]
+    LOOP --&gt; GOV[Governance&lt;br/&gt;permission / hooks]
+    GOV --&gt; POOL[Tool Pool]
+    POOL --&gt; LOCAL[文件 / Shell / Git]
+    POOL --&gt; EXT[Skills / Subagent / MCP]
+    LOOP &lt;--&gt; STATE[Task / Background / Cron / Team]
+</code></pre><p>完整 Harness 可以分成五个平面：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>平面</th>
+          <th>负责什么</th>
+          <th>典型机制</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>决策平面</td>
+          <td>选择下一步和停止时机</td>
+          <td>模型、Agent Loop</td>
+      </tr>
+      <tr>
+          <td>行动平面</td>
+          <td>改变或查询环境</td>
+          <td>文件、Shell、Git、MCP</td>
+      </tr>
+      <tr>
+          <td>上下文平面</td>
+          <td>当前证据和长期知识</td>
+          <td>messages、压缩、Skills、Memory</td>
+      </tr>
+      <tr>
+          <td>控制平面</td>
+          <td>限制和观察动作</td>
+          <td>Permission、Hooks、日志</td>
+      </tr>
+      <tr>
+          <td>状态平面</td>
+          <td>跨轮次、长任务和协作</td>
+          <td>Task、Background、Cron、Team</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>这种划分比按 CLI、IDE、Web 来理解更接近本质：界面可以更换，运行时的几个平面仍然存在。</p>
+<hr>
+<h2 id="十什么时候不该让模型自由编排">十、什么时候不该让模型自由编排
+</h2><p>“让模型决定下一步”不意味着所有流程都应该交给自由循环。</p>
+<p>第十六章引入 Workflow Runtime：当编排形状固定、需要恢复和审计时，把流程写成代码更合适。例如发布流程可能始终要求按顺序完成构建、测试、审批和部署。</p>
+<p>教学实现加入输入 Schema 校验、生命周期事件、预算和执行限制、Journal 持久化、断点恢复，并将工作流本身注册为 Agent 工具。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>场景</th>
+          <th>更合适的控制方式</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>探索陌生代码、定位未知故障</td>
+          <td>Agent Loop</td>
+      </tr>
+      <tr>
+          <td>固定发布步骤、合规审批流程</td>
+          <td>Workflow</td>
+      </tr>
+      <tr>
+          <td>流程固定，但某一步需要判断</td>
+          <td>Workflow 调用 Agent</td>
+      </tr>
+      <tr>
+          <td>Agent 需要启动可恢复流程</td>
+          <td>Agent 调用 Workflow Tool</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>原则很朴素：未知路径交给模型探索，已知路径交给代码约束。</p>
+<hr>
+<h2 id="十一goal-loop模型说完成了还不够">十一、Goal Loop：模型说“完成了”还不够
+</h2><p>普通 Agent Loop 在模型不再返回工具调用时停止。这是协议层停止条件，却不一定代表用户目标真的完成。</p>
+<p>第十七章在外层加入独立 Goal Controller：主会话准备停止时，Evaluator 根据目标和轨迹判断是否达成。如果尚未完成，就生成继续工作的反馈并把控制权交还主循环。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    G[用户设定 Goal] --&gt; A[Agent Session]
+    A --&gt; S[提出停止]
+    S --&gt; E[独立 Evaluator]
+    E -- achieved --&gt; C[标记完成]
+    E -- continue --&gt; F[生成缺口反馈]
+    F --&gt; A
+    E -- impossible / failed / over limit --&gt; U[交还用户]
+</code></pre><p>它把“对话结束”和“目标完成”区分开，也增加预算、最大续跑次数和失败状态。Evaluator 仍可能误判，所以高风险任务还应使用确定性证据：测试是否通过、产物是否存在、部署状态是否成功，而不是只相信另一轮模型判断。</p>
+<hr>
+<h2 id="十二17-章的演进路线">十二、17 章的演进路线
+</h2><p>当前主线从 <code>s01</code> 到 <code>s17</code>，每章隔离一个机制：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th>章节</th>
+          <th>新增机制</th>
+          <th>解决的问题</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>s01</td>
+          <td>Agent Loop + Bash</td>
+          <td>形成观察—行动闭环</td>
+      </tr>
+      <tr>
+          <td>s02</td>
+          <td>原子工具与分发表</td>
+          <td>扩展能力而不改主循环</td>
+      </tr>
+      <tr>
+          <td>s03</td>
+          <td>Permission</td>
+          <td>控制允许、拒绝与审批</td>
+      </tr>
+      <tr>
+          <td>s04</td>
+          <td>Hooks</td>
+          <td>注入横切逻辑</td>
+      </tr>
+      <tr>
+          <td>s05</td>
+          <td>TodoWrite</td>
+          <td>显式维护短期计划</td>
+      </tr>
+      <tr>
+          <td>s06</td>
+          <td>Subagent</td>
+          <td>隔离子任务上下文</td>
+      </tr>
+      <tr>
+          <td>s07</td>
+          <td>Skill Loading</td>
+          <td>按需加载领域知识</td>
+      </tr>
+      <tr>
+          <td>s08</td>
+          <td>Context Compact</td>
+          <td>控制长会话上下文</td>
+      </tr>
+      <tr>
+          <td>s09</td>
+          <td>Memory</td>
+          <td>跨会话复用经验</td>
+      </tr>
+      <tr>
+          <td>s10</td>
+          <td>Task System</td>
+          <td>持久任务和依赖图</td>
+      </tr>
+      <tr>
+          <td>s11</td>
+          <td>Background Tasks</td>
+          <td>非阻塞执行慢操作</td>
+      </tr>
+      <tr>
+          <td>s12</td>
+          <td>Cron Scheduler</td>
+          <td>时间驱动任务</td>
+      </tr>
+      <tr>
+          <td>s13</td>
+          <td>Agent Teams</td>
+          <td>多 Agent 协作与隔离</td>
+      </tr>
+      <tr>
+          <td>s14</td>
+          <td>MCP Plugin</td>
+          <td>发现并路由外部工具</td>
+      </tr>
+      <tr>
+          <td>s15</td>
+          <td>Integrated Harness</td>
+          <td>将机制接回统一循环</td>
+      </tr>
+      <tr>
+          <td>s16</td>
+          <td>Workflow Runtime</td>
+          <td>固定流程、日志与恢复</td>
+      </tr>
+      <tr>
+          <td>s17</td>
+          <td>Goal Loop</td>
+          <td>独立判断目标是否闭环</td>
+      </tr>
+  </tbody>
+</table></div>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    A[能行动] --&gt; B[有边界]
+    B --&gt; C[能处理复杂任务]
+    C --&gt; D[能记忆]
+    D --&gt; E[能长期运行]
+    E --&gt; F[能协作和扩展]
+    F --&gt; G[能编排并闭环]
+</code></pre><p>越往后代码量增长越快，但最初的 Agent Loop 没有变得神秘。复杂度主要来自真实环境：并发、持久化、权限、恢复、上下文预算和失败处理，而不是某个隐藏的“超级 Prompt”。</p>
+<hr>
+<h2 id="十三自己实现时最该关注什么">十三、自己实现时最该关注什么
+</h2><h3 id="131-先做最小闭环">13.1 先做最小闭环
+</h3><p>先用一个模型、一个 Bash 工具和一个循环验证模型能否完成目标，再根据真实失败增加专用工具。过早加入工作流引擎、多 Agent 和记忆系统，会让问题被基础设施掩盖。</p>
+<h3 id="132-把安全约束写进执行层">13.2 把安全约束写进执行层
+</h3><p>System Prompt 可以要求模型谨慎，但路径越界、危险命令和外部写操作必须由代码、沙箱或审批机制控制。模型输出始终是不可信输入。</p>
+<h3 id="133-把工具返回当作-api-设计">13.3 把工具返回当作 API 设计
+</h3><p>输出既不能少到无法诊断，也不能大到淹没上下文。应返回退出码、错误摘要和关键内容；超大结果落盘并提供可再次读取的位置。</p>
+<h3 id="134-用隔离解决上下文和并发问题">13.4 用隔离解决上下文和并发问题
+</h3><p>子 Agent 用独立 <code>messages</code> 隔离认知负担，Git worktree 用独立目录隔离并行修改。不要让多个执行者在同一可变状态上凭默契协作。</p>
+<h3 id="135-为长任务设计恢复">13.5 为长任务设计恢复
+</h3><p>后台命令要能终止，任务要能重新认领，定时触发要能去重，工作流要有 Journal，队友异常退出后要能释放资源。Agent 的生产可用性往往取决于这些“不聪明”的代码。</p>
+<h3 id="136-用证据定义完成">13.6 用证据定义完成
+</h3><p>“模型停止调用工具”“Todo 全部勾选”“Evaluator 判断成功”都只是信号。编码任务最终应尽量落到可验证证据：测试、lint、构建产物、Git diff 和外部系统状态。</p>
+<hr>
+<h2 id="十四教学实现没有替你解决什么">十四、教学实现没有替你解决什么
+</h2><p><code>learn-claude-code</code> 的价值是让机制足够清晰，而不是提供可直接上线的 Claude Code 替代品。生产系统仍需额外处理：</p>
+<ul>
+<li>真正的容器或系统级沙箱；</li>
+<li>跨平台 Shell 和文件系统差异；</li>
+<li>API 限流、重试、熔断和成本治理；</li>
+<li>Secret 隔离与凭证生命周期；</li>
+<li>MCP Server 的认证和信任策略；</li>
+<li>并发一致性、崩溃恢复和数据迁移；</li>
+<li>完整的遥测、审计和质量评估；</li>
+<li>Prompt Injection 与不可信仓库内容；</li>
+<li>用户界面、会话存储和多租户隔离。</li>
+</ul>
+<p>阅读这些代码时，最合适的问题不是“它是否 1:1 复刻 Claude Code”，而是“它用最少代码说明了哪个机制，以及进入生产后还缺哪些约束”。</p>
+<hr>
+<h2 id="总结">总结
+</h2><p>Claude Code 一类编码 Agent 的核心可以浓缩成一句话：<strong>模型在循环中做决策，Harness 给它可控的手、眼睛、记忆和工作空间。</strong></p>
+<p>从 <code>learn-claude-code</code> 的渐进实现可以看到：</p>
+<ol>
+<li>Agent 从 <code>messages → model → tool_use → tool_result → messages</code> 的闭环开始。</li>
+<li>工具扩展行动空间，权限和 Hooks 划定边界。</li>
+<li>Todo、子 Agent 和上下文压缩支撑复杂任务。</li>
+<li>Skills 与 Memory 分别解决按需知识和跨会话经验。</li>
+<li>Task、Background、Cron 与 Team 让任务长期运行并协作。</li>
+<li>MCP 把外部能力并入统一工具池。</li>
+<li>Workflow 固化已知流程，Goal Loop 检查真实完成度。</li>
+</ol>
+<p>最值得学习的不是某一段代码，而是它始终维持的分工：模型负责智能决策，Harness 负责可靠执行。优秀的 Agent 工程不是用更多流程替模型思考，而是让模型在清晰、可观察、可恢复且有权限边界的环境中工作。</p>
+<h2 id="参考资料">参考资料
+</h2><ul>
+<li><a class="link" href="https://github.com/shareAI-lab/learn-claude-code"  target="_blank" rel="noopener"
+    >learn-claude-code GitHub 仓库</a></li>
+<li><a class="link" href="https://github.com/shareAI-lab/learn-claude-code/blob/main/README-zh.md"  target="_blank" rel="noopener"
+    >learn-claude-code 中文 README</a></li>
+<li><a class="link" href="https://docs.anthropic.com/en/docs/claude-code/overview"  target="_blank" rel="noopener"
+    >Anthropic：Claude Code 概览</a></li>
+<li><a class="link" href="https://modelcontextprotocol.io/docs/getting-started/intro"  target="_blank" rel="noopener"
+    >Model Context Protocol 官方文档</a></li>
+</ul>
+<h2 id="路径缩写说明">路径缩写说明
+</h2><ul>
+<li><code>hugo-main</code> → <code>/home/agsol/workspace/hugo-main</code></li>
+<li>本文 → <code>hugo-main:content/post/ai/claude-code-architecture-and-implementation.md</code></li>
+<li><code>learn-claude-code</code> → <code>https://github.com/shareAI-lab/learn-claude-code</code></li>
+<li><code>s01</code>–<code>s17</code> → <code>learn-claude-code</code> 根目录下的 <code>s01_agent_loop/</code> 至 <code>s17_goal_loop/</code></li>
+</ul>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/ai/">AI</a>
+        
+            <a href="/tags/claude-code/">Claude-Code</a>
+        
+            <a href="/tags/agent/">Agent</a>
+        
+            <a href="/tags/mcp/">Mcp</a>
+        
+            <a href="/tags/skills/">Skills</a>
+        
+    </section>
+
+
+    <section class="article-lastmod">
+        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-clock" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="12" r="9" />
+  <polyline points="12 7 12 12 15 15" />
+</svg>
+
+
+
+        <span>
+            Last updated on Sep 15, 2026 00:00 UTC
+        </span>
+    </section></footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/codex-%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97%E6%9E%B6%E6%9E%84%E9%85%8D%E7%BD%AEhooksskillsmcp-%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">Codex 使用指南：架构、配置、Hooks、Skills、MCP 与常见面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-skills%E6%A6%82%E5%BF%B5%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F%E5%BC%80%E5%8F%91%E6%96%B9%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/appbuilder-%E7%BB%84%E4%BB%B6mcp-%E4%B8%8E-skills-%E7%9A%84%E5%AF%B9%E6%AF%94%E5%AD%A6%E4%B9%A0/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AppBuilder 组件、MCP 与 Skills 的对比学习</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/multica-%E9%A1%B9%E7%9B%AE%E8%A7%A3%E6%9E%90%E9%83%A8%E7%BD%B2%E4%BD%BF%E7%94%A8%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1%E4%B8%8E%E6%8A%80%E6%9C%AF%E4%BA%AE%E7%82%B9/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">Multica 项目解析：部署、使用、架构设计与技术亮点</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/ai-agent-%E5%AE%89%E5%85%A8%E4%BD%93%E7%B3%BBprompt-injectiontool-injection%E6%9D%83%E9%99%90%E6%8E%A7%E5%88%B6%E5%AE%A1%E6%89%B9%E5%AE%A1%E8%AE%A1%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AI Agent 安全体系：Prompt Injection、Tool Injection、权限控制、审批审计与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>
