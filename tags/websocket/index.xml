@@ -152,8 +152,9 @@
     participant Model as 模型/工具
 
     Client-&amp;gt;&amp;gt;Gateway: req: agent
+    Gateway-&amp;gt;&amp;gt;Gateway: agentCommand 解析运行配置
     Gateway--&amp;gt;&amp;gt;Client: ack {runId, acceptedAt}
-    Gateway-&amp;gt;&amp;gt;Queue: 按 sessionKey 入队
+    Gateway-&amp;gt;&amp;gt;Queue: 按 sessionKey 入队（同一会话串行）
     Queue-&amp;gt;&amp;gt;Runtime: runEmbeddedAgent
     Runtime-&amp;gt;&amp;gt;Model: 推理和工具调用
     Runtime--&amp;gt;&amp;gt;Gateway: assistant/tool/lifecycle 增量
@@ -162,8 +163,9 @@
 &lt;/code&gt;&lt;/pre&gt;&lt;p&gt;关键实现点：&lt;/p&gt;
 &lt;ul&gt;
 &lt;li&gt;&lt;code&gt;agent&lt;/code&gt; RPC 会先校验参数、解析会话并持久化会话元数据，然后立即返回 &lt;code&gt;runId&lt;/code&gt; 和 accepted 状态。&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;agentCommand&lt;/code&gt; 负责解析模型、thinking、verbose、trace 默认值，并加载 Skills 快照。&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;runEmbeddedAgent&lt;/code&gt; 负责实际运行，包含会话队列、全局队列、模型凭证解析、运行时事件订阅、流式输出、超时中止和用量元数据返回。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;agentCommand&lt;/code&gt; 位于 Gateway 处理 &lt;code&gt;req: agent&lt;/code&gt; 之后、任务入队之前，负责把外部请求整理成 Runtime 可执行的标准运行配置，包括解析模型、thinking、verbose、trace 默认值，并加载 Skills 快照。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;sessionKey&lt;/code&gt; 是 Agent Runtime 用来标识同一段连续上下文的队列分组键，通常可以理解为一个对话窗口、私聊线程、频道 thread 或 CLI 会话。同一个 &lt;code&gt;sessionKey&lt;/code&gt; 下的请求共享会话历史和运行状态，因此需要串行执行；不同 &lt;code&gt;sessionKey&lt;/code&gt; 的会话则可以进入全局队列并发执行。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;runEmbeddedAgent&lt;/code&gt; 负责实际运行，包含会话队列、全局队列、模型凭证解析、运行时事件订阅、流式输出、超时中止和用量元数据返回。这里的 &lt;code&gt;Embedded&lt;/code&gt; 指 Agent Runtime 被嵌入在 OpenClaw 服务端进程中执行，不是 &lt;code&gt;Embedding&lt;/code&gt;。它强调的是“内嵌式运行 Agent loop”，而不是文本向量化、RAG 检索或语义相似度计算。&lt;/li&gt;
 &lt;li&gt;&lt;code&gt;subscribeEmbeddedAgentSession&lt;/code&gt; 将 runtime 事件桥接为 OpenClaw 的 &lt;code&gt;agent&lt;/code&gt; 流，包括 assistant 增量、tool 事件和生命周期事件。&lt;/li&gt;
 &lt;li&gt;&lt;code&gt;agent.wait&lt;/code&gt; 可以等待某个 &lt;code&gt;runId&lt;/code&gt; 的 end 或 error 结果。&lt;/li&gt;
 &lt;/ul&gt;

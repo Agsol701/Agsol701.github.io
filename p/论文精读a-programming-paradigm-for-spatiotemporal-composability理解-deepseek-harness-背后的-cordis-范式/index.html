@@ -30,7 +30,7 @@
 <meta property='og:description' content="写在前面 DSH（DeepSeek Harness）采用“Everything is a Plugin”的架构，而这套插件架构的理论基础不是简单的事件总线或依赖注入容器，而是 Cordis 提出的时空可组合性。\n论文《A Programming Paradigm for Spatiotemporal Composability》试图回答一个很难、但对插件系统和自演化 Agent 极其重要的问题：\n一个长期运行的系统，怎样在不重启进程、不破坏其他组件、也不丢失运行时状态的前提下，动态增加、删除和替换组件？\n论文把问题拆成两个正交维度：\n时间可组合性：组件卸载后，它产生的副作用能否被完整撤销。 空间可组合性：组件依赖能否被声明、解析，并随着提供者变化自动驱动生命周期。 它进一步将 Effect（Effect，效应）与 Coeffect（Coeffect，共效应）从编译期形式系统提升为运行时机制，提出 Revertible Effect（可逆效应）、Reactive Coeffect（响应式共效应）和 Context Paradigm（上下文范式），并通过一个动态组件演算证明恢复精确性、依赖顺序、进展性与汇合性。最后，论文用 Cordis 和 Koishi 展示工程实现。\n这篇文章不做逐句翻译，而是按“问题直觉 → 数学模型 → 组件演算 → Cordis 实现 → DSH 联系 → 局限与学习路线”重构论文。阅读时建议始终抓住一句话：\n组件能安全热插拔，不只因为它有卸载回调，而是因为它与环境的所有交互都经过一个可追踪、可恢复、可解析依赖的 Context。\n一、论文基本信息与核心结论 1.1 论文信息 项目 内容 标题 A Programming Paradigm for Spatiotemporal Composability arXiv 编号 2608.25512v1 提交日期 2026-08-26 作者 Yifan Shi、Wei Zhang、Tianyi Cui 机构 北京大学、DeepSeek-AI 篇幅 92 页，1 张图，2 张表 领域 Programming Languages、Software Engineering 实现 Cordis 案例 Koishi 插件生态 论文原文见 arXiv 页面 与 PDF。\n">
 <meta property='og:url' content='https://Agsol701.github.io/p/%E8%AE%BA%E6%96%87%E7%B2%BE%E8%AF%BBa-programming-paradigm-for-spatiotemporal-composability%E7%90%86%E8%A7%A3-deepseek-harness-%E8%83%8C%E5%90%8E%E7%9A%84-cordis-%E8%8C%83%E5%BC%8F/'>
 <meta property='og:site_name' content='Agsol Blog'>
-<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='deepseek-harness' /><meta property='article:tag' content='cordis' /><meta property='article:tag' content='effect-system' /><meta property='article:tag' content='plugin-system' /><meta property='article:tag' content='paper-reading' /><meta property='article:published_time' content='2026-09-16T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-09-16T00:00:00&#43;00:00'/>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='harness' /><meta property='article:tag' content='paper-reading' /><meta property='article:published_time' content='2026-09-16T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-09-16T00:00:00&#43;00:00'/>
 <meta name="twitter:title" content="论文精读：A Programming Paradigm for Spatiotemporal Composability——理解 DeepSeek Harness 背后的 Cordis 范式">
 <meta name="twitter:description" content="写在前面 DSH（DeepSeek Harness）采用“Everything is a Plugin”的架构，而这套插件架构的理论基础不是简单的事件总线或依赖注入容器，而是 Cordis 提出的时空可组合性。\n论文《A Programming Paradigm for Spatiotemporal Composability》试图回答一个很难、但对插件系统和自演化 Agent 极其重要的问题：\n一个长期运行的系统，怎样在不重启进程、不破坏其他组件、也不丢失运行时状态的前提下，动态增加、删除和替换组件？\n论文把问题拆成两个正交维度：\n时间可组合性：组件卸载后，它产生的副作用能否被完整撤销。 空间可组合性：组件依赖能否被声明、解析，并随着提供者变化自动驱动生命周期。 它进一步将 Effect（Effect，效应）与 Coeffect（Coeffect，共效应）从编译期形式系统提升为运行时机制，提出 Revertible Effect（可逆效应）、Reactive Coeffect（响应式共效应）和 Context Paradigm（上下文范式），并通过一个动态组件演算证明恢复精确性、依赖顺序、进展性与汇合性。最后，论文用 Cordis 和 Koishi 展示工程实现。\n这篇文章不做逐句翻译，而是按“问题直觉 → 数学模型 → 组件演算 → Cordis 实现 → DSH 联系 → 局限与学习路线”重构论文。阅读时建议始终抓住一句话：\n组件能安全热插拔，不只因为它有卸载回调，而是因为它与环境的所有交互都经过一个可追踪、可恢复、可解析依赖的 Context。\n一、论文基本信息与核心结论 1.1 论文信息 项目 内容 标题 A Programming Paradigm for Spatiotemporal Composability arXiv 编号 2608.25512v1 提交日期 2026-08-26 作者 Yifan Shi、Wei Zhang、Tianyi Cui 机构 北京大学、DeepSeek-AI 篇幅 92 页，1 张图，2 张表 领域 Programming Languages、Software Engineering 实现 Cordis 案例 Koishi 插件生态 论文原文见 arXiv 页面 与 PDF。\n">
     <link rel="shortcut icon" href="/favicon.ico" />
@@ -1718,13 +1718,7 @@ $$<h3 id="153-第三遍理解为什么多组件仍成立">15.3 第三遍：理�
     
     <section class="article-tags">
         
-            <a href="/tags/deepseek-harness/">Deepseek-Harness</a>
-        
-            <a href="/tags/cordis/">Cordis</a>
-        
-            <a href="/tags/effect-system/">Effect-System</a>
-        
-            <a href="/tags/plugin-system/">Plugin-System</a>
+            <a href="/tags/harness/">Harness</a>
         
             <a href="/tags/paper-reading/">Paper-Reading</a>
         
