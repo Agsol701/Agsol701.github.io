@@ -1,0 +1,2042 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 智能体（Agent）的记忆（Memory）需要解决一组连续的工程问题：何时写入、保存什么、怎样修改、如何召回、如何进入模型上下文，以及重启和并发操作后能否保持正确。\n本文从 GitHub 项目的实际代码出发，分析 Mem0、Graphiti、Letta Code、LangMem 和 A-MEM。五个项目覆盖事实条目、时序关系图、文件记忆、框架组件和关联笔记，重点是各自真正执行的调用链及实现边界。\n源码调研于 2026-10-09 完成，本文于 2026-10-10 合并整理。链接均固定到当时核对的提交。调研包含约 40 个核心源码、测试和示例；A-MEM 的两个问题通过原函数与模拟依赖最小复现。没有部署这些项目、运行全套测试或进行模型效果与性能评测。\n文中的“工程建议”属于基于代码结构提出的设计建议，与项目已经实现的行为分别表述。\n一、调研范围与阅读方式 1.1 固定版本与仓库路径 项目 核对提交 本次重点 Mem0 b7ad69a 抽取、追加写入、混合评分、历史 Graphiti 1026ae7 事件入图、消歧、有效期、图检索 Letta Code 253a3bc 文件布局、提交投影、后台合并 LangMem 48e3c11 结构化抽取、Store、反思、摘要 A-MEM ceffb86 原子笔记、演化、关联与恢复 各项目章节中的文件路径都相对于表中对应仓库的根目录；完整提交标识可从固定链接还原。相同文件名在不同项目中不代表相同实现。\n1.2 沿五个问题阅读代码 问题 应检查的内容 写入 触发位置、抽取输入、重复与冲突处理 存储 权威数据、索引、作用域和持久化 读取 候选召回、排序、过滤和展开预算 上下文接入 提示词、工具结果、核心与详细内容 维护 更新、删除、摘要、并发、失败与恢复 大语言模型（LLM, Large Language Model）、嵌入模型（Embedding Model）和数据库各自解决不同问题。模型生成结构化事实不代表事实正确，数据库保存成功不代表下一轮能召回，检索返回也不代表模型已经读到内容。\n二、Mem0：事实条目与追加式记忆 Mem0 主要提供事实抽取与记忆服务接口。本节核对同步 Memory 类及其存储、评分和异常路径；异步类有对应实现。\n">
+<title>GitHub 上 Agent Memory 的实际工程实现：Mem0、Graphiti、Letta Code、LangMem 与 A-MEM</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/github-%E4%B8%8A-agent-memory-%E7%9A%84%E5%AE%9E%E9%99%85%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0mem0graphitiletta-codelangmem-%E4%B8%8E-a-mem/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><style>.mermaid { text-align: center; }</style>
+<script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
+    });
+</script><meta property='og:title' content="GitHub 上 Agent Memory 的实际工程实现：Mem0、Graphiti、Letta Code、LangMem 与 A-MEM">
+<meta property='og:description' content="写在前面 智能体（Agent）的记忆（Memory）需要解决一组连续的工程问题：何时写入、保存什么、怎样修改、如何召回、如何进入模型上下文，以及重启和并发操作后能否保持正确。\n本文从 GitHub 项目的实际代码出发，分析 Mem0、Graphiti、Letta Code、LangMem 和 A-MEM。五个项目覆盖事实条目、时序关系图、文件记忆、框架组件和关联笔记，重点是各自真正执行的调用链及实现边界。\n源码调研于 2026-10-09 完成，本文于 2026-10-10 合并整理。链接均固定到当时核对的提交。调研包含约 40 个核心源码、测试和示例；A-MEM 的两个问题通过原函数与模拟依赖最小复现。没有部署这些项目、运行全套测试或进行模型效果与性能评测。\n文中的“工程建议”属于基于代码结构提出的设计建议，与项目已经实现的行为分别表述。\n一、调研范围与阅读方式 1.1 固定版本与仓库路径 项目 核对提交 本次重点 Mem0 b7ad69a 抽取、追加写入、混合评分、历史 Graphiti 1026ae7 事件入图、消歧、有效期、图检索 Letta Code 253a3bc 文件布局、提交投影、后台合并 LangMem 48e3c11 结构化抽取、Store、反思、摘要 A-MEM ceffb86 原子笔记、演化、关联与恢复 各项目章节中的文件路径都相对于表中对应仓库的根目录；完整提交标识可从固定链接还原。相同文件名在不同项目中不代表相同实现。\n1.2 沿五个问题阅读代码 问题 应检查的内容 写入 触发位置、抽取输入、重复与冲突处理 存储 权威数据、索引、作用域和持久化 读取 候选召回、排序、过滤和展开预算 上下文接入 提示词、工具结果、核心与详细内容 维护 更新、删除、摘要、并发、失败与恢复 大语言模型（LLM, Large Language Model）、嵌入模型（Embedding Model）和数据库各自解决不同问题。模型生成结构化事实不代表事实正确，数据库保存成功不代表下一轮能召回，检索返回也不代表模型已经读到内容。\n二、Mem0：事实条目与追加式记忆 Mem0 主要提供事实抽取与记忆服务接口。本节核对同步 Memory 类及其存储、评分和异常路径；异步类有对应实现。\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/github-%E4%B8%8A-agent-memory-%E7%9A%84%E5%AE%9E%E9%99%85%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0mem0graphitiletta-codelangmem-%E4%B8%8E-a-mem/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='memory' /><meta property='article:tag' content='engineering' /><meta property='article:tag' content='github' /><meta property='article:published_time' content='2026-10-10T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-10-10T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="GitHub 上 Agent Memory 的实际工程实现：Mem0、Graphiti、Letta Code、LangMem 与 A-MEM">
+<meta name="twitter:description" content="写在前面 智能体（Agent）的记忆（Memory）需要解决一组连续的工程问题：何时写入、保存什么、怎样修改、如何召回、如何进入模型上下文，以及重启和并发操作后能否保持正确。\n本文从 GitHub 项目的实际代码出发，分析 Mem0、Graphiti、Letta Code、LangMem 和 A-MEM。五个项目覆盖事实条目、时序关系图、文件记忆、框架组件和关联笔记，重点是各自真正执行的调用链及实现边界。\n源码调研于 2026-10-09 完成，本文于 2026-10-10 合并整理。链接均固定到当时核对的提交。调研包含约 40 个核心源码、测试和示例；A-MEM 的两个问题通过原函数与模拟依赖最小复现。没有部署这些项目、运行全套测试或进行模型效果与性能评测。\n文中的“工程建议”属于基于代码结构提出的设计建议，与项目已经实现的行为分别表述。\n一、调研范围与阅读方式 1.1 固定版本与仓库路径 项目 核对提交 本次重点 Mem0 b7ad69a 抽取、追加写入、混合评分、历史 Graphiti 1026ae7 事件入图、消歧、有效期、图检索 Letta Code 253a3bc 文件布局、提交投影、后台合并 LangMem 48e3c11 结构化抽取、Store、反思、摘要 A-MEM ceffb86 原子笔记、演化、关联与恢复 各项目章节中的文件路径都相对于表中对应仓库的根目录；完整提交标识可从固定链接还原。相同文件名在不同项目中不代表相同实现。\n1.2 沿五个问题阅读代码 问题 应检查的内容 写入 触发位置、抽取输入、重复与冲突处理 存储 权威数据、索引、作用域和持久化 读取 候选召回、排序、过滤和展开预算 上下文接入 提示词、工具结果、核心与详细内容 维护 更新、删除、摘要、并发、失败与恢复 大语言模型（LLM, Large Language Model）、嵌入模型（Embedding Model）和数据库各自解决不同问题。模型生成结构化事实不代表事实正确，数据库保存成功不代表下一轮能召回，检索返回也不代表模型已经读到内容。\n二、Mem0：事实条目与追加式记忆 Mem0 主要提供事实抽取与记忆服务接口。本节核对同步 Memory 类及其存储、评分和异常路径；异步类有对应实现。\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about-me/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About Me</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ul>
+    <li><a href="#写在前面">写在前面</a></li>
+    <li><a href="#一调研范围与阅读方式">一、调研范围与阅读方式</a>
+      <ul>
+        <li><a href="#11-固定版本与仓库路径">1.1 固定版本与仓库路径</a></li>
+        <li><a href="#12-沿五个问题阅读代码">1.2 沿五个问题阅读代码</a></li>
+      </ul>
+    </li>
+    <li><a href="#二mem0事实条目与追加式记忆">二、Mem0：事实条目与追加式记忆</a>
+      <ul>
+        <li><a href="#21-系统的位置与源码地图">2.1 系统的位置与源码地图</a></li>
+        <li><a href="#22-数据模型与作用域">2.2 数据模型与作用域</a>
+          <ul>
+            <li><a href="#221-一个事实条目保存什么">2.2.1 一个事实条目保存什么</a></li>
+            <li><a href="#222-用户agent-与运行隔离">2.2.2 用户、Agent 与运行隔离</a></li>
+          </ul>
+        </li>
+        <li><a href="#23-默认写入流水线">2.3 默认写入流水线</a>
+          <ul>
+            <li><a href="#231-入口与两条路径">2.3.1 入口与两条路径</a></li>
+            <li><a href="#232-先读旧记忆再抽取新事实">2.3.2 先读旧记忆，再抽取新事实</a></li>
+            <li><a href="#233-去重的范围">2.3.3 去重的范围</a></li>
+            <li><a href="#234-成功结果的判定">2.3.4 成功结果的判定</a></li>
+          </ul>
+        </li>
+        <li><a href="#24-检索向量候选上的多信号排序">2.4 检索：向量候选上的多信号排序</a>
+          <ul>
+            <li><a href="#241-检索步骤">2.4.1 检索步骤</a></li>
+            <li><a href="#242-阈值与分数">2.4.2 阈值与分数</a></li>
+            <li><a href="#243-过期过滤与上下文预算">2.4.3 过期过滤与上下文预算</a></li>
+          </ul>
+        </li>
+        <li><a href="#25-持久化更新与失败边界">2.5 持久化、更新与失败边界</a>
+          <ul>
+            <li><a href="#251-两种存储各自负责什么">2.5.1 两种存储各自负责什么</a></li>
+            <li><a href="#252-不同失败的可见性">2.5.2 不同失败的可见性</a></li>
+            <li><a href="#253-更新与删除">2.5.3 更新与删除</a></li>
+          </ul>
+        </li>
+        <li><a href="#26-接入案例与验证方法">2.6 接入案例与验证方法</a>
+          <ul>
+            <li><a href="#261-个性化助手">2.6.1 个性化助手</a></li>
+            <li><a href="#262-多智能体共享">2.6.2 多智能体共享</a></li>
+            <li><a href="#263-应验证什么">2.6.3 应验证什么</a></li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+    <li><a href="#三graphiti事件实体与时序关系">三、Graphiti：事件、实体与时序关系</a>
+      <ul>
+        <li><a href="#31-系统组成与源码地图">3.1 系统组成与源码地图</a></li>
+        <li><a href="#32-三个核心数据对象">3.2 三个核心数据对象</a>
+          <ul>
+            <li><a href="#321-事件节点">3.2.1 事件节点</a></li>
+            <li><a href="#322-实体节点">3.2.2 实体节点</a></li>
+            <li><a href="#323-事实关系">3.2.3 事实关系</a></li>
+          </ul>
+        </li>
+        <li><a href="#33-事件如何进入图中">3.3 事件如何进入图中</a>
+          <ul>
+            <li><a href="#331-获取上下文与请求作用域">3.3.1 获取上下文与请求作用域</a></li>
+            <li><a href="#332-实体抽取与消歧">3.3.2 实体抽取与消歧</a></li>
+            <li><a href="#333-关系抽取重复与矛盾">3.3.3 关系抽取、重复与矛盾</a></li>
+          </ul>
+        </li>
+        <li><a href="#34-事实变化如何处理">3.4 事实变化如何处理</a>
+          <ul>
+            <li><a href="#341-失效保留历史">3.4.1 失效保留历史</a></li>
+            <li><a href="#342-一个依赖变更例子">3.4.2 一个依赖变更例子</a></li>
+            <li><a href="#343-默认检索不等于当前有效事实查询">3.4.3 默认检索不等于当前有效事实查询</a></li>
+          </ul>
+        </li>
+        <li><a href="#35-图检索与排序">3.5 图检索与排序</a>
+          <ul>
+            <li><a href="#351-多种召回方式">3.5.1 多种召回方式</a></li>
+            <li><a href="#352-排序方式的差别">3.5.2 排序方式的差别</a></li>
+            <li><a href="#353-如何注入上下文">3.5.3 如何注入上下文</a></li>
+          </ul>
+        </li>
+        <li><a href="#36-持久化顺序与维护">3.6 持久化、顺序与维护</a>
+          <ul>
+            <li><a href="#361-数据库保存边界">3.6.1 数据库保存边界</a></li>
+            <li><a href="#362-为什么建议顺序写入">3.6.2 为什么建议顺序写入</a></li>
+            <li><a href="#363-删除不是事实失效">3.6.3 删除不是事实失效</a></li>
+          </ul>
+        </li>
+        <li><a href="#37-工程案例与验证重点">3.7 工程案例与验证重点</a>
+          <ul>
+            <li><a href="#371-发布故障关联">3.7.1 发布故障关联</a></li>
+            <li><a href="#372-测试能够证明什么">3.7.2 测试能够证明什么</a></li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+    <li><a href="#四letta-code文件记忆与-git-版本">四、Letta Code：文件记忆与 Git 版本</a>
+      <ul>
+        <li><a href="#41-源码地图与执行角色">4.1 源码地图与执行角色</a></li>
+        <li><a href="#42-记忆目录与分层布局">4.2 记忆目录与分层布局</a>
+          <ul>
+            <li><a href="#421-按-agent-隔离路径">4.2.1 按 Agent 隔离路径</a></li>
+            <li><a href="#422-v1-与-v2">4.2.2 v1 与 v2</a></li>
+          </ul>
+        </li>
+        <li><a href="#43-读路径哪些内容进入模型">4.3 读路径：哪些内容进入模型</a>
+          <ul>
+            <li><a href="#431-读取已提交快照">4.3.1 读取已提交快照</a></li>
+            <li><a href="#432-v2-的上下文投影">4.3.2 v2 的上下文投影</a></li>
+            <li><a href="#433-编译版本与刷新">4.3.3 编译版本与刷新</a></li>
+          </ul>
+        </li>
+        <li><a href="#44-写路径文件修改校验与提交">4.4 写路径：文件修改、校验与提交</a>
+          <ul>
+            <li><a href="#441-模型操作文件">4.4.1 模型操作文件</a></li>
+            <li><a href="#442-提交前校验">4.4.2 提交前校验</a></li>
+            <li><a href="#443-本地与远端同步">4.4.3 本地与远端同步</a></li>
+          </ul>
+        </li>
+        <li><a href="#45-后台更新与并发协调">4.5 后台更新与并发协调</a>
+          <ul>
+            <li><a href="#451-为什么使用独立-worktree">4.5.1 为什么使用独立 worktree</a></li>
+            <li><a href="#452-文件锁的实际范围">4.5.2 文件锁的实际范围</a></li>
+            <li><a href="#453-合并结果与重试">4.5.3 合并结果与重试</a></li>
+          </ul>
+        </li>
+        <li><a href="#46-长期记忆与会话压缩分别维护">4.6 长期记忆与会话压缩分别维护</a>
+          <ul>
+            <li><a href="#461-上下文压缩">4.6.1 上下文压缩</a></li>
+            <li><a href="#462-持久历史与模型输入">4.6.2 持久历史与模型输入</a></li>
+          </ul>
+        </li>
+        <li><a href="#47-coding-agent-案例与验证">4.7 Coding Agent 案例与验证</a>
+          <ul>
+            <li><a href="#471-如何组织项目记忆">4.7.1 如何组织项目记忆</a></li>
+            <li><a href="#472-需要检查的边界">4.7.2 需要检查的边界</a></li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+    <li><a href="#五langmem抽取存储与调度组件">五、LangMem：抽取、存储与调度组件</a>
+      <ul>
+        <li><a href="#51-四层职责与源码地图">5.1 四层职责与源码地图</a></li>
+        <li><a href="#52-记忆数据与作用域">5.2 记忆数据与作用域</a>
+          <ul>
+            <li><a href="#521-namespacekey-与-value">5.2.1 namespace、key 与 value</a></li>
+            <li><a href="#522-运行时作用域">5.2.2 运行时作用域</a></li>
+            <li><a href="#523-存储能力来自后端">5.2.3 存储能力来自后端</a></li>
+          </ul>
+        </li>
+        <li><a href="#53-写路径一agent-调用记忆工具">5.3 写路径一：Agent 调用记忆工具</a>
+          <ul>
+            <li><a href="#531-执行过程中的写入">5.3.1 执行过程中的写入</a></li>
+            <li><a href="#532-这条路径的优缺点">5.3.2 这条路径的优缺点</a></li>
+          </ul>
+        </li>
+        <li><a href="#54-写路径二抽取器与记忆管理器">5.4 写路径二：抽取器与记忆管理器</a>
+          <ul>
+            <li><a href="#541-抽取与保存分离">5.4.1 抽取与保存分离</a></li>
+            <li><a href="#542-先搜索再合并">5.4.2 先搜索，再合并</a></li>
+            <li><a href="#543-新增更新删除">5.4.3 新增、更新、删除</a></li>
+            <li><a href="#544-最终写入的事务边界">5.4.4 最终写入的事务边界</a></li>
+          </ul>
+        </li>
+        <li><a href="#55-后台反思如何执行">5.5 后台反思如何执行</a>
+          <ul>
+            <li><a href="#551-本地执行器">5.5.1 本地执行器</a></li>
+            <li><a href="#552-延迟与恢复能力">5.5.2 延迟与恢复能力</a></li>
+          </ul>
+        </li>
+        <li><a href="#56-读取与模型上下文接入">5.6 读取与模型上下文接入</a>
+          <ul>
+            <li><a href="#561-两种读取方式">5.6.1 两种读取方式</a></li>
+            <li><a href="#562-召回数量与文本预算">5.6.2 召回数量与文本预算</a></li>
+          </ul>
+        </li>
+        <li><a href="#57-短期摘要与长期记忆的区别">5.7 短期摘要与长期记忆的区别</a></li>
+        <li><a href="#58-工程落地案例">5.8 工程落地案例</a></li>
+      </ul>
+    </li>
+    <li><a href="#六a-mem关联笔记与演化实现">六、A-MEM：关联笔记与演化实现</a>
+      <ul>
+        <li><a href="#61-组件与源码地图">6.1 组件与源码地图</a></li>
+        <li><a href="#62-原子笔记的数据模型">6.2 原子笔记的数据模型</a>
+          <ul>
+            <li><a href="#621-字段与默认值">6.2.1 字段与默认值</a></li>
+            <li><a href="#622-原子不是自动切分保证">6.2.2 “原子”不是自动切分保证</a></li>
+          </ul>
+        </li>
+        <li><a href="#63-写路径与元数据生成">6.3 写路径与元数据生成</a>
+          <ul>
+            <li><a href="#631-add_note-的实际流程">6.3.1 add_note 的实际流程</a></li>
+            <li><a href="#632-analyze_content-没有自动接入">6.3.2 analyze_content 没有自动接入</a></li>
+          </ul>
+        </li>
+        <li><a href="#64-检索与关联演化">6.4 检索与关联演化</a>
+          <ul>
+            <li><a href="#641-检索器保存什么">6.4.1 检索器保存什么</a></li>
+            <li><a href="#642-演化决策">6.4.2 演化决策</a></li>
+            <li><a href="#643-查找并返回关联笔记">6.4.3 查找并返回关联笔记</a></li>
+          </ul>
+        </li>
+        <li><a href="#65-两个问题的最小复现">6.5 两个问题的最小复现</a>
+          <ul>
+            <li><a href="#651-关联内容被-top-k-截掉">6.5.1 关联内容被 Top-K 截掉</a></li>
+            <li><a href="#652-检索排名被当作字典位置">6.5.2 检索排名被当作字典位置</a></li>
+          </ul>
+        </li>
+        <li><a href="#66-对象索引与持久化边界">6.6 对象、索引与持久化边界</a>
+          <ul>
+            <li><a href="#661-默认初始化不是恢复流程">6.6.1 默认初始化不是恢复流程</a></li>
+            <li><a href="#662-自动演化与显式-update-不同">6.6.2 自动演化与显式 update 不同</a></li>
+            <li><a href="#663-删除并发与失败">6.6.3 删除、并发与失败</a></li>
+          </ul>
+        </li>
+        <li><a href="#67-如何将该思路用于工程">6.7 如何将该思路用于工程</a>
+          <ul>
+            <li><a href="#671-发布故障笔记">6.7.1 发布故障笔记</a></li>
+            <li><a href="#672-需要补齐的实现">6.7.2 需要补齐的实现</a></li>
+            <li><a href="#673-测试内容与验证范围">6.7.3 测试内容与验证范围</a></li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+    <li><a href="#七五种路线的工程对比">七、五种路线的工程对比</a>
+      <ul>
+        <li><a href="#71-记忆内容与更新方式">7.1 记忆内容与更新方式</a></li>
+        <li><a href="#72-哪些可靠性问题由应用承担">7.2 哪些可靠性问题由应用承担</a></li>
+        <li><a href="#73-如何对应实际任务">7.3 如何对应实际任务</a></li>
+      </ul>
+    </li>
+    <li><a href="#八从项目中提炼落地方法">八、从项目中提炼落地方法</a>
+      <ul>
+        <li><a href="#81-分开设计三份状态">8.1 分开设计三份状态</a></li>
+        <li><a href="#82-先定义写入策略再选择数据库">8.2 先定义写入策略，再选择数据库</a></li>
+        <li><a href="#83-使用稳定身份与版本边界">8.3 使用稳定身份与版本边界</a></li>
+        <li><a href="#84-为失败设计可观察状态">8.4 为失败设计可观察状态</a></li>
+        <li><a href="#85-用行为样例验收">8.5 用行为样例验收</a></li>
+      </ul>
+    </li>
+    <li><a href="#九常见高频面试题">九、常见高频面试题</a>
+      <ul>
+        <li><a href="#91-agent-memory-是否等于向量数据库">9.1 Agent Memory 是否等于向量数据库？</a></li>
+        <li><a href="#92-mem0-默认写入会自动覆盖旧事实吗">9.2 Mem0 默认写入会自动覆盖旧事实吗？</a></li>
+        <li><a href="#93-graphiti-默认只返回当前有效关系吗">9.3 Graphiti 默认只返回当前有效关系吗？</a></li>
+        <li><a href="#94-letta-文件改完后系统提示词会立即变化吗">9.4 Letta 文件改完后，系统提示词会立即变化吗？</a></li>
+        <li><a href="#95-langmem-的检查点与-store-有什么区别">9.5 LangMem 的检查点与 Store 有什么区别？</a></li>
+        <li><a href="#96-本地后台线程等于持久任务队列吗">9.6 本地后台线程等于持久任务队列吗？</a></li>
+        <li><a href="#97-a-mem-的邻居更新为什么会定位错误">9.7 A-MEM 的邻居更新为什么会定位错误？</a></li>
+        <li><a href="#98-多路检索或关联链接能保证相关内容返回吗">9.8 多路检索或关联链接能保证相关内容返回吗？</a></li>
+        <li><a href="#99-数据库事务git-与文件锁分别保证什么">9.9 数据库事务、Git 与文件锁分别保证什么？</a></li>
+        <li><a href="#910-两个源码问题是否否定-a-mem-论文">9.10 两个源码问题是否否定 A-MEM 论文？</a></li>
+      </ul>
+    </li>
+    <li><a href="#十附录源码与进一步阅读">十、附录：源码与进一步阅读</a>
+      <ul>
+        <li><a href="#101-mem0-官方项目源码">10.1 Mem0 官方项目源码</a></li>
+        <li><a href="#102-graphiti-官方项目源码">10.2 Graphiti 官方项目源码</a></li>
+        <li><a href="#103-letta-code-官方项目源码">10.3 Letta Code 官方项目源码</a></li>
+        <li><a href="#104-langmem-官方项目源码">10.4 LangMem 官方项目源码</a></li>
+        <li><a href="#105-a-mem-官方项目源码">10.5 A-MEM 官方项目源码</a></li>
+        <li><a href="#106-相关站内文章">10.6 相关站内文章</a></li>
+        <li><a href="#107-本文结论">10.7 本文结论</a></li>
+      </ul>
+    </li>
+  </ul>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/github/" >
+                Github
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/github-%E4%B8%8A-agent-memory-%E7%9A%84%E5%AE%9E%E9%99%85%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0mem0graphitiletta-codelangmem-%E4%B8%8E-a-mem/">GitHub 上 Agent Memory 的实际工程实现：Mem0、Graphiti、Letta Code、LangMem 与 A-MEM</a>
+        </h2>
+    
+        
+
+        
+            
+            <div class="article-source">source: github-agent-memory-engineering</div>
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">Oct 10, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h2 id="写在前面">写在前面
+</h2><p>智能体（Agent）的记忆（Memory）需要解决一组连续的工程问题：何时写入、保存什么、怎样修改、如何召回、如何进入模型上下文，以及重启和并发操作后能否保持正确。</p>
+<p>本文从 GitHub 项目的实际代码出发，分析 Mem0、Graphiti、Letta Code、LangMem 和 A-MEM。五个项目覆盖事实条目、时序关系图、文件记忆、框架组件和关联笔记，重点是各自真正执行的调用链及实现边界。</p>
+<p>源码调研于 2026-10-09 完成，本文于 2026-10-10 合并整理。链接均固定到当时核对的提交。调研包含约 40 个核心源码、测试和示例；A-MEM 的两个问题通过原函数与模拟依赖最小复现。没有部署这些项目、运行全套测试或进行模型效果与性能评测。</p>
+<p>文中的“工程建议”属于基于代码结构提出的设计建议，与项目已经实现的行为分别表述。</p>
+<h2 id="一调研范围与阅读方式">一、调研范围与阅读方式
+</h2><h3 id="11-固定版本与仓库路径">1.1 固定版本与仓库路径
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">项目</th>
+          <th style="text-align: left">核对提交</th>
+          <th style="text-align: left">本次重点</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left"><a class="link" href="https://github.com/mem0ai/mem0/tree/b7ad69afda6b6ed030347c66d48a13e4de9dec08"  target="_blank" rel="noopener"
+    >Mem0</a></td>
+          <td style="text-align: left"><code>b7ad69a</code></td>
+          <td style="text-align: left">抽取、追加写入、混合评分、历史</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><a class="link" href="https://github.com/getzep/graphiti/tree/1026ae7ae25e7e4cfcc1c7ebe00347b8a90f52a0"  target="_blank" rel="noopener"
+    >Graphiti</a></td>
+          <td style="text-align: left"><code>1026ae7</code></td>
+          <td style="text-align: left">事件入图、消歧、有效期、图检索</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><a class="link" href="https://github.com/letta-ai/letta-code/tree/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b"  target="_blank" rel="noopener"
+    >Letta Code</a></td>
+          <td style="text-align: left"><code>253a3bc</code></td>
+          <td style="text-align: left">文件布局、提交投影、后台合并</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><a class="link" href="https://github.com/langchain-ai/langmem/tree/48e3c11f5bb527282c7d5339c6a87a0b35abccfc"  target="_blank" rel="noopener"
+    >LangMem</a></td>
+          <td style="text-align: left"><code>48e3c11</code></td>
+          <td style="text-align: left">结构化抽取、Store、反思、摘要</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><a class="link" href="https://github.com/agiresearch/A-mem/tree/ceffb860f0712bbae97b184d440df62bc910ca8d"  target="_blank" rel="noopener"
+    >A-MEM</a></td>
+          <td style="text-align: left"><code>ceffb86</code></td>
+          <td style="text-align: left">原子笔记、演化、关联与恢复</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>各项目章节中的文件路径都相对于表中对应仓库的根目录；完整提交标识可从固定链接还原。相同文件名在不同项目中不代表相同实现。</p>
+<h3 id="12-沿五个问题阅读代码">1.2 沿五个问题阅读代码
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">问题</th>
+          <th style="text-align: left">应检查的内容</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left">写入</td>
+          <td style="text-align: left">触发位置、抽取输入、重复与冲突处理</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">存储</td>
+          <td style="text-align: left">权威数据、索引、作用域和持久化</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">读取</td>
+          <td style="text-align: left">候选召回、排序、过滤和展开预算</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">上下文接入</td>
+          <td style="text-align: left">提示词、工具结果、核心与详细内容</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">维护</td>
+          <td style="text-align: left">更新、删除、摘要、并发、失败与恢复</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>大语言模型（LLM, Large Language Model）、嵌入模型（Embedding Model）和数据库各自解决不同问题。模型生成结构化事实不代表事实正确，数据库保存成功不代表下一轮能召回，检索返回也不代表模型已经读到内容。</p>
+<h2 id="二mem0事实条目与追加式记忆">二、Mem0：事实条目与追加式记忆
+</h2><p>Mem0 主要提供事实抽取与记忆服务接口。本节核对同步 <code>Memory</code> 类及其存储、评分和异常路径；异步类有对应实现。</p>
+<h3 id="21-系统的位置与源码地图">2.1 系统的位置与源码地图
+</h3><p>Mem0 的核心对象连接 LLM、嵌入模型、向量存储（Vector Store）及操作历史存储。它提供应用程序接口（API, Application Programming Interface），调用方控制何时读写。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">源码位置</th>
+          <th style="text-align: left">主要职责</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left"><code>mem0/memory/main.py</code></td>
+          <td style="text-align: left"><code>Memory.add/search/update/delete</code> 及核心流水线</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>mem0/configs/prompts.py</code></td>
+          <td style="text-align: left">抽取提示词与输入组织</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>mem0/memory/storage.py</code></td>
+          <td style="text-align: left">SQLite 操作历史、近期消息</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>mem0/utils/scoring.py</code></td>
+          <td style="text-align: left">关键词归一化与混合评分</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>tests/memory/test_main.py</code></td>
+          <td style="text-align: left">异常、身份字段、时间戳等测试</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>本节路径都相对于 <a class="link" href="https://github.com/mem0ai/mem0/tree/b7ad69afda6b6ed030347c66d48a13e4de9dec08"  target="_blank" rel="noopener"
+    >Mem0 仓库根目录</a>。</p>
+<p>应用一般在回答前检索，在适当的对话节点写入。<code>Memory</code> 类返回记忆结果，并不负责把结果自动加入任意 Agent 的上下文。框架集成或调用方需要完成这一步。</p>
+<h3 id="22-数据模型与作用域">2.2 数据模型与作用域
+</h3><h4 id="221-一个事实条目保存什么">2.2.1 一个事实条目保存什么
+</h4><p>写入流水线为每个事实生成 UUID（Universally Unique Identifier，通用唯一标识符）。向量存储的载荷包含 <code>data</code>、<code>hash</code>、<code>text_lemmatized</code>、<code>created_at</code>、<code>updated_at</code>，以及用户提供的其他元数据。抽取结果有归属信息时还会保存 <code>attributed_to</code>。</p>
+<p><code>data</code> 是可读事实，向量支持语义召回，<code>text_lemmatized</code> 用于关键词检索，<code>hash</code> 用于文本去重。事实文本、索引与审计历史承担不同职责。<a class="link" href="https://github.com/mem0ai/mem0/blob/b7ad69afda6b6ed030347c66d48a13e4de9dec08/mem0/memory/main.py#L1007"  target="_blank" rel="noopener"
+    >事实组装源码</a></p>
+<h4 id="222-用户agent-与运行隔离">2.2.2 用户、Agent 与运行隔离
+</h4><p>作用域由 <code>user_id</code>、<code>agent_id</code>、<code>run_id</code> 指定，至少需要提供一个。传入多个标识时，这些标识一起成为查询条件；不能把同时传用户和 Agent 理解为自动在两个独立空间各存一份。</p>
+<p>代码会清除自由元数据中的身份键，再从显式参数设置身份字段，防止元数据把记录写入调用方没有指定的空间。近期消息使用由身份字段组成的 <code>session_scope</code>；其构造会转义分隔符，避免不同标识组合产生同一个字符串。</p>
+<p>这些字段是数据作用域机制。业务服务仍需要验证调用者身份，保证其有权操作对应作用域。<a class="link" href="https://github.com/mem0ai/mem0/blob/b7ad69afda6b6ed030347c66d48a13e4de9dec08/mem0/memory/main.py#L320"  target="_blank" rel="noopener"
+    >作用域构造</a>、<a class="link" href="https://github.com/mem0ai/mem0/blob/b7ad69afda6b6ed030347c66d48a13e4de9dec08/tests/memory/test_session_scope.py"  target="_blank" rel="noopener"
+    >作用域测试</a></p>
+<h3 id="23-默认写入流水线">2.3 默认写入流水线
+</h3><h4 id="231-入口与两条路径">2.3.1 入口与两条路径
+</h4><p><code>Memory.add()</code> 将字符串或单条消息规范化为消息列表，再调用 <code>_add_to_vector_store()</code>。</p>
+<p>当 <code>infer=False</code> 时，代码绕过事实推断，直接嵌入并保存非系统消息，同时记录角色和命名说话者信息。默认推断路径则使用分阶段批处理。<a class="link" href="https://github.com/mem0ai/mem0/blob/b7ad69afda6b6ed030347c66d48a13e4de9dec08/mem0/memory/main.py#L831"  target="_blank" rel="noopener"
+    >写入入口</a></p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[&#34;新消息与身份参数&#34;] --&gt; B[&#34;获取近期 10 条消息&#34;]
+    B --&gt; C[&#34;向量召回 10 条相关旧记忆&#34;]
+    C --&gt; D[&#34;单次 LLM 抽取新增事实&#34;]
+    D --&gt; E[&#34;批量嵌入事实文本&#34;]
+    E --&gt; F[&#34;文本哈希去重与载荷组装&#34;]
+    F --&gt; G[&#34;批量保存向量记录&#34;]
+    G --&gt; H[&#34;保存操作历史&#34;]
+    H --&gt; I[&#34;建立实体关联&#34;]
+    I --&gt; J[&#34;保存近期消息并返回成功条目&#34;]
+</code></pre><h4 id="232-先读旧记忆再抽取新事实">2.3.2 先读旧记忆，再抽取新事实
+</h4><p>系统读取同一作用域最近 10 条消息，将新消息嵌入后召回 10 条旧记忆。旧记忆的标识会映射成短整数字符串，再与新消息、近期消息、自定义指令一起输入模型。</p>
+<p>默认系统提示词是 <code>ADDITIVE_EXTRACTION_PROMPT</code>。它让模型提取新增事实，返回 JSON（JavaScript Object Notation）结构中的 <code>memory</code> 列表。代码还会区分只按 Agent 隔离的情况，加入对应抽取指令。<a class="link" href="https://github.com/mem0ai/mem0/blob/b7ad69afda6b6ed030347c66d48a13e4de9dec08/mem0/memory/main.py#L918"  target="_blank" rel="noopener"
+    >上下文与抽取</a></p>
+<p><strong>当前默认流程采用追加式写入。</strong> 仓库仍保留其他更新提示词或独立更新接口，但它们的存在不能证明默认 <code>add()</code> 自动执行 ADD、UPDATE、DELETE 三种决策。判断行为要以当前调用链为准。</p>
+<h4 id="233-去重的范围">2.3.3 去重的范围
+</h4><p>抽取完成后，代码先尝试批量嵌入，失败时逐条嵌入。然后对每条文本计算 MD5（Message-Digest Algorithm 5）摘要，与本次召回的旧记忆哈希及当前批次的哈希比较。</p>
+<p>这是“相同文本去重”。它既不等于全库扫描，也不能识别所有语义等价表述。例如“偏好中文回答”和“喜欢使用中文交流”是否重复，不能仅靠文本哈希判断。</p>
+<h4 id="234-成功结果的判定">2.3.4 成功结果的判定
+</h4><p>批量插入失败后，代码逐条重试，只把确认保存的记录加入返回值和后续历史、实体关联处理中。如果没有任何记录保存成功，则抛出向量存储异常；部分成功时返回成功部分。</p>
+<p>因此调用方需要检查返回结果，而不是假定一次抽取中的所有事实都已经保存。<a class="link" href="https://github.com/mem0ai/mem0/blob/b7ad69afda6b6ed030347c66d48a13e4de9dec08/mem0/memory/main.py#L1047"  target="_blank" rel="noopener"
+    >批量保存与降级</a></p>
+<h3 id="24-检索向量候选上的多信号排序">2.4 检索：向量候选上的多信号排序
+</h3><h4 id="241-检索步骤">2.4.1 检索步骤
+</h4><p><code>_search_vector_store()</code> 先进行词形处理和实体提取，再生成查询向量。向量召回量为 <code>max(limit * 4, 60)</code>，关键词检索使用相同的候选数量级。随后计算 BM25（Best Matching 25）分数和实体加分。</p>
+<p>最终候选集合从<strong>向量结果</strong>构建。关键词结果主要为这些候选提供分数；关键词独有命中没有在这条路径中直接并入最终候选池。实体关联也用于加分。<a class="link" href="https://github.com/mem0ai/mem0/blob/b7ad69afda6b6ed030347c66d48a13e4de9dec08/mem0/memory/main.py#L1642"  target="_blank" rel="noopener"
+    >检索源码</a></p>
+<h4 id="242-阈值与分数">2.4.2 阈值与分数
+</h4><p>评分函数先使用 <code>threshold</code> 过滤语义相似度，然后将语义分、归一化 BM25 分和实体加分相加，并根据启用的信号归一化。</p>
+<p>这意味着关键词很强，但语义分低于阈值的记录仍会被排除。工程上应分别测量“向量是否召回”和“召回后是否排到前列”，不能只看最终 Top-K。</p>
+<p>配置重排器（Reranker）时，<code>search()</code> 可进一步重排；重排失败会退回原结果。底层后端不支持关键词搜索时，相关 BM25 信号不可用。<a class="link" href="https://github.com/mem0ai/mem0/blob/b7ad69afda6b6ed030347c66d48a13e4de9dec08/mem0/utils/scoring.py"  target="_blank" rel="noopener"
+    >评分函数</a></p>
+<h4 id="243-过期过滤与上下文预算">2.4.3 过期过滤与上下文预算
+</h4><p>检索默认过滤已过期载荷，<code>show_expired</code> 可以改变这项行为。这是读取时过滤，不应据此推断数据库会自动物理清理所有过期记录。</p>
+<p>返回数量由 <code>limit</code> 控制，但条目数量不等于模型词元（Token）预算。调用方仍要按文本长度、相关性和可信度决定最终注入内容。</p>
+<h3 id="25-持久化更新与失败边界">2.5 持久化、更新与失败边界
+</h3><h4 id="251-两种存储各自负责什么">2.5.1 两种存储各自负责什么
+</h4><p>向量后端保存事实正文、嵌入及元数据；<code>SQLiteManager</code> 保存历史和消息。SQLite 实现通过线程锁协调同一实例的数据库操作，并提供历史表迁移。</p>
+<p>两个存储分开写入。向量记录保存成功后，历史或实体关联仍可能失败。代码有日志与降级处理，但没有在这层提供跨存储事务。<a class="link" href="https://github.com/mem0ai/mem0/blob/b7ad69afda6b6ed030347c66d48a13e4de9dec08/mem0/memory/storage.py"  target="_blank" rel="noopener"
+    >SQLite 实现</a></p>
+<h4 id="252-不同失败的可见性">2.5.2 不同失败的可见性
+</h4><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">失败点</th>
+          <th style="text-align: left">当前路径的处理</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left">LLM 调用异常</td>
+          <td style="text-align: left">包装并抛出异常，调用方可安排重试</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">抽取结果解析失败</td>
+          <td style="text-align: left">记录日志，按没有抽取结果处理</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">批量嵌入失败</td>
+          <td style="text-align: left">降级为逐条嵌入</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">批量插入失败</td>
+          <td style="text-align: left">降级为逐条插入</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">历史记录写入失败</td>
+          <td style="text-align: left">尝试逐条写，仍失败则记录日志</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">实体关联失败</td>
+          <td style="text-align: left">记录日志，已保存事实继续保留</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>“不需要记忆”和“模型结果无法解析”在返回空结果时可能难以区分。应用需要结合日志或增加自己的处理状态。<a class="link" href="https://github.com/mem0ai/mem0/blob/b7ad69afda6b6ed030347c66d48a13e4de9dec08/mem0/memory/main.py#L957"  target="_blank" rel="noopener"
+    >异常路径</a></p>
+<h4 id="253-更新与删除">2.5.3 更新与删除
+</h4><p>独立更新、删除接口用于维护已有事实。更新涉及向量记录和历史，实体链接也有相应维护逻辑。调用方需要明确修改对象，不能因为默认写入读取了旧记忆，就认定旧事实已经自动失效。</p>
+<p>**工程建议：**为需要强一致性的场景增加业务事件日志，记录期望写入、实际成功和待补偿操作。若要实现请求级幂等，应增加业务请求标识；文本哈希不能替代跨并发请求的幂等协议。</p>
+<h3 id="26-接入案例与验证方法">2.6 接入案例与验证方法
+</h3><h4 id="261-个性化助手">2.6.1 个性化助手
+</h4><p>假设用户先说“工作报告用中文”，后说“这份英文邮件用英语”。应用可以给抽取器配置适合业务的指令，区分长期偏好和任务约束。回答前检索时，要同时考虑当前明确要求，避免历史偏好覆盖本轮指令。</p>
+<p>默认追加式写入可能保留两条信息。是否合并为“工作报告中文、英文邮件英语”，应由显式更新流程或应用的整理策略决定。</p>
+<h4 id="262-多智能体共享">2.6.2 多智能体共享
+</h4><p>共享项目空间可以使用项目标识作为作用域，再用贡献者元数据记录来源。读时只传项目标识，可以检索项目范围；增加 Agent 标识会进一步收窄范围。具体共享规则应由应用定义。</p>
+<p>不要直接将仓库中的演示代码视作对当前返回结构的完整兼容保证；接入时应核对固定版本的返回类型。</p>
+<h4 id="263-应验证什么">2.6.3 应验证什么
+</h4><p>**工程建议：**使用固定样例检查同义重复、事实修正、用户隔离、部分写入失败、检索漏召回和重启恢复。仓库测试覆盖身份字段、时间戳、异常等代码行为，但这些测试不能替代真实任务中的抽取质量与召回评估。<a class="link" href="https://github.com/mem0ai/mem0/blob/b7ad69afda6b6ed030347c66d48a13e4de9dec08/tests/memory/test_main.py"  target="_blank" rel="noopener"
+    >核心测试</a></p>
+<h2 id="三graphiti事件实体与时序关系">三、Graphiti：事件、实体与时序关系
+</h2><p>Graphiti 将事件组织成实体关系图。本节核对事件写入、关系失效和检索；Graphiti 是开源图引擎，不能将它与 Zep 完整产品画等号。</p>
+<h3 id="31-系统组成与源码地图">3.1 系统组成与源码地图
+</h3><p>系统连接 LLM、嵌入模型、图数据库（Graph Database）和重排器（Reranker）。输入事件可以来自消息或其他业务记录。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">源码位置</th>
+          <th style="text-align: left">主要职责</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left"><code>graphiti_core/graphiti.py</code></td>
+          <td style="text-align: left">写入入口、基础检索、事件删除</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>graphiti_core/utils/maintenance/edge_operations.py</code></td>
+          <td style="text-align: left">关系抽取、去重、冲突与时间处理</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>graphiti_core/search/search.py</code></td>
+          <td style="text-align: left">多路检索与排序</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>graphiti_core/search/search_filters.py</code></td>
+          <td style="text-align: left">时间及属性过滤</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>graphiti_core/utils/bulk_utils.py</code></td>
+          <td style="text-align: left">节点和关系的批量保存</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>本节路径均相对于 <a class="link" href="https://github.com/getzep/graphiti/tree/1026ae7ae25e7e4cfcc1c7ebe00347b8a90f52a0"  target="_blank" rel="noopener"
+    >Graphiti 仓库根目录</a>。</p>
+<p>Graphiti 返回图对象和事实关系，调用方负责将它们组织成Agent上下文。图结构提供关系与来源，生成答案仍是上层流程的职责。</p>
+<h3 id="32-三个核心数据对象">3.2 三个核心数据对象
+</h3><h4 id="321-事件节点">3.2.1 事件节点
+</h4><p><code>EpisodicNode</code> 表示一次输入经历，保存内容、来源描述、记录时间和参考时间。<code>add_episode()</code> 中，<code>reference_time</code> 进入事件的 <code>valid_at</code>；<code>created_at</code> 是系统当前记录时间。</p>
+<p>这两个时间可能不同。例如今天补录昨天的发布记录，其事件时间是昨天，系统记录时间是今天。它们不能简单互相替代。</p>
+<h4 id="322-实体节点">3.2.2 实体节点
+</h4><p><code>EntityNode</code> 表示用户、项目、服务等对象。同一个实体可以出现在多个事件中。输入的“支付服务”和“payment-service”是否指向同一个节点，需要经过实体解析，而不是只按字符串创建节点。</p>
+<p>写入接口允许提供实体类型、排除类型和抽取指令，以限制图谱的业务范围。<a class="link" href="https://github.com/getzep/graphiti/blob/1026ae7ae25e7e4cfcc1c7ebe00347b8a90f52a0/graphiti_core/graphiti.py#L1096"  target="_blank" rel="noopener"
+    >写入参数及流程</a></p>
+<h4 id="323-事实关系">3.2.3 事实关系
+</h4><p><code>EntityEdge</code> 连接实体，包含关系名、事实文本 <code>fact</code>、事实向量、来源事件列表及时间字段。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">字段</th>
+          <th style="text-align: left">作用</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left"><code>episodes</code></td>
+          <td style="text-align: left">为该事实提供来源的事件</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>valid_at</code></td>
+          <td style="text-align: left">事实开始成立的时间</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>invalid_at</code></td>
+          <td style="text-align: left">事实停止成立的时间</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>expired_at</code></td>
+          <td style="text-align: left">系统记录关系失效的时间</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>reference_time</code></td>
+          <td style="text-align: left">产生关系的事件参考时间</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>“业务事实何时结束”和“系统何时发现它结束”可以不同。理解这些字段，比笼统地称为“时序图”更有助于设计查询。<a class="link" href="https://github.com/getzep/graphiti/blob/1026ae7ae25e7e4cfcc1c7ebe00347b8a90f52a0/graphiti_core/edges.py"  target="_blank" rel="noopener"
+    >关系数据模型</a></p>
+<h3 id="33-事件如何进入图中">3.3 事件如何进入图中
+</h3><h4 id="331-获取上下文与请求作用域">3.3.1 获取上下文与请求作用域
+</h4><p><code>add_episode()</code> 先解析 <code>group_id</code> 对应的请求作用域，再读取近期事件或调用方指定的先前事件，为抽取提供上下文。</p>
+<p>当前代码使用请求级驱动和客户端组合，避免不同 <code>group_id</code> 的并发调用修改共享驱动目标。业务仍应校验调用者能够读写哪些组，<code>group_id</code> 本身不是完整权限系统。<a class="link" href="https://github.com/getzep/graphiti/blob/1026ae7ae25e7e4cfcc1c7ebe00347b8a90f52a0/graphiti_core/graphiti.py#L1183"  target="_blank" rel="noopener"
+    >作用域处理</a></p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[&#34;事件正文、来源、参考时间&#34;] --&gt; B[&#34;解析分组并读取相关旧事件&#34;]
+    B --&gt; C[&#34;提取实体&#34;]
+    C --&gt; D[&#34;解析为已有或新实体&#34;]
+    D --&gt; E[&#34;提取关系并重映射实体标识&#34;]
+    E --&gt; F[&#34;关系去重、冲突与时间处理&#34;]
+    F --&gt; G[&#34;提取实体属性与摘要&#34;]
+    G --&gt; H[&#34;事务保存事件、实体与关系&#34;]
+    H --&gt; I{&#34;是否更新社区&#34;}
+    I --&gt;|是| J[&#34;额外更新社区&#34;]
+    I --&gt;|否| K[&#34;返回写入结果&#34;]
+    J --&gt; K
+</code></pre><h4 id="332-实体抽取与消歧">3.3.2 实体抽取与消歧
+</h4><p><code>extract_nodes()</code> 产生候选实体，<code>resolve_extracted_nodes()</code> 将其与已有图进行解析，并产生标识映射。后续关系不能继续使用尚未解析的临时实体标识，否则同一个真实对象会被拆成多个节点。</p>
+<p>**工程建议：**业务存在稳定服务标识或项目标识时，应在输入及类型约束中保留这些标识，降低仅靠自然语言名称消歧造成的歧义。</p>
+<h4 id="333-关系抽取重复与矛盾">3.3.3 关系抽取、重复与矛盾
+</h4><p>关系抽取基于新事件及相关先前事件，再对候选关系进行去重与矛盾处理。代码区分已有关系、需要失效的关系和新增关系，后续属性摘要仅使用新增关系，减少重复事实污染实体摘要。</p>
+<p>重复与矛盾是不同操作：重复通常涉及复用事实及来源，矛盾涉及有效时间的判断。模型参与事实判定，但最终时间更新还有显式代码规则。<a class="link" href="https://github.com/getzep/graphiti/blob/1026ae7ae25e7e4cfcc1c7ebe00347b8a90f52a0/graphiti_core/utils/maintenance/edge_operations.py"  target="_blank" rel="noopener"
+    >关系处理</a></p>
+<h3 id="34-事实变化如何处理">3.4 事实变化如何处理
+</h3><h4 id="341-失效保留历史">3.4.1 失效保留历史
+</h4><p><code>resolve_edge_contradictions()</code> 先检查新旧关系的有效时间是否已经不重叠；这类情况不必再次处理失效。若旧关系开始时间早于新关系开始时间，且满足对应条件，代码将旧关系的 <code>invalid_at</code> 设置为新关系的 <code>valid_at</code>，并记录 <code>expired_at</code>。</p>
+<p>因此，后来的矛盾事实并非无条件覆盖所有旧事实。字段是否有值、时间顺序是否成立，都会影响处理。<a class="link" href="https://github.com/getzep/graphiti/blob/1026ae7ae25e7e4cfcc1c7ebe00347b8a90f52a0/graphiti_core/utils/maintenance/edge_operations.py#L547"  target="_blank" rel="noopener"
+    >失效规则</a></p>
+<h4 id="342-一个依赖变更例子">3.4.2 一个依赖变更例子
+</h4><p>假设事件 E1 说明“服务 A 从 09:00 起依赖版本 v1”，事件 E2 说明“服务 A 从 10:00 起改用 v2”。在关系抽取和矛盾判定正确的前提下，旧依赖关系可以结束于 10:00，新依赖关系从 10:00 生效。</p>
+<p>若随后分析 09:30 的故障，应该查询那个时刻有效的关系，而不是直接取最新依赖。这个例子说明了时间建模的用途，并不代表 Graphiti 已经自动建立“依赖变化导致故障”的因果事实。</p>
+<h4 id="343-默认检索不等于当前有效事实查询">3.4.3 默认检索不等于当前有效事实查询
+</h4><p>基础 <code>search()</code> 未传过滤条件时使用 <code>SearchFilters()</code>。其 <code>valid_at</code>、<code>invalid_at</code>、<code>expired_at</code> 默认为空。</p>
+<p>所以，存在失效字段不等于基础检索必然排除旧事实。查询当前状态、查询历史时刻和查询所有演变，需要应用选择不同的过滤条件。<a class="link" href="https://github.com/getzep/graphiti/blob/1026ae7ae25e7e4cfcc1c7ebe00347b8a90f52a0/graphiti_core/graphiti.py#L1653"  target="_blank" rel="noopener"
+    >基础检索入口</a>、<a class="link" href="https://github.com/getzep/graphiti/blob/1026ae7ae25e7e4cfcc1c7ebe00347b8a90f52a0/graphiti_core/search/search_filters.py#L55"  target="_blank" rel="noopener"
+    >过滤对象</a></p>
+<h3 id="35-图检索与排序">3.5 图检索与排序
+</h3><h4 id="351-多种召回方式">3.5.1 多种召回方式
+</h4><p>关系搜索根据配置执行 BM25 全文搜索、余弦相似度搜索或 BFS（Breadth-First Search，广度优先搜索）。</p>
+<p>配置启用 BFS 且没有提供起点时，代码可以从先前结果的源实体继续展开。每条搜索路径有数量及深度限制；图遍历不是无限制递归。</p>
+<p>基础 <code>search()</code> 默认选用全文与向量混合的关系检索；带中心节点时使用节点距离相关配置。更复杂的检索应使用可配置路径，而不是假定每次基础搜索都执行多跳展开。<a class="link" href="https://github.com/getzep/graphiti/blob/1026ae7ae25e7e4cfcc1c7ebe00347b8a90f52a0/graphiti_core/search/search.py#L253"  target="_blank" rel="noopener"
+    >关系搜索</a></p>
+<h4 id="352-排序方式的差别">3.5.2 排序方式的差别
+</h4><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">方法</th>
+          <th style="text-align: left">实现目的</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left">RRF（Reciprocal Rank Fusion，倒数排名融合）</td>
+          <td style="text-align: left">合并多个召回列表的排名</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">MMR（Maximal Marginal Relevance，最大边际相关性）</td>
+          <td style="text-align: left">平衡相关性与结果多样性</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">Cross-Encoder（交叉编码器）</td>
+          <td style="text-align: left">对查询与事实进行进一步相关性判断</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">Node Distance（节点距离）</td>
+          <td style="text-align: left">利用事实实体与指定中心节点的接近程度</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>交叉编码器路径会先融合候选、限制待重排量，再执行评分。算法控制候选数量，可避免把整个图交给重排模型。</p>
+<h4 id="353-如何注入上下文">3.5.3 如何注入上下文
+</h4><p>基础搜索返回 <code>EntityEdge</code> 列表。应用可组织事实文本、有效时间和来源事件，再交给回答模型。若只保留 <code>fact</code>，可能失去区分当前与历史事实的条件。</p>
+<p>**工程建议：**故障分析上下文应保留事件时间、实体标识、来源和有效区间，并单独标注推测性因果关系。图检索结果是证据集合，不能自动当成已经验证的因果链。</p>
+<h3 id="36-持久化顺序与维护">3.6 持久化、顺序与维护
+</h3><h4 id="361-数据库保存边界">3.6.1 数据库保存边界
+</h4><p>批量保存通过 <code>session.execute_write()</code> 执行，将事件、实体及关系交给事务处理。不同数据库驱动使用不同的保存实现。</p>
+<p>社区更新在事件图保存后额外执行，且 <code>update_communities</code> 默认关闭。因此不能将社区更新与全部前置抽取操作都视为一个完整事务。<a class="link" href="https://github.com/getzep/graphiti/blob/1026ae7ae25e7e4cfcc1c7ebe00347b8a90f52a0/graphiti_core/utils/bulk_utils.py#L128"  target="_blank" rel="noopener"
+    >批量保存源码</a></p>
+<h4 id="362-为什么建议顺序写入">3.6.2 为什么建议顺序写入
+</h4><p>源码建议将事件写入放入后台过程，并等待一条事件完成后再加入下一条。因为后续抽取、解析与失效判定依赖已经保存的图状态。</p>
+<p>内部异步并发用于加速部分操作，并不意味着同一事实空间可以任意并发写入而保持业务顺序。**工程建议：**按需要保持顺序的业务空间安排队列，监测处理积压及失败重试；不要仅因为入口是异步函数就忽略顺序。</p>
+<h4 id="363-删除不是事实失效">3.6.3 删除不是事实失效
+</h4><p><code>remove_episode()</code> 会查找事件关联关系与实体，再按代码中的条件删除关系、仅被该事件提及的实体和事件本身。物理删除与时间失效有不同语义。</p>
+<p>对于多事件共享的事实，不应推断“删除事件”会自动撤销并重算所有派生判断。需要按实际来源规则验证删除后的图。<a class="link" href="https://github.com/getzep/graphiti/blob/1026ae7ae25e7e4cfcc1c7ebe00347b8a90f52a0/graphiti_core/graphiti.py#L1892"  target="_blank" rel="noopener"
+    >事件删除</a></p>
+<h3 id="37-工程案例与验证重点">3.7 工程案例与验证重点
+</h3><h4 id="371-发布故障关联">3.7.1 发布故障关联
+</h4><p>可以依次输入发布记录、依赖变更、告警和回滚记录。通过实体类型约束识别服务、版本、依赖和故障事件，再围绕故障时刻及目标服务检索关系。</p>
+<p>**工程建议：**先测量实体识别和时间抽取准确率，再测量关联检索。若服务名被错误合并，后续图遍历越多，错误扩散范围反而可能越大。</p>
+<h4 id="372-测试能够证明什么">3.7.2 测试能够证明什么
+</h4><p>仓库测试覆盖重复关系处理、整数索引映射、自关系过滤和类型约束等行为。它们有助于验证代码规则，但无法直接证明业务事件中的矛盾识别或历史问答准确率。<a class="link" href="https://github.com/getzep/graphiti/blob/1026ae7ae25e7e4cfcc1c7ebe00347b8a90f52a0/tests/utils/maintenance/test_edge_operations.py"  target="_blank" rel="noopener"
+    >关系操作测试</a></p>
+<p>应另行构造乱序到达、迟到事件、同名实体、重复投递、有效期重叠及共享来源删除样例，并核对最终图和查询结果。</p>
+<h2 id="四letta-code文件记忆与-git-版本">四、Letta Code：文件记忆与 Git 版本
+</h2><p>本节重点核对 Letta Code 的本地后端及 MemFS（Memory Filesystem，记忆文件系统）路径。早期 MemGPT 架构、云端服务和本地文件实现需要区分，不能互相替代。</p>
+<h3 id="41-源码地图与执行角色">4.1 源码地图与执行角色
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">源码位置</th>
+          <th style="text-align: left">主要职责</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left"><code>src/agent/memory-filesystem.ts</code></td>
+          <td style="text-align: left">路径、初始化、后端能力与同步入口</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>src/agent/memory-format.ts</code></td>
+          <td style="text-align: left">v1/v2 格式及核心文件判断</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>src/backend/local/system-prompt-compilation.ts</code></td>
+          <td style="text-align: left">读取提交版本并编译系统提示词</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>src/agent/memory-git.ts</code></td>
+          <td style="text-align: left">本地提交、远端同步、网络重试</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>src/agent/memory-worktree.ts</code></td>
+          <td style="text-align: left">后台修改的隔离与集成</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>src/agent/memory-operation.ts</code></td>
+          <td style="text-align: left">跨进程写入协调</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>src/backend/local/compaction.ts</code></td>
+          <td style="text-align: left">会话上下文压缩</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>本节路径均相对于 <a class="link" href="https://github.com/letta-ai/letta-code/tree/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b"  target="_blank" rel="noopener"
+    >Letta Code 仓库根目录</a>。</p>
+<p>运行框架（Harness）负责目录、工具、版本与同步；模型决定读什么、如何编辑记忆。两者共同构成记忆系统。文件可持久化并不意味着其语义内容会自动正确，Git 也不会判断事实真假。</p>
+<h3 id="42-记忆目录与分层布局">4.2 记忆目录与分层布局
+</h3><h4 id="421-按-agent-隔离路径">4.2.1 按 Agent 隔离路径
+</h4><p>一般路径由用户主目录、<code>.letta/agents</code>、Agent 标识及 <code>memory</code> 组成。本地后端也可以使用自身的存储根目录。</p>
+<p>路径解析优先考虑显式 Agent 标识和运行时作用域，再考虑环境变量。这样同一进程处理多个 Agent 时，不必将所有记忆放入同一个全局目录。<a class="link" href="https://github.com/letta-ai/letta-code/blob/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b/src/agent/memory-filesystem.ts#L46"  target="_blank" rel="noopener"
+    >路径实现</a></p>
+<h4 id="422-v1-与-v2">4.2.2 v1 与 v2
+</h4><p>格式检测以是否存在根 <code>MEMORY.md</code> 为依据。v1 将 <code>system/</code> 中的 Markdown 视作核心记忆；v2 将根目录 Markdown 视作核心记忆。</p>
+<p>v2 的后台工作说明约定：根 <code>MEMORY.md</code> 是索引，不带前置元数据（Frontmatter）；其他根 Markdown 保存核心内容，并带 <code>name</code>、<code>description</code>。子目录需要自己的 <code>MEMORY.md</code> 才被作为记忆布局的一部分识别，<code>skills/</code> 单独处理。<a class="link" href="https://github.com/letta-ai/letta-code/blob/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b/src/agent/memory-format.ts"  target="_blank" rel="noopener"
+    >格式判断</a>、<a class="link" href="https://github.com/letta-ai/letta-code/blob/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b/src/agent/subagents/builtin/memory-v2.md"  target="_blank" rel="noopener"
+    >后台记忆说明</a></p>
+<p>下面是示意布局，不是默认生成文件的保证：</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt">1
+</span><span class="lnt">2
+</span><span class="lnt">3
+</span><span class="lnt">4
+</span><span class="lnt">5
+</span><span class="lnt">6
+</span><span class="lnt">7
+</span><span class="lnt">8
+</span><span class="lnt">9
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">memory/
+</span></span><span class="line"><span class="cl">  MEMORY.md
+</span></span><span class="line"><span class="cl">  human.md
+</span></span><span class="line"><span class="cl">  project.md
+</span></span><span class="line"><span class="cl">  incidents/
+</span></span><span class="line"><span class="cl">    MEMORY.md
+</span></span><span class="line"><span class="cl">    release-failure.md
+</span></span><span class="line"><span class="cl">  skills/
+</span></span><span class="line"><span class="cl">    ...
+</span></span></code></pre></td></tr></table>
+</div>
+</div><p><code>human.md</code>、<code>project.md</code> 是核心内容；<code>incidents/</code> 中的详情按需读取。根索引承担导航职责，应避免变成无限增长的历史日志。</p>
+<h3 id="43-读路径哪些内容进入模型">4.3 读路径：哪些内容进入模型
+</h3><h4 id="431-读取已提交快照">4.3.1 读取已提交快照
+</h4><p>本地编译器用 <code>git rev-parse HEAD</code> 获取记忆版本，再用 <code>git ls-tree</code> 枚举 Markdown，并通过 <code>git show HEAD:路径</code> 读取需要展开的文件。</p>
+<p>这条路径使用<strong>已提交内容</strong>，不是直接读取工作目录的最新文本。尚未提交的编辑可以被文件工具看到，但不会因为文件已修改就自动成为本地系统提示词中的核心记忆。<a class="link" href="https://github.com/letta-ai/letta-code/blob/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b/src/backend/local/system-prompt-compilation.ts#L81"  target="_blank" rel="noopener"
+    >提交内容读取</a></p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[&#34;记忆仓库 HEAD&#34;] --&gt; B[&#34;枚举已提交 Markdown&#34;]
+    B --&gt; C[&#34;识别记忆格式&#34;]
+    C --&gt; D[&#34;读取核心文件及根索引&#34;]
+    D --&gt; E[&#34;渲染核心内容和详细目录入口&#34;]
+    E --&gt; F[&#34;注入系统提示词并记录版本&#34;]
+    F --&gt; G[&#34;模型按任务读取详细文件&#34;]
+</code></pre><h4 id="432-v2-的上下文投影">4.3.2 v2 的上下文投影
+</h4><p>编译器将根目录核心文件正文渲染为带标签的内容，加入说明字段；根 <code>MEMORY.md</code> 正文进入记忆块。第一层详细目录以 <code>deferred-memory</code> 入口呈现。</p>
+<p>详细目录内容不会全部展开。模型需要根据索引，使用文件工具读取相关内容。这里主要依赖结构化目录、索引和按需读取，不应把这条实现描述成每轮必然执行的向量检索。</p>
+<p>**上下文投影（Context Projection）**表示从完整持久记忆中选择一部分作为模型输入。投影与完整记忆库可以不同。<a class="link" href="https://github.com/letta-ai/letta-code/blob/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b/src/backend/local/system-prompt-compilation.ts#L154"  target="_blank" rel="noopener"
+    >v2 渲染</a></p>
+<h4 id="433-编译版本与刷新">4.3.3 编译版本与刷新
+</h4><p><code>compileLocalSystemPrompt()</code> 返回编译时间、原提示词哈希和 <code>memfsRevision</code>。这些字段帮助运行时识别当前提示词对应的记忆版本。</p>
+<p>提交是让内容进入候选快照的条件，重新编译才是形成新系统提示词的步骤。不能仅凭一次 <code>git commit</code> 就推断已经发出的模型请求看到了新记忆。<a class="link" href="https://github.com/letta-ai/letta-code/blob/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b/src/backend/local/system-prompt-compilation.ts#L432"  target="_blank" rel="noopener"
+    >编译入口</a></p>
+<h3 id="44-写路径文件修改校验与提交">4.4 写路径：文件修改、校验与提交
+</h3><h4 id="441-模型操作文件">4.4.1 模型操作文件
+</h4><p>后台记忆工作者使用 Bash、Read、Edit、Write 工具读取和修改文件。提示词要求先读取当前文件，更新已有条目、替换过期信息并维护索引，而不是将所有新事实一律追加。</p>
+<p>这是一项运行约定，不是数据库的语义唯一约束。重复、误归纳和错误修改仍需要验证。</p>
+<h4 id="442-提交前校验">4.4.2 提交前校验
+</h4><p>Git 钩子（Git Hooks）在提交前检查记忆 Markdown 的格式，并支持配置的大小或深度约束。校验目的在于保持可解析布局及内容预算，不负责验证事实真假。</p>
+<p>例如详细目录缺少索引、普通记忆文件前置字段不符合要求，属于格式问题；“用户其实并不喜欢该方案”属于语义问题，两者需要不同处理。<a class="link" href="https://github.com/letta-ai/letta-code/blob/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b/src/agent/memory-git-hooks.ts"  target="_blank" rel="noopener"
+    >钩子实现</a></p>
+<h4 id="443-本地与远端同步">4.4.3 本地与远端同步
+</h4><p><code>memory-git.ts</code> 提供本地仓库初始化、选择路径提交、克隆、拉取、推送及可重试网络错误处理。记忆写入可采用本地或远端同步模式。</p>
+<p>本地提交成功、远端同步成功、提示词刷新成功是不同状态。**工程建议：**界面和日志应分别呈现，避免“写文件成功”被当成整个记忆传播流程完成。<a class="link" href="https://github.com/letta-ai/letta-code/blob/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b/src/agent/memory-git.ts"  target="_blank" rel="noopener"
+    >Git 实现</a></p>
+<h3 id="45-后台更新与并发协调">4.5 后台更新与并发协调
+</h3><h4 id="451-为什么使用独立-worktree">4.5.1 为什么使用独立 worktree
+</h4><p>Git 工作树（Worktree）允许后台工作者基于同一仓库创建独立修改空间。它读取当前记忆，提交自己的修改，随后由运行框架将提交集成回主仓库。</p>
+<p>这减少后台更新直接干扰主 Agent 文件操作的机会，也使集成有明确版本边界。后台说明要求按修改路径暂存，不使用全目录暂存，避免带入无关变化。</p>
+<h4 id="452-文件锁的实际范围">4.5.2 文件锁的实际范围
+</h4><p><code>memory-operation.ts</code> 在记忆 Git 目录中创建操作锁，根据进程身份及启动时间识别持有者。它串行化框架管理的后台写入、冲突修复、反思集成和同步。</p>
+<p>代码注释明确指出：主 Agent 自己的普通文件编辑不全部经过这把锁。并发编辑仍可能降级为 Git 冲突，不能把文件锁解释成所有写入都具备数据库式串行隔离。<a class="link" href="https://github.com/letta-ai/letta-code/blob/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b/src/agent/memory-operation.ts"  target="_blank" rel="noopener"
+    >锁实现</a></p>
+<h4 id="453-合并结果与重试">4.5.3 合并结果与重试
+</h4><p>集成代码区分以下情况：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">状态</th>
+          <th style="text-align: left">含义</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left"><code>merged</code></td>
+          <td style="text-align: left">后台提交已集成</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>no_changes</code></td>
+          <td style="text-align: left">没有需要集成的变化</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>parent_dirty</code></td>
+          <td style="text-align: left">主记忆仓库有未提交内容</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>dirty_uncommitted</code></td>
+          <td style="text-align: left">后台修改未形成提交</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>merge_conflict</code></td>
+          <td style="text-align: left">集成发生冲突</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>failed</code></td>
+          <td style="text-align: left">其他失败</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>部分失败路径会清理临时工作树，让对应任务能够重试；未提交内容不能当作成功记忆。成功集成与没有变化也不同：前者需要刷新记忆投影，后者未必需要。<a class="link" href="https://github.com/letta-ai/letta-code/blob/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b/src/agent/memory-worktree.ts"  target="_blank" rel="noopener"
+    >集成实现</a></p>
+<h3 id="46-长期记忆与会话压缩分别维护">4.6 长期记忆与会话压缩分别维护
+</h3><h4 id="461-上下文压缩">4.6.1 上下文压缩
+</h4><p>压缩（Compaction）作用于当前会话消息，提供滑动窗口和全量摘要模式。本节提交的本地默认模式为 <code>sliding_window</code>，默认窗口比例常量为 <code>0.3</code>；它是代码默认值，不是对所有运行配置的保证。</p>
+<p>滑动窗口保留近期内容，将被移出的早期消息生成摘要，放到保留消息之前。Token 估计及消息边界决定具体规划，不能简单按消息条数截断。<a class="link" href="https://github.com/letta-ai/letta-code/blob/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b/src/backend/local/compaction.ts"  target="_blank" rel="noopener"
+    >压缩实现</a></p>
+<h4 id="462-持久历史与模型输入">4.6.2 持久历史与模型输入
+</h4><p>本地会话存储维护完整逻辑历史和当前上下文消息标识。压缩操作在会话记录中加入压缩事件，更新当前上下文集合。</p>
+<p>“从模型上下文移出”和“删除持久历史”并不相同。同样，会话摘要不会因产生了摘要就自动成为长期核心文件；长期记忆需要单独的文件写入和提交流程。<a class="link" href="https://github.com/letta-ai/letta-code/blob/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b/src/backend/local/local-store.ts#L1157"  target="_blank" rel="noopener"
+    >会话压缩保存</a></p>
+<h3 id="47-coding-agent-案例与验证">4.7 Coding Agent 案例与验证
+</h3><h4 id="471-如何组织项目记忆">4.7.1 如何组织项目记忆
+</h4><p>**工程建议：**核心文件保存项目身份、长期约束和少量稳定约定；详细目录保存架构调查、故障案例和执行经验；根索引提供入口。任务日志保留在会话历史中，只有可复用的信息才写入长期记忆。</p>
+<p>例如一次用户更正“只对项目 A 使用这项规则”，应修改原条目并保留范围，而不是追加一句宽泛的“用户喜欢此规则”。文件模式允许精准编辑，但正确范围仍依赖提示词和验证。</p>
+<h4 id="472-需要检查的边界">4.7.2 需要检查的边界
+</h4><p>可以验证未提交内容是否进入核心投影、提交后是否刷新、后台与主 Agent 同时修改是否触发冲突、重启后是否恢复仓库，以及远端不可用时本地修改是否仍可追踪。</p>
+<p>仓库的 worktree 测试能够验证部分集成状态，但不能替代实际文件编辑质量评估。<a class="link" href="https://github.com/letta-ai/letta-code/blob/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b/src/agent/memory-worktree.test.ts"  target="_blank" rel="noopener"
+    >worktree 测试</a></p>
+<h2 id="五langmem抽取存储与调度组件">五、LangMem：抽取、存储与调度组件
+</h2><p>LangMem 将记忆抽取、管理工具、Store 和后台执行器分开。本节依据固定提交分析组件；仓库示例中的历史接口不保证适用于任意最新依赖。</p>
+<h3 id="51-四层职责与源码地图">5.1 四层职责与源码地图
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">层次</th>
+          <th style="text-align: left">职责</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left">对话状态与 Checkpointer（检查点保存器）</td>
+          <td style="text-align: left">保存线程执行状态及消息</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">BaseStore（存储接口）</td>
+          <td style="text-align: left">保存跨线程记忆及检索索引</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">LangMem 抽取与管理组件</td>
+          <td style="text-align: left">决定记忆新增、修改及删除</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">应用的提示词与工具接入</td>
+          <td style="text-align: left">决定何时读写、如何进入上下文</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>检查点与长期记忆不是同一个对象。将消息持久化不等于抽取了事实，将事实入库也不等于模型已读取它。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">源码位置</th>
+          <th style="text-align: left">主要职责</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left"><code>src/langmem/knowledge/tools.py</code></td>
+          <td style="text-align: left">创建、更新、删除及搜索工具</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>src/langmem/knowledge/extraction.py</code></td>
+          <td style="text-align: left">结构化抽取与 Store 管理器</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>src/langmem/reflection.py</code></td>
+          <td style="text-align: left">本地及远程后台执行器</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>src/langmem/short_term/summarization.py</code></td>
+          <td style="text-align: left">短期消息摘要</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>docs/docs/hot_path_quickstart.md</code></td>
+          <td style="text-align: left">执行过程中的接入示例</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>本节路径均相对于 <a class="link" href="https://github.com/langchain-ai/langmem/tree/48e3c11f5bb527282c7d5339c6a87a0b35abccfc"  target="_blank" rel="noopener"
+    >LangMem 仓库根目录</a>。</p>
+<h3 id="52-记忆数据与作用域">5.2 记忆数据与作用域
+</h3><h4 id="521-namespacekey-与-value">5.2.1 namespace、key 与 value
+</h4><p>长期记忆由命名空间（Namespace）、条目键（Key）和内容（Value）组织。管理工具将内容转成 JSON 可序列化数据，然后调用 Store 的保存或删除接口。</p>
+<p>工具创建条目时可以生成 UUID，更新时复用条目键。管理器路径还保存记忆类型 <code>kind</code> 及 <code>content</code>，方便使用不同结构的记忆。</p>
+<p>不同路径的内容包装可能不同，应按组件约定读取，不能把任意工具写入的数据直接视为所有管理器都兼容的格式。<a class="link" href="https://github.com/langchain-ai/langmem/blob/48e3c11f5bb527282c7d5339c6a87a0b35abccfc/src/langmem/knowledge/tools.py"  target="_blank" rel="noopener"
+    >记忆工具</a>、<a class="link" href="https://github.com/langchain-ai/langmem/blob/48e3c11f5bb527282c7d5339c6a87a0b35abccfc/src/langmem/knowledge/extraction.py#L1102"  target="_blank" rel="noopener"
+    >抽取结果保存</a></p>
+<h4 id="522-运行时作用域">5.2.2 运行时作用域
+</h4><p>Namespace 模板可以使用运行配置中的用户或组织标识。例如 <code>(&quot;memories&quot;, &quot;{user_id}&quot;)</code> 会解析为对应用户的命名空间。</p>
+<p>如果所有用户都使用 <code>(&quot;memories&quot;,)</code>，就会共享该空间。这种共享可以是业务设计，也可以是配置错误。应用必须将正确身份放入运行配置，并限制读写空间。<a class="link" href="https://github.com/langchain-ai/langmem/blob/48e3c11f5bb527282c7d5339c6a87a0b35abccfc/docs/docs/hot_path_quickstart.md"  target="_blank" rel="noopener"
+    >作用域示例</a></p>
+<h4 id="523-存储能力来自后端">5.2.3 存储能力来自后端
+</h4><p><code>create_search_memory_tool()</code> 将查询、过滤、数量及偏移交给 <code>BaseStore.search/asearch</code>。是否存在向量索引、如何嵌入、是否持久化，取决于 Store 配置。</p>
+<p>示例中的 <code>InMemoryStore</code> 可以跨同一进程中的多个线程共享数据，但不能保证重启后恢复。部署时需要匹配持久化 Store 和检查点后端，分别解决长期条目与线程状态保存。</p>
+<h3 id="53-写路径一agent-调用记忆工具">5.3 写路径一：Agent 调用记忆工具
+</h3><h4 id="531-执行过程中的写入">5.3.1 执行过程中的写入
+</h4><p>热路径（Hot Path）表示记忆操作发生在当前任务执行流程中。应用把 <code>create_manage_memory_tool()</code> 暴露给模型，模型根据任务决定创建、更新或删除。</p>
+<p>工具校验操作和条目标识，解析 Namespace，然后调用 Store。它提供执行能力，但不替模型判断“这句话是否值得长期保存”。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[&#34;本轮对话&#34;] --&gt; B[&#34;模型选择记忆操作&#34;]
+    B --&gt; C[&#34;管理工具校验参数&#34;]
+    C --&gt; D[&#34;解析运行时 Namespace&#34;]
+    D --&gt; E[&#34;Store 创建、更新或删除&#34;]
+    E --&gt; F[&#34;工具结果返回模型&#34;]
+</code></pre><h4 id="532-这条路径的优缺点">5.3.2 这条路径的优缺点
+</h4><p>优点是操作与本轮推理同步，模型可以立即利用工具结果。代价是增加当前任务的调用开销，并让记忆判断与主要任务竞争注意力。</p>
+<p>**工程建议：**对于用户明确要求“记住”或“忘记”的信息，可优先使用显式操作；对于整段对话的事实整理，可使用后台管理器。具体分类规则应根据业务设置，而不是依赖所有模型都能正确自发判断。</p>
+<h3 id="54-写路径二抽取器与记忆管理器">5.4 写路径二：抽取器与记忆管理器
+</h3><h4 id="541-抽取与保存分离">5.4.1 抽取与保存分离
+</h4><p><code>MemoryManager</code> 处理消息与已有记忆，返回结构化结果。它使用 LLM 和 Trustcall 的抽取器，并接受 Schema（结构约束）。</p>
+<p>这层主要负责形成与修正内容。<code>MemoryStoreManager</code> 则负责从 Store 召回旧记忆、调用抽取器并保存结果。区分这两层，可以单独测试抽取输出而不写数据库。<a class="link" href="https://github.com/langchain-ai/langmem/blob/48e3c11f5bb527282c7d5339c6a87a0b35abccfc/src/langmem/knowledge/extraction.py#L217"  target="_blank" rel="noopener"
+    >抽取器实现</a></p>
+<h4 id="542-先搜索再合并">5.4.2 先搜索，再合并
+</h4><p>Store 管理器先解析 Namespace。启用查询生成器时，让模型生成多条搜索请求并并行检索；否则根据不同范围的对话窗口构造查询。</p>
+<p>结果排序并限制到 <code>query_limit</code>，形成已有记忆集合，再交给抽取器。未召回的旧事实不一定参与本轮合并，所以不能将这一步视作全库去重。<a class="link" href="https://github.com/langchain-ai/langmem/blob/48e3c11f5bb527282c7d5339c6a87a0b35abccfc/src/langmem/knowledge/extraction.py#L1006"  target="_blank" rel="noopener"
+    >管理器调用链</a></p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[&#34;对话消息&#34;] --&gt; B[&#34;构造或生成多个查询&#34;]
+    B --&gt; C[&#34;召回并整理旧记忆&#34;]
+    C --&gt; D[&#34;结构化抽取、更新及可选删除&#34;]
+    D --&gt; E[&#34;可选额外处理阶段&#34;]
+    E --&gt; F[&#34;比较旧值与最终值&#34;]
+    F --&gt; G[&#34;保存变化条目并删除指定条目&#34;]
+</code></pre><h4 id="543-新增更新删除">5.4.3 新增、更新、删除
+</h4><p>默认 <code>MemoryManager</code> 允许插入和更新，删除默认关闭。调用方需要显式启用删除策略。默认处理步数为 1；配置更多步骤时，抽取器可以继续修正并通过完成信号结束。</p>
+<p>管理器追踪已有条目标识和临时新条目，最后比较旧内容与最终内容。已有条目仅在内容发生变化时写回；新条目写入当前空间。删除作用于明确对应的已存条目。</p>
+<h4 id="544-最终写入的事务边界">5.4.4 最终写入的事务边界
+</h4><p>最终 <code>aput</code> 和 <code>adelete</code> 通过并发调用执行。这层没有把整组操作包装成跨条目的统一事务。</p>
+<p>如果某个写入失败，其他并发写入可能已经成功。**工程建议：**需要批次原子性的场景应在应用或存储适配层设计事务、操作日志或可重放任务，不应只因为管理器一次返回就假定操作始终全成或全败。<a class="link" href="https://github.com/langchain-ai/langmem/blob/48e3c11f5bb527282c7d5339c6a87a0b35abccfc/src/langmem/knowledge/extraction.py#L1102"  target="_blank" rel="noopener"
+    >最终保存</a></p>
+<h3 id="55-后台反思如何执行">5.5 后台反思如何执行
+</h3><h4 id="551-本地执行器">5.5.1 本地执行器
+</h4><p><code>LocalReflectionExecutor</code> 使用优先级队列（Priority Queue）及工作线程执行任务。<code>submit()</code> 接受延迟时间、线程标识和配置，返回 Future（异步结果对象）。</p>
+<p>同一线程提交新任务时，代码尝试取消旧任务并设置取消信号。这样可以在用户持续对话时推迟整理，以较完整的上下文执行一次更新。</p>
+<p>取消是调度机制，不能据此认为已经开始的模型调用或已完成的数据库写入会自动回滚。<a class="link" href="https://github.com/langchain-ai/langmem/blob/48e3c11f5bb527282c7d5339c6a87a0b35abccfc/src/langmem/reflection.py#L254"  target="_blank" rel="noopener"
+    >后台执行器</a></p>
+<h4 id="552-延迟与恢复能力">5.5.2 延迟与恢复能力
+</h4><p>本地队列及待执行任务映射保存在进程内。即使 Store 持久化，队列也不会因此自动变成持久任务队列。</p>
+<p>执行错误写入 Future；调用方需要观察该结果、记录错误或安排重试。仅调用 <code>submit()</code> 后忽略结果，会降低后台失败的可见性。</p>
+<p>仓库还提供远程执行器路径。它与本地队列机制不同，远程运行服务的恢复保证需要另行核对，不能从本地类的行为推导。<a class="link" href="https://github.com/langchain-ai/langmem/blob/48e3c11f5bb527282c7d5339c6a87a0b35abccfc/src/langmem/reflection.py"  target="_blank" rel="noopener"
+    >执行器选择与远程路径</a></p>
+<h3 id="56-读取与模型上下文接入">5.6 读取与模型上下文接入
+</h3><h4 id="561-两种读取方式">5.6.1 两种读取方式
+</h4><p>应用可以在模型调用前主动搜索，将结果放入系统消息；也可以给模型搜索工具，让它在需要时读取。</p>
+<p>官方热路径示例使用提示词函数读取 Store，构造包含记忆的系统消息，再拼接当前对话。这个示例证明“检索后如何注入”，并不表示所有 Agent 会自动采用相同方式。<a class="link" href="https://github.com/langchain-ai/langmem/blob/48e3c11f5bb527282c7d5339c6a87a0b35abccfc/docs/docs/hot_path_quickstart.md"  target="_blank" rel="noopener"
+    >接入示例</a></p>
+<h4 id="562-召回数量与文本预算">5.6.2 召回数量与文本预算
+</h4><p>搜索接口提供数量控制，但 Token 预算属于上层输入组织问题。十条短偏好和十条长经历的成本不同。</p>
+<p>**工程建议：**先按当前任务查询，再对返回内容做长度和相关性控制；保留当前用户指令的优先级，避免旧记忆变成不可覆盖的规则。</p>
+<h3 id="57-短期摘要与长期记忆的区别">5.7 短期摘要与长期记忆的区别
+</h3><p><code>summarize_messages</code>、<code>asummarize_messages</code> 和 <code>SummarizationNode</code> 处理当前消息列表。它们维护 <code>RunningSummary</code>，后续摘要可以结合已有摘要和新历史。</p>
+<p>预处理排除系统消息，并处理消息标识及工具调用与工具结果的配对关系。摘要节点默认使用与输入不同的输出键，让模型输入摘要与图中的原消息状态可以分别管理。<a class="link" href="https://github.com/langchain-ai/langmem/blob/48e3c11f5bb527282c7d5339c6a87a0b35abccfc/src/langmem/short_term/summarization.py"  target="_blank" rel="noopener"
+    >摘要源码</a></p>
+<p>这解决当前会话长度问题。长期记忆抽取解决跨会话可复用内容问题。摘要不会自动替代 <code>MemoryStoreManager</code>，长期条目也不会自动保存完整会话状态。</p>
+<p>仓库摘要测试覆盖空输入、连续摘要、消息标识、系统消息和工具调用等场景。本节核对了测试内容，没有运行完整依赖环境。<a class="link" href="https://github.com/langchain-ai/langmem/blob/48e3c11f5bb527282c7d5339c6a87a0b35abccfc/tests/short_term/test_summarization.py"  target="_blank" rel="noopener"
+    >摘要测试</a></p>
+<h3 id="58-工程落地案例">5.8 工程落地案例
+</h3><p>**工程建议：**以客户支持助手为例，可将明确偏好操作放在热路径，将每轮或一段对话后的事实整理放在后台；使用用户 Namespace；使用持久化 Store；在模型前检索相关条目；用检查点保存线程状态。</p>
+<p>应分别验证以下问题：用户隔离是否正确、旧事实是否被召回、抽取是否保留例外条件、并发更新是否丢失修改、后台任务是否在重启后补跑、摘要是否保留未完成的任务状态。</p>
+<p>测试要区分内容质量与执行可靠性。模型成功返回结构化内容，不代表内容正确；Store 成功保存，也不代表下一轮检索能找到它。</p>
+<h2 id="六a-mem关联笔记与演化实现">六、A-MEM：关联笔记与演化实现
+</h2><p>A-MEM 使用原子笔记（Atomic Note）组织记忆。本节核对其默认系统实现，并保留两个原函数的最小问题复现。结论针对固定提交，不等于论文实验、其他分支或衍生仓库的行为。</p>
+<h3 id="61-组件与源码地图">6.1 组件与源码地图
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">源码位置</th>
+          <th style="text-align: left">主要职责</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left"><code>agentic_memory/memory_system.py</code></td>
+          <td style="text-align: left">笔记模型、增删改查及演化</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>agentic_memory/retrievers.py</code></td>
+          <td style="text-align: left">Chroma 普通、持久及复制检索器</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>agentic_memory/llm_controller.py</code></td>
+          <td style="text-align: left">模型控制器文件</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>tests/test_memory_system.py</code></td>
+          <td style="text-align: left">笔记与记忆操作测试</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><code>tests/test_retriever.py</code></td>
+          <td style="text-align: left">检索器测试</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>本节路径均相对于 <a class="link" href="https://github.com/agiresearch/A-mem/tree/ceffb860f0712bbae97b184d440df62bc910ca8d"  target="_blank" rel="noopener"
+    >A-MEM 仓库根目录</a>。</p>
+<p>系统有两份需要保持一致的数据：<code>self.memories</code> 中的 Python 笔记对象，以及 Chroma 中的文档、向量和元数据。前者用于对象读取和关联展开，后者用于检索。不能只检查向量入库成功，就认定完整笔记已可靠保存。</p>
+<h3 id="62-原子笔记的数据模型">6.2 原子笔记的数据模型
+</h3><h4 id="621-字段与默认值">6.2.1 字段与默认值
+</h4><p><code>MemoryNote</code> 保存正文、标识、关键词、上下文、分类、标签、链接及时间。默认标识为 UUID；缺失关键词、标签和链接时使用空列表，缺失上下文时使用 <code>General</code>。</p>
+<p>它还包含 <code>retrieval_count</code>、<code>last_accessed</code>、<code>evolution_history</code> 等字段。<strong>存在字段并不证明每次读取都会更新统计，也不证明已经有完整的淘汰或版本历史。</strong> 应追踪实际调用路径。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">字段组</th>
+          <th style="text-align: left">主要内容</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left">正文与身份</td>
+          <td style="text-align: left"><code>content</code>、<code>id</code></td>
+      </tr>
+      <tr>
+          <td style="text-align: left">语义描述</td>
+          <td style="text-align: left"><code>keywords</code>、<code>context</code>、<code>category</code>、<code>tags</code></td>
+      </tr>
+      <tr>
+          <td style="text-align: left">关联</td>
+          <td style="text-align: left"><code>links</code></td>
+      </tr>
+      <tr>
+          <td style="text-align: left">时间</td>
+          <td style="text-align: left"><code>timestamp</code>、<code>last_accessed</code></td>
+      </tr>
+      <tr>
+          <td style="text-align: left">统计与历史</td>
+          <td style="text-align: left"><code>retrieval_count</code>、<code>evolution_history</code></td>
+      </tr>
+  </tbody>
+</table></div>
+<p><a class="link" href="https://github.com/agiresearch/A-mem/blob/ceffb860f0712bbae97b184d440df62bc910ca8d/agentic_memory/memory_system.py#L24"  target="_blank" rel="noopener"
+    >笔记模型</a></p>
+<h4 id="622-原子不是自动切分保证">6.2.2 “原子”不是自动切分保证
+</h4><p>原子笔记表示希望每条记录集中表达一个可独立引用的信息单元。默认 <code>add_note()</code> 接收调用方提供的正文，没有在这条路径中保证自动把长对话切成多个原子事实。</p>
+<p>例如“版本 v2 在 10:00 发布”和“发布后错误率升高”可以作为两条笔记，但拆分方式需要上层决定。把完整事故报告直接作为正文，也不会仅因进入 <code>MemoryNote</code> 就自动变成多条原子记忆。</p>
+<h3 id="63-写路径与元数据生成">6.3 写路径与元数据生成
+</h3><h4 id="631-add_note-的实际流程">6.3.1 add_note 的实际流程
+</h4><p><code>add_note()</code> 创建笔记，调用 <code>process_memory()</code>，保存到对象字典，再把正文和元数据加入检索器。首次没有旧记忆时，演化路径直接返回原笔记。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[&#34;调用方提供正文与可选字段&#34;] --&gt; B[&#34;创建 MemoryNote&#34;]
+    B --&gt; C{&#34;是否有旧笔记&#34;}
+    C --&gt;|否| D[&#34;保留原笔记&#34;]
+    C --&gt;|是| E[&#34;检索相近旧笔记&#34;]
+    E --&gt; F[&#34;LLM 判断关联和邻居更新&#34;]
+    F --&gt; D
+    D --&gt; G[&#34;保存到内存字典&#34;]
+    G --&gt; H[&#34;正文与元数据加入 Chroma&#34;]
+    H --&gt; I[&#34;按演化计数触发整理&#34;]
+</code></pre><h4 id="632-analyze_content-没有自动接入">6.3.2 analyze_content 没有自动接入
+</h4><p>仓库中存在 <code>analyze_content()</code>，可生成关键词、上下文和标签。但当前 <code>add_note()</code> 直接调用 <code>MemoryNote(content=content, **kwargs)</code>，并未自动调用该分析函数。</p>
+<p>因此，如果调用方只传正文，初始语义字段使用默认值。后续演化可能修改部分字段，但不能据此宣称所有新笔记都经过完整语义分析。<a class="link" href="https://github.com/agiresearch/A-mem/blob/ceffb860f0712bbae97b184d440df62bc910ca8d/agentic_memory/memory_system.py#L233"  target="_blank" rel="noopener"
+    >新增路径</a></p>
+<p>**工程建议：**在应用层显式划分“提取原子事实”“生成元数据”“保存笔记”三个步骤，并分别记录失败，避免把结构缺失隐藏在默认值中。</p>
+<h3 id="64-检索与关联演化">6.4 检索与关联演化
+</h3><h4 id="641-检索器保存什么">6.4.1 检索器保存什么
+</h4><p>默认 <code>ChromaRetriever</code> 使用 Chroma 客户端和 SentenceTransformer 嵌入函数，默认模型名为 <code>all-MiniLM-L6-v2</code>。</p>
+<p><code>add_document()</code> 保存的是笔记正文；列表或字典元数据转成 JSON 字符串，其余元数据转成字符串。搜索调用 <code>collection.query(query_texts=[query], n_results=k)</code>，再恢复部分元数据类型。<a class="link" href="https://github.com/agiresearch/A-mem/blob/ceffb860f0712bbae97b184d440df62bc910ca8d/agentic_memory/retrievers.py#L42"  target="_blank" rel="noopener"
+    >检索器源码</a></p>
+<p>这条路径以正文的语义相似性召回。标签和上下文虽作为元数据保存，但不能仅因字段存在，就认定它们同时参与独立的关键词召回或向量编码。</p>
+<h4 id="642-演化决策">6.4.2 演化决策
+</h4><p><code>process_memory()</code> 检索 5 个附近笔记，将它们与新笔记交给 LLM。模型输出包括是否演化、操作列表、建议关联及新标签、上下文。</p>
+<p>当前主要操作：</p>
+<ul>
+<li><code>strengthen</code>：扩展新笔记的 <code>links</code> 并更新新笔记标签。</li>
+<li><code>update_neighbor</code>：修改旧笔记的标签及上下文。</li>
+</ul>
+<p><code>strengthen</code> 的这条路径没有自动为旧笔记建立反向链接，不能将所有关联理解为双向关系。演化异常会记录日志并返回未演化的笔记，新增流程可以继续。<a class="link" href="https://github.com/agiresearch/A-mem/blob/ceffb860f0712bbae97b184d440df62bc910ca8d/agentic_memory/memory_system.py#L590"  target="_blank" rel="noopener"
+    >演化代码</a></p>
+<h4 id="643-查找并返回关联笔记">6.4.3 查找并返回关联笔记
+</h4><p><code>search_agentic()</code> 先从 Chroma 获取直接命中，再根据笔记链接查找对象字典中的关联笔记。它尝试去重，并对结果标记 <code>is_neighbor</code>。</p>
+<p>这个函数返回结构化结果，不负责完整的Agent提示词构造。应用需要控制关联展开数量、Token 预算及来源呈现。</p>
+<h3 id="65-两个问题的最小复现">6.5 两个问题的最小复现
+</h3><h4 id="651-关联内容被-top-k-截掉">6.5.1 关联内容被 Top-K 截掉
+</h4><p><code>search_agentic()</code> 先加入最多 K 条直接命中，再追加关联笔记，最后执行 <code>return memories[:k]</code>。</p>
+<p>最小样例：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">条件</th>
+          <th style="text-align: left">内容</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left">对象字典</td>
+          <td style="text-align: left">笔记 A、B、C</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">直接命中</td>
+          <td style="text-align: left">C</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">C 的链接</td>
+          <td style="text-align: left">B</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">K</td>
+          <td style="text-align: left">1</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">实际返回</td>
+          <td style="text-align: left">C，未包含 B</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>复现使用固定提交中的原 <code>search_agentic()</code> 函数和模拟检索结果，没有更改该函数逻辑。函数确实尝试添加 B，但最终切片把它移出了返回值。</p>
+<p>当直接命中已经达到 K 条时，追加在尾部的关联记录通常没有剩余空间。**工程建议：**分别为直接召回和关联展开分配预算，再统一排序，而不是先占满总预算再追加。<a class="link" href="https://github.com/agiresearch/A-mem/blob/ceffb860f0712bbae97b184d440df62bc910ca8d/agentic_memory/memory_system.py#L509"  target="_blank" rel="noopener"
+    >关联检索源码</a></p>
+<h4 id="652-检索排名被当作字典位置">6.5.2 检索排名被当作字典位置
+</h4><p><code>find_related_memories()</code> 遍历搜索结果，返回 <code>indices.append(i)</code>。这里的 <code>i</code> 是结果排名，不是笔记在 <code>self.memories</code> 中的位置。</p>
+<p><code>update_neighbor</code> 随后使用 <code>list(self.memories.values())[indices[i]]</code> 定位对象。检索顺序与字典插入顺序不同，就会更新错误笔记。</p>
+<p>最小复现固定字典顺序为 A、B、C，检索只命中 C，模拟模型要求将 C 的上下文改为 <code>updated c</code>。实际结果：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">笔记</th>
+          <th style="text-align: left">原上下文</th>
+          <th style="text-align: left">更新后</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left">A</td>
+          <td style="text-align: left"><code>old</code></td>
+          <td style="text-align: left"><code>updated c</code></td>
+      </tr>
+      <tr>
+          <td style="text-align: left">B</td>
+          <td style="text-align: left"><code>old</code></td>
+          <td style="text-align: left"><code>old</code></td>
+      </tr>
+      <tr>
+          <td style="text-align: left">C</td>
+          <td style="text-align: left"><code>old</code></td>
+          <td style="text-align: left"><code>old</code></td>
+      </tr>
+  </tbody>
+</table></div>
+<p>复现执行了原 <code>find_related_memories()</code> 与 <code>process_memory()</code>；检索器和模型输出使用模拟对象。结果证明此输入下更新落到了 A，未落到 C。</p>
+<p>**工程建议：**整个邻居处理链使用稳定笔记 ID，而非位置；模型输出中的标识应与本轮允许更新的邻居集合校验。<a class="link" href="https://github.com/agiresearch/A-mem/blob/ceffb860f0712bbae97b184d440df62bc910ca8d/agentic_memory/memory_system.py#L288"  target="_blank" rel="noopener"
+    >排名生成</a>、<a class="link" href="https://github.com/agiresearch/A-mem/blob/ceffb860f0712bbae97b184d440df62bc910ca8d/agentic_memory/memory_system.py#L684"  target="_blank" rel="noopener"
+    >邻居更新</a></p>
+<h3 id="66-对象索引与持久化边界">6.6 对象、索引与持久化边界
+</h3><h4 id="661-默认初始化不是恢复流程">6.6.1 默认初始化不是恢复流程
+</h4><p><code>AgenticMemorySystem</code> 初始化空字典，创建普通 Chroma 检索器，并尝试调用客户端 <code>reset()</code>，随后创建新检索器。</p>
+<p>仓库提供 <code>PersistentChromaRetriever</code>，但默认系统构造没有选择它，也没有在这条路径中从持久记录恢复对象字典。即使替换检索器，对象字典为空时，某些函数仍会直接返回空结果。</p>
+<p>持久化不仅要保存向量，还需要恢复笔记对象及关联。初始化时的 reset 对已有集合的影响也应在实际 Chroma 配置中验证。<a class="link" href="https://github.com/agiresearch/A-mem/blob/ceffb860f0712bbae97b184d440df62bc910ca8d/agentic_memory/memory_system.py#L93"  target="_blank" rel="noopener"
+    >系统初始化</a>、<a class="link" href="https://github.com/agiresearch/A-mem/blob/ceffb860f0712bbae97b184d440df62bc910ca8d/agentic_memory/retrievers.py#L147"  target="_blank" rel="noopener"
+    >持久检索器</a></p>
+<h4 id="662-自动演化与显式-update-不同">6.6.2 自动演化与显式 update 不同
+</h4><p>显式 <code>update()</code> 修改对象后，删除旧 Chroma 文档并重新添加；自动 <code>update_neighbor</code> 修改对象字典中的旧笔记，但没有在该分支立即执行同样的索引更新。</p>
+<p>因此，通过对象读取和通过 Chroma 元数据读取，可能暂时看到不同上下文。自动整理 <code>consolidate_memories()</code> 会遍历字典再次添加记录，但其调用的检索器方法是 <code>collection.add</code>，不能仅根据“整理”名称就保证它对已有 ID 实现了可靠更新。<a class="link" href="https://github.com/agiresearch/A-mem/blob/ceffb860f0712bbae97b184d440df62bc910ca8d/agentic_memory/memory_system.py#L357"  target="_blank" rel="noopener"
+    >显式更新</a>、<a class="link" href="https://github.com/agiresearch/A-mem/blob/ceffb860f0712bbae97b184d440df62bc910ca8d/agentic_memory/memory_system.py#L266"  target="_blank" rel="noopener"
+    >整理流程</a></p>
+<h4 id="663-删除并发与失败">6.6.3 删除、并发与失败
+</h4><p><code>delete()</code> 先删除 Chroma 记录，再删除对象字典条目。已核对的实现没有在这里自动清理所有其他笔记的入链引用。</p>
+<p>显式更新采用删除再添加，也没有将内存对象和 Chroma 写入包装成统一事务。**工程建议：**生产组件应选择明确的权威存储，使用稳定 ID、索引更新操作、恢复流程和写入协调，避免双份数据长期分叉。</p>
+<h3 id="67-如何将该思路用于工程">6.7 如何将该思路用于工程
+</h3><h4 id="671-发布故障笔记">6.7.1 发布故障笔记
+</h4><p>**工程建议：**分别保存发布事件、依赖变更、告警及处置经验，使用事件标识和明确时间，再让模型提出关联。例如“同一服务、接近时间、相同发布版本”可以形成候选链接。</p>
+<p>关联是后续分析线索，不应直接保存为已确认因果。原始正文和来源应保留，模型生成的上下文可单独维护，并记录修改来源。</p>
+<h4 id="672-需要补齐的实现">6.7.2 需要补齐的实现
+</h4><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">目标</th>
+          <th style="text-align: left">工程建议</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left">正确更新邻居</td>
+          <td style="text-align: left">使用稳定 ID，校验更新对象</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">有效关联检索</td>
+          <td style="text-align: left">独立展开预算，重新排序</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">重启恢复</td>
+          <td style="text-align: left">持久保存正文和结构，从存储重建对象</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">索引一致性</td>
+          <td style="text-align: left">统一更新入口，显式更新或重建索引</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">可追踪修改</td>
+          <td style="text-align: left">保存版本及操作事件</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">多用户使用</td>
+          <td style="text-align: left">定义笔记空间及访问过滤</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>这些是基于本次默认路径的建议，不是对仓库全部可能用法的否定。开发者可以保留关联演化策略，同时重新实现存储与可靠性部分。</p>
+<h4 id="673-测试内容与验证范围">6.7.3 测试内容与验证范围
+</h4><p>仓库包含笔记创建、更新、删除、关系及演化测试。本节核对了测试文件，未运行全套测试；两个问题的最小复现独立执行了相关原函数。</p>
+<p>应补充“字典顺序不同于召回顺序”“直接命中已占满 K”“修改邻居后立即搜索”“删除有入链笔记”“重启后展开关联”等行为测试。<a class="link" href="https://github.com/agiresearch/A-mem/blob/ceffb860f0712bbae97b184d440df62bc910ca8d/tests/test_memory_system.py"  target="_blank" rel="noopener"
+    >记忆系统测试</a></p>
+<h2 id="七五种路线的工程对比">七、五种路线的工程对比
+</h2><h3 id="71-记忆内容与更新方式">7.1 记忆内容与更新方式
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">项目</th>
+          <th style="text-align: left">主要保存内容</th>
+          <th style="text-align: left">主要更新机制</th>
+          <th style="text-align: left">模型接入</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left">Mem0</td>
+          <td style="text-align: left">抽取后的事实文本</td>
+          <td style="text-align: left">默认追加；另有更新和删除接口</td>
+          <td style="text-align: left">应用组织检索结果</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">Graphiti</td>
+          <td style="text-align: left">事件、实体、事实关系与时间</td>
+          <td style="text-align: left">消歧、去重及关系失效</td>
+          <td style="text-align: left">应用组织关系和来源</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">Letta Code 本地 MemFS</td>
+          <td style="text-align: left">核心与详细 Markdown</td>
+          <td style="text-align: left">文件修改、提交与后台合并</td>
+          <td style="text-align: left">核心投影、详细文件按需读取</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">LangMem</td>
+          <td style="text-align: left">按 Schema 组织的记忆条目</td>
+          <td style="text-align: left">工具操作或抽取合并</td>
+          <td style="text-align: left">提示词函数或搜索工具</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">A-MEM</td>
+          <td style="text-align: left">笔记正文、描述与链接</td>
+          <td style="text-align: left">新笔记关联和邻居演化</td>
+          <td style="text-align: left">应用组织笔记结果</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>这张表比较的是前面固定版本中的实现路径。项目可能提供更多模式，不能把一条路径推导为产品全部能力。</p>
+<h3 id="72-哪些可靠性问题由应用承担">7.2 哪些可靠性问题由应用承担
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">项目</th>
+          <th style="text-align: left">已核对的机制</th>
+          <th style="text-align: left">仍应关注的边界</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left">Mem0</td>
+          <td style="text-align: left">批处理、逐条降级、历史记录</td>
+          <td style="text-align: left">向量与历史分开写，默认不自动修正旧事实</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">Graphiti</td>
+          <td style="text-align: left">图保存事务、关系时间字段</td>
+          <td style="text-align: left">事件顺序、时间过滤、模型判定</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">Letta Code</td>
+          <td style="text-align: left">提交快照、工作树、框架写入锁</td>
+          <td style="text-align: left">提交与投影刷新不同，普通编辑仍可能冲突</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">LangMem</td>
+          <td style="text-align: left">Store 抽象、后台队列、结构化抽取</td>
+          <td style="text-align: left">本地队列不持久，多条写入未统一成事务</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">A-MEM</td>
+          <td style="text-align: left">对象字典与 Chroma、演化流程</td>
+          <td style="text-align: left">默认恢复、邻居定位、索引同步与展开预算</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>持久化内容和持久化待处理任务是两件事。权威数据和搜索索引也是两件事。工程验收需要分别检查，不能只验证一次正常的读写。</p>
+<h3 id="73-如何对应实际任务">7.3 如何对应实际任务
+</h3><p>以下是基于实现结构的选型建议，没有通过统一数据集证明效果排名：</p>
+<ul>
+<li>用户偏好、个性化事实：优先研究 Mem0 的抽取、作用域和检索。</li>
+<li>发布故障、依赖变化和历史状态：优先研究 Graphiti 的事件与有效期。</li>
+<li>Coding Agent 的长期规则与项目知识：研究 Letta Code 的核心投影、索引及版本。</li>
+<li>已有 LangGraph 应用：研究 LangMem 的 Store 接入、Schema 和后台处理。</li>
+<li>关联笔记和演化策略实验：研究 A-MEM，同时修正已确认的实现问题。</li>
+</ul>
+<h2 id="八从项目中提炼落地方法">八、从项目中提炼落地方法
+</h2><h3 id="81-分开设计三份状态">8.1 分开设计三份状态
+</h3><p>**工程建议：**将原始经历、整理后的记忆和本轮模型输入分别管理。原始经历负责追溯，长期条目负责复用，上下文投影负责控制当前任务的输入成本。</p>
+<p>摘要不必等于长期事实，索引不必成为权威数据。用户修正一条长期偏好时，要能找到其来源及生效范围，而不是仅在向量结果中追加一句相反的话。</p>
+<h3 id="82-先定义写入策略再选择数据库">8.2 先定义写入策略，再选择数据库
+</h3><p>先确定哪些信息长期保存、哪些仅属于任务、如何处理例外及修正，再选择向量、图或文件存储。存储形式不能替代这些策略。</p>
+<p>对明确的“记住”和“忘记”请求，可以设置显式操作；对连续对话抽取，可采用后台处理。对事件时间敏感的数据，输入应保留来源时间，不能只使用系统入库时间。</p>
+<h3 id="83-使用稳定身份与版本边界">8.3 使用稳定身份与版本边界
+</h3><p>记忆、事件和邻居都应使用稳定标识。检索排名仅是当前查询的顺序，不能作为对象身份。更新还需明确修改哪个版本，以及哪些派生索引需要刷新。</p>
+<p>在多智能体场景中，分别定义用户私有、项目共享和智能体专属空间。选择相同空间是一种共享规则，不是自动权限校验。</p>
+<h3 id="84-为失败设计可观察状态">8.4 为失败设计可观察状态
+</h3><p>可以记录写入请求、抽取结果、实际保存条目、索引状态和上下文版本。对于后台任务，还需记录待执行、完成、失败和补偿状态。</p>
+<p>当事实已保存但历史失败、文件已提交但尚未刷新提示词、后台任务已提交但进程退出时，系统应该能够区分这些状态，而不是只显示一个“成功”。</p>
+<h3 id="85-用行为样例验收">8.5 用行为样例验收
+</h3><p>建议用以下样例验证实现，再测量真实任务效果：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">样例</th>
+          <th style="text-align: left">验证目标</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left">同义内容重复写入</td>
+          <td style="text-align: left">去重范围与语义重复</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">用户修正并附带例外</td>
+          <td style="text-align: left">更新对象及范围保留</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">不同用户提出相同查询</td>
+          <td style="text-align: left">空间隔离</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">迟到、乱序的业务事件</td>
+          <td style="text-align: left">时间处理和依赖顺序</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">召回顺序与存储顺序不同</td>
+          <td style="text-align: left">稳定 ID 定位</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">直接结果占满预算</td>
+          <td style="text-align: left">关联内容是否真正返回</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">部分存储失败与进程重启</td>
+          <td style="text-align: left">补偿、恢复及任务重放</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">长会话包含未完成工具调用</td>
+          <td style="text-align: left">摘要边界与任务状态</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>这些检查分别衡量执行正确性和内容质量。源码机制核对不能代替实际数据上的抽取、检索和回答评估。</p>
+<h2 id="九常见高频面试题">九、常见高频面试题
+</h2><h3 id="91-agent-memory-是否等于向量数据库">9.1 Agent Memory 是否等于向量数据库？
+</h3><p>**答：**不等于。数据库保存和检索内容，Memory 还包括写入选择、更新策略、作用域、上下文接入和维护。</p>
+<h3 id="92-mem0-默认写入会自动覆盖旧事实吗">9.2 Mem0 默认写入会自动覆盖旧事实吗？
+</h3><p>**答：**本次提交的默认推断路径采用追加式抽取。独立更新接口和历史提示词的存在，不代表默认调用链自动执行更新或删除。</p>
+<h3 id="93-graphiti-默认只返回当前有效关系吗">9.3 Graphiti 默认只返回当前有效关系吗？
+</h3><p>**答：**不能这样保证。基础入口的默认时间过滤为空，应用需要为当前状态或历史时刻明确设置查询条件。</p>
+<h3 id="94-letta-文件改完后系统提示词会立即变化吗">9.4 Letta 文件改完后，系统提示词会立即变化吗？
+</h3><p>**答：**本地核心投影读取已提交快照，还需要提示词编译。文件工具看到的内容与已编译提示词可能不同。</p>
+<h3 id="95-langmem-的检查点与-store-有什么区别">9.5 LangMem 的检查点与 Store 有什么区别？
+</h3><p>**答：**检查点保存线程执行状态，Store 保存跨线程组织的长期记忆。两者的持久化需要分别配置。</p>
+<h3 id="96-本地后台线程等于持久任务队列吗">9.6 本地后台线程等于持久任务队列吗？
+</h3><p>**答：**不等于。LangMem 本地执行器的队列在进程内；存储持久化不会自动保存未执行任务。</p>
+<h3 id="97-a-mem-的邻居更新为什么会定位错误">9.7 A-MEM 的邻居更新为什么会定位错误？
+</h3><p>**答：**当前路径将检索排名用于笔记字典位置。两种顺序不一致时会更新错对象，稳定笔记 ID 才能可靠定位。</p>
+<h3 id="98-多路检索或关联链接能保证相关内容返回吗">9.8 多路检索或关联链接能保证相关内容返回吗？
+</h3><p>**答：**不能。Mem0 的候选来自向量结果；A-MEM 追加邻居后还会截断。需要核对候选并集、排序和预算，而不是只看机制名称。</p>
+<h3 id="99-数据库事务git-与文件锁分别保证什么">9.9 数据库事务、Git 与文件锁分别保证什么？
+</h3><p>**答：**事务协调指定数据库操作；Git 管理版本与合并；锁协调其覆盖范围内的写入。它们都不会自动保证语义准确，也不必然覆盖整条模型调用链。</p>
+<h3 id="910-两个源码问题是否否定-a-mem-论文">9.10 两个源码问题是否否定 A-MEM 论文？
+</h3><p>**答：**不会。这次复现针对固定仓库版本的特定函数，未复评论文实验或其他实现。</p>
+<h2 id="十附录源码与进一步阅读">十、附录：源码与进一步阅读
+</h2><h3 id="101-mem0-官方项目源码">10.1 Mem0 官方项目源码
+</h3><ul>
+<li><a class="link" href="https://github.com/mem0ai/mem0/tree/b7ad69afda6b6ed030347c66d48a13e4de9dec08"  target="_blank" rel="noopener"
+    >Mem0 固定版本仓库</a></li>
+<li><a class="link" href="https://github.com/mem0ai/mem0/blob/b7ad69afda6b6ed030347c66d48a13e4de9dec08/mem0/memory/main.py"  target="_blank" rel="noopener"
+    >核心记忆实现</a></li>
+<li><a class="link" href="https://github.com/mem0ai/mem0/blob/b7ad69afda6b6ed030347c66d48a13e4de9dec08/mem0/configs/prompts.py"  target="_blank" rel="noopener"
+    >抽取提示词</a></li>
+<li><a class="link" href="https://github.com/mem0ai/mem0/blob/b7ad69afda6b6ed030347c66d48a13e4de9dec08/tests/memory/test_storage.py"  target="_blank" rel="noopener"
+    >存储与迁移测试</a></li>
+</ul>
+<h3 id="102-graphiti-官方项目源码">10.2 Graphiti 官方项目源码
+</h3><ul>
+<li><a class="link" href="https://github.com/getzep/graphiti/tree/1026ae7ae25e7e4cfcc1c7ebe00347b8a90f52a0"  target="_blank" rel="noopener"
+    >Graphiti 固定版本仓库</a></li>
+<li><a class="link" href="https://github.com/getzep/graphiti/blob/1026ae7ae25e7e4cfcc1c7ebe00347b8a90f52a0/graphiti_core/graphiti.py"  target="_blank" rel="noopener"
+    >事件写入与检索入口</a></li>
+<li><a class="link" href="https://github.com/getzep/graphiti/blob/1026ae7ae25e7e4cfcc1c7ebe00347b8a90f52a0/graphiti_core/search/search_config_recipes.py"  target="_blank" rel="noopener"
+    >搜索配置</a></li>
+<li><a class="link" href="https://github.com/getzep/graphiti/blob/1026ae7ae25e7e4cfcc1c7ebe00347b8a90f52a0/graphiti_core/utils/maintenance/edge_operations.py"  target="_blank" rel="noopener"
+    >关系时间处理</a></li>
+</ul>
+<h3 id="103-letta-code-官方项目源码">10.3 Letta Code 官方项目源码
+</h3><ul>
+<li><a class="link" href="https://github.com/letta-ai/letta-code/tree/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b"  target="_blank" rel="noopener"
+    >Letta Code 固定版本仓库</a></li>
+<li><a class="link" href="https://github.com/letta-ai/letta-code/blob/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b/src/backend/local/system-prompt-compilation.ts"  target="_blank" rel="noopener"
+    >本地提示词编译器</a></li>
+<li><a class="link" href="https://github.com/letta-ai/letta-code/blob/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b/src/agent/subagents/builtin/memory-v2.md"  target="_blank" rel="noopener"
+    >后台记忆工作说明</a></li>
+<li><a class="link" href="https://github.com/letta-ai/letta-code/blob/253a3bc812b6d0dd2f4273194c4ab78f9ad9542b/src/agent/memory-git.ts"  target="_blank" rel="noopener"
+    >Git 记忆与同步</a></li>
+</ul>
+<h3 id="104-langmem-官方项目源码">10.4 LangMem 官方项目源码
+</h3><ul>
+<li><a class="link" href="https://github.com/langchain-ai/langmem/tree/48e3c11f5bb527282c7d5339c6a87a0b35abccfc"  target="_blank" rel="noopener"
+    >LangMem 固定版本仓库</a></li>
+<li><a class="link" href="https://github.com/langchain-ai/langmem/blob/48e3c11f5bb527282c7d5339c6a87a0b35abccfc/src/langmem/knowledge/extraction.py"  target="_blank" rel="noopener"
+    >结构化抽取与 Store 管理器</a></li>
+<li><a class="link" href="https://github.com/langchain-ai/langmem/blob/48e3c11f5bb527282c7d5339c6a87a0b35abccfc/docs/docs/hot_path_quickstart.md"  target="_blank" rel="noopener"
+    >热路径接入</a></li>
+<li><a class="link" href="https://github.com/langchain-ai/langmem/blob/48e3c11f5bb527282c7d5339c6a87a0b35abccfc/docs/docs/background_quickstart.md"  target="_blank" rel="noopener"
+    >后台接入示例</a></li>
+</ul>
+<h3 id="105-a-mem-官方项目源码">10.5 A-MEM 官方项目源码
+</h3><ul>
+<li><a class="link" href="https://github.com/agiresearch/A-mem/tree/ceffb860f0712bbae97b184d440df62bc910ca8d"  target="_blank" rel="noopener"
+    >A-MEM 固定版本仓库</a></li>
+<li><a class="link" href="https://github.com/agiresearch/A-mem/blob/ceffb860f0712bbae97b184d440df62bc910ca8d/agentic_memory/memory_system.py"  target="_blank" rel="noopener"
+    >记忆系统完整实现</a></li>
+<li><a class="link" href="https://github.com/agiresearch/A-mem/blob/ceffb860f0712bbae97b184d440df62bc910ca8d/agentic_memory/retrievers.py"  target="_blank" rel="noopener"
+    >Chroma 检索器</a></li>
+<li><a class="link" href="https://github.com/agiresearch/A-mem/blob/ceffb860f0712bbae97b184d440df62bc910ca8d/tests/test_memory_system.py"  target="_blank" rel="noopener"
+    >记忆系统测试</a></li>
+</ul>
+<h3 id="106-相关站内文章">10.6 相关站内文章
+</h3><ul>
+<li><a class="link" href="../ai/agent/05-agent-memory.md" >Agent Memory 原理与 LangGraph 实现</a></li>
+<li><a class="link" href="../paper/agent-memory-papers.md" >Agent Memory 论文整理</a></li>
+</ul>
+<h3 id="107-本文结论">10.7 本文结论
+</h3><p>这些项目分别实现了事实、关系、文件、组件和笔记形式的记忆；落地时应同时验证写入策略、更新身份、检索预算、上下文接入与失败恢复。</p>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/ai/">Ai</a>
+        
+            <a href="/tags/agent/">Agent</a>
+        
+            <a href="/tags/memory/">Memory</a>
+        
+            <a href="/tags/engineering/">Engineering</a>
+        
+            <a href="/tags/github/">Github</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/agent-memory-%E8%AE%BA%E6%96%87%E8%A7%A3%E8%AF%BB%E5%85%AB%E7%AF%87%E4%BB%A3%E8%A1%A8%E5%B7%A5%E4%BD%9C%E7%9A%84%E6%A0%B8%E5%BF%83%E8%A7%82%E7%82%B9%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%B8%8E%E5%B7%A5%E7%A8%8B%E5%90%AF%E7%A4%BA/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">Agent Memory 论文解读：八篇代表工作的核心观点、实现机制与工程启示</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E6%99%BA%E8%83%BD%E4%BD%93%E8%A7%82%E6%B5%8B%E8%AE%BA%E6%96%87%E8%A7%A3%E8%AF%BB%E5%8D%95%E6%99%BA%E8%83%BD%E4%BD%93%E4%B8%8E%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93%E7%9A%84%E8%A7%82%E6%B5%8B%E4%BD%93%E7%B3%BB%E5%A4%B1%E8%B4%A5%E5%BD%92%E5%9B%A0%E4%B8%8E%E8%AF%84%E4%BC%B0%E7%90%86%E8%AE%BA/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">智能体观测论文解读：单智能体与多智能体的观测体系、失败归因与评估理论</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/multica-%E9%A1%B9%E7%9B%AE%E8%A7%A3%E6%9E%90%E9%83%A8%E7%BD%B2%E4%BD%BF%E7%94%A8%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1%E4%B8%8E%E6%8A%80%E6%9C%AF%E4%BA%AE%E7%82%B9/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">Multica 项目解析：部署、使用、架构设计与技术亮点</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E4%BB%80%E4%B9%88%E6%98%AF-skills%E6%A6%82%E5%BF%B5%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F%E5%BC%80%E5%8F%91%E6%96%B9%E6%B3%95%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E5%B8%B8%E8%A7%81%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">什么是 Skills：概念、使用方式、开发方法、底层原理与常见面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/ai-agent-%E5%AE%89%E5%85%A8%E4%BD%93%E7%B3%BBprompt-injectiontool-injection%E6%9D%83%E9%99%90%E6%8E%A7%E5%88%B6%E5%AE%A1%E6%89%B9%E5%AE%A1%E8%AE%A1%E4%B8%8E%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">AI Agent 安全体系：Prompt Injection、Tool Injection、权限控制、审批审计与高频面试题</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>

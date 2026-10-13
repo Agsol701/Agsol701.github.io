@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'><meta name='description' content="写在前面 智能体（Agent）没有完成任务，可能是工具请求报错，也可能是工具执行成功却修改了错误对象。多个 Agent 协作时，错误还可能从一个角色传播到另一个角色，直到最终输出才显现。\n观测体系需要保留可核验的证据，回答三个问题：发生了什么、问题从哪里开始、修改是否改善了任务结果。本文围绕十篇相关论文，分为单智能体和多智能体两个大的部分，分别说明核心观点、理论依据、实现机制与工程启示。\nLLM（Large Language Model，大语言模型）是文中的推理与生成组件。本文所说的可观测性（Observability），指通过运行事件、状态与结果理解系统行为；它不意味着可以直接读取模型内部的真实决策原因。模型生成的解释需要与工具结果、环境状态和后续验证区分。\n本文是面向开发者的选题式论文整理，不是完整文献综述。论文方法与本文提出的工程设计会分别标明，也不将不同基准上的性能整理为统一排行榜。\n一、单智能体的观测体系 1.1 观测对象与论文地图 单智能体可以有多轮决策、并行工具调用和重试，因此观测对象应覆盖整次任务，而不只是一条模型响应。\n工作 年份 类型 支持的观测能力 AgentOps 2024 分类研究 定义应追踪的对象及关系 AgentBoard 2024 评测框架 衡量过程进展与能力瓶颈 TRAIL 2025 错误分类与基准 检测并定位轨迹中的问题 τ-bench 2024 交互评测基准 验证最终状态与重复可靠性 AgentRR 2025 经验复用框架 从轨迹提炼可验证流程 MT-Bench / Chatbot Arena 评估论文 2023 评估方法研究 校准模型评估器及偏差 Rubric Artifacts 2026 评估可靠性研究 检查评分标准对判决的影响 年份按 arXiv 首次公开时间记载。这些方法并非只能用于单智能体；这里按其在单智能体观测中的主要作用组织。\n1.2 AgentOps：建立观测对象与生命周期模型 论文：AgentOps: Enabling Observability of LLM Agents。\n**核心观点：**Agent 的观测要覆盖目标、计划、工具和运行产物，不能仅沿用模型调用的成本与延迟指标。论文通过对工具的系统映射研究，整理观测对象及其关系。论文正文\n**理论与实现机制：**设计期对象与运行期产物相互关联：模型、提示词、工具和上下文配置影响运行时的目标处理、计划与执行。观测基础设施沿生命周期追踪相关数据，将监控、日志、追踪、评价和反馈关联起来。贡献主要是分类体系与参考模型，并非一个已证明可以自动修复故障的算法。论文正文\n**本文工程建议：**每次任务关联模型配置、提示词版本、工具定义版本和环境版本，再记录决策、执行与结果事件。单有 trace_id 只能关联日志，仍需对象版本解释“为什么同一个任务在两次发布后表现不同”。\n">
+<title>智能体观测论文解读：单智能体与多智能体的观测体系、失败归因与评估理论</title>
+
+<link rel='canonical' href='https://Agsol701.github.io/p/%E6%99%BA%E8%83%BD%E4%BD%93%E8%A7%82%E6%B5%8B%E8%AE%BA%E6%96%87%E8%A7%A3%E8%AF%BB%E5%8D%95%E6%99%BA%E8%83%BD%E4%BD%93%E4%B8%8E%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93%E7%9A%84%E8%A7%82%E6%B5%8B%E4%BD%93%E7%B3%BB%E5%A4%B1%E8%B4%A5%E5%BD%92%E5%9B%A0%E4%B8%8E%E8%AF%84%E4%BC%B0%E7%90%86%E8%AE%BA/'>
+
+<link rel="stylesheet" href="/scss/style.min.663803bebe609202d5b39d848f2d7c2dc8b598a2d879efa079fa88893d29c49c.css"><style>.mermaid { text-align: center; }</style>
+<script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('code[data-lang="mermaid"], code.language-mermaid, code.language-fallback[data-lang="fallback"]').forEach(el => {
+            
+            const clSpans = el.querySelectorAll('span.cl');
+            const text = clSpans.length
+                ? Array.from(clSpans).map(s => s.textContent).join('')
+                : el.textContent;
+            
+            if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey)/.test(text.trim())) return;
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.textContent = text;
+            el.closest('div.highlight, pre') && el.closest('div.highlight, pre').replaceWith(div) || el.parentElement.replaceWith(div);
+        });
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.run();
+    });
+</script><meta property='og:title' content="智能体观测论文解读：单智能体与多智能体的观测体系、失败归因与评估理论">
+<meta property='og:description' content="写在前面 智能体（Agent）没有完成任务，可能是工具请求报错，也可能是工具执行成功却修改了错误对象。多个 Agent 协作时，错误还可能从一个角色传播到另一个角色，直到最终输出才显现。\n观测体系需要保留可核验的证据，回答三个问题：发生了什么、问题从哪里开始、修改是否改善了任务结果。本文围绕十篇相关论文，分为单智能体和多智能体两个大的部分，分别说明核心观点、理论依据、实现机制与工程启示。\nLLM（Large Language Model，大语言模型）是文中的推理与生成组件。本文所说的可观测性（Observability），指通过运行事件、状态与结果理解系统行为；它不意味着可以直接读取模型内部的真实决策原因。模型生成的解释需要与工具结果、环境状态和后续验证区分。\n本文是面向开发者的选题式论文整理，不是完整文献综述。论文方法与本文提出的工程设计会分别标明，也不将不同基准上的性能整理为统一排行榜。\n一、单智能体的观测体系 1.1 观测对象与论文地图 单智能体可以有多轮决策、并行工具调用和重试，因此观测对象应覆盖整次任务，而不只是一条模型响应。\n工作 年份 类型 支持的观测能力 AgentOps 2024 分类研究 定义应追踪的对象及关系 AgentBoard 2024 评测框架 衡量过程进展与能力瓶颈 TRAIL 2025 错误分类与基准 检测并定位轨迹中的问题 τ-bench 2024 交互评测基准 验证最终状态与重复可靠性 AgentRR 2025 经验复用框架 从轨迹提炼可验证流程 MT-Bench / Chatbot Arena 评估论文 2023 评估方法研究 校准模型评估器及偏差 Rubric Artifacts 2026 评估可靠性研究 检查评分标准对判决的影响 年份按 arXiv 首次公开时间记载。这些方法并非只能用于单智能体；这里按其在单智能体观测中的主要作用组织。\n1.2 AgentOps：建立观测对象与生命周期模型 论文：AgentOps: Enabling Observability of LLM Agents。\n**核心观点：**Agent 的观测要覆盖目标、计划、工具和运行产物，不能仅沿用模型调用的成本与延迟指标。论文通过对工具的系统映射研究，整理观测对象及其关系。论文正文\n**理论与实现机制：**设计期对象与运行期产物相互关联：模型、提示词、工具和上下文配置影响运行时的目标处理、计划与执行。观测基础设施沿生命周期追踪相关数据，将监控、日志、追踪、评价和反馈关联起来。贡献主要是分类体系与参考模型，并非一个已证明可以自动修复故障的算法。论文正文\n**本文工程建议：**每次任务关联模型配置、提示词版本、工具定义版本和环境版本，再记录决策、执行与结果事件。单有 trace_id 只能关联日志，仍需对象版本解释“为什么同一个任务在两次发布后表现不同”。\n">
+<meta property='og:url' content='https://Agsol701.github.io/p/%E6%99%BA%E8%83%BD%E4%BD%93%E8%A7%82%E6%B5%8B%E8%AE%BA%E6%96%87%E8%A7%A3%E8%AF%BB%E5%8D%95%E6%99%BA%E8%83%BD%E4%BD%93%E4%B8%8E%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93%E7%9A%84%E8%A7%82%E6%B5%8B%E4%BD%93%E7%B3%BB%E5%A4%B1%E8%B4%A5%E5%BD%92%E5%9B%A0%E4%B8%8E%E8%AF%84%E4%BC%B0%E7%90%86%E8%AE%BA/'>
+<meta property='og:site_name' content='Agsol Blog'>
+<meta property='og:type' content='article'><meta property='article:section' content='Post' /><meta property='article:tag' content='ai' /><meta property='article:tag' content='agent' /><meta property='article:tag' content='observability' /><meta property='article:tag' content='evaluation' /><meta property='article:tag' content='paper' /><meta property='article:published_time' content='2026-10-09T00:00:00&#43;00:00'/><meta property='article:modified_time' content='2026-10-09T00:00:00&#43;00:00'/>
+<meta name="twitter:title" content="智能体观测论文解读：单智能体与多智能体的观测体系、失败归因与评估理论">
+<meta name="twitter:description" content="写在前面 智能体（Agent）没有完成任务，可能是工具请求报错，也可能是工具执行成功却修改了错误对象。多个 Agent 协作时，错误还可能从一个角色传播到另一个角色，直到最终输出才显现。\n观测体系需要保留可核验的证据，回答三个问题：发生了什么、问题从哪里开始、修改是否改善了任务结果。本文围绕十篇相关论文，分为单智能体和多智能体两个大的部分，分别说明核心观点、理论依据、实现机制与工程启示。\nLLM（Large Language Model，大语言模型）是文中的推理与生成组件。本文所说的可观测性（Observability），指通过运行事件、状态与结果理解系统行为；它不意味着可以直接读取模型内部的真实决策原因。模型生成的解释需要与工具结果、环境状态和后续验证区分。\n本文是面向开发者的选题式论文整理，不是完整文献综述。论文方法与本文提出的工程设计会分别标明，也不将不同基准上的性能整理为统一排行榜。\n一、单智能体的观测体系 1.1 观测对象与论文地图 单智能体可以有多轮决策、并行工具调用和重试，因此观测对象应覆盖整次任务，而不只是一条模型响应。\n工作 年份 类型 支持的观测能力 AgentOps 2024 分类研究 定义应追踪的对象及关系 AgentBoard 2024 评测框架 衡量过程进展与能力瓶颈 TRAIL 2025 错误分类与基准 检测并定位轨迹中的问题 τ-bench 2024 交互评测基准 验证最终状态与重复可靠性 AgentRR 2025 经验复用框架 从轨迹提炼可验证流程 MT-Bench / Chatbot Arena 评估论文 2023 评估方法研究 校准模型评估器及偏差 Rubric Artifacts 2026 评估可靠性研究 检查评分标准对判决的影响 年份按 arXiv 首次公开时间记载。这些方法并非只能用于单智能体；这里按其在单智能体观测中的主要作用组织。\n1.2 AgentOps：建立观测对象与生命周期模型 论文：AgentOps: Enabling Observability of LLM Agents。\n**核心观点：**Agent 的观测要覆盖目标、计划、工具和运行产物，不能仅沿用模型调用的成本与延迟指标。论文通过对工具的系统映射研究，整理观测对象及其关系。论文正文\n**理论与实现机制：**设计期对象与运行期产物相互关联：模型、提示词、工具和上下文配置影响运行时的目标处理、计划与执行。观测基础设施沿生命周期追踪相关数据，将监控、日志、追踪、评价和反馈关联起来。贡献主要是分类体系与参考模型，并非一个已证明可以自动修复故障的算法。论文正文\n**本文工程建议：**每次任务关联模型配置、提示词版本、工具定义版本和环境版本，再记录决策、执行与结果事件。单有 trace_id 只能关联日志，仍需对象版本解释“为什么同一个任务在两次发布后表现不同”。\n">
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    </head>
+    <body class="
+    article-page
+    ">
+    <script>
+        (function() {
+            const colorSchemeKey = 'StackColorScheme';
+            if(!localStorage.getItem(colorSchemeKey)){
+                localStorage.setItem(colorSchemeKey, "auto");
+            }
+        })();
+    </script><script>
+    (function() {
+        const colorSchemeKey = 'StackColorScheme';
+        const colorSchemeItem = localStorage.getItem(colorSchemeKey);
+        const supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches === true;
+
+        if (colorSchemeItem == 'dark' || colorSchemeItem === 'auto' && supportDarkMode) {
+            
+
+            document.documentElement.dataset.scheme = 'dark';
+        } else {
+            document.documentElement.dataset.scheme = 'light';
+        }
+    })();
+</script>
+<div class="container main-container flex on-phone--column extended"><aside class="sidebar left-sidebar sticky ">
+    <button class="hamburger hamburger--spin" type="button" id="toggle-menu" aria-label="Toggle Menu">
+        <span class="hamburger-box">
+            <span class="hamburger-inner"></span>
+        </span>
+    </button>
+
+    <header>
+        
+            
+            <figure class="site-avatar">
+                <a href="/">
+                
+                    
+                    
+                    
+                        
+                        <img src="/img/xizhu_hu_3b07681bf132628b.jpeg" width="300"
+                            height="300" class="site-logo" loading="lazy" alt="Avatar">
+                    
+                
+                </a>
+                
+                    <span class="emoji">🕶</span>
+                
+            </figure>
+            
+        
+        
+        <div class="site-meta">
+            <h1 class="site-name"><a href="/">Agsol Blog</a></h1>
+            <h2 class="site-description">YOLO</h2>
+        </div>
+    </header><ol class="menu-social">
+            
+                <li>
+                    <a 
+                        href='https://github.com/Agsol701'
+                        target="_blank"
+                        title="GitHub"
+                        rel="me"
+                    >
+                        
+                        
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-brand-github" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+  <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+</svg>
+
+
+
+                        
+                    </a>
+                </li>
+            
+        </ol><ol class="menu" id="main-menu">
+        
+        
+        
+        <li >
+            <a href='/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-home" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <polyline points="5 12 3 12 12 3 21 12 19 12" />
+  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />
+  <path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+</svg>
+
+
+
+                
+                <span>Home</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/about-me/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-user" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="12" cy="7" r="4" />
+  <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+</svg>
+
+
+
+                
+                <span>About Me</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/search/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-search" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="10" cy="10" r="7" />
+  <line x1="21" y1="21" x2="15" y2="15" />
+</svg>
+
+
+
+                
+                <span>Search</span>
+            </a>
+        </li>
+        
+        
+        <li >
+            <a href='/links/' >
+                
+                
+                
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-link" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-.5 .5" />
+  <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l.5 -.5" />
+</svg>
+
+
+
+                
+                <span>Links</span>
+            </a>
+        </li>
+        
+        <li class="menu-bottom-section">
+            <ol class="menu">
+
+                
+                    <li id="dark-mode-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-left" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="8" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-toggle-right" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <circle cx="16" cy="12" r="2" />
+  <rect x="2" y="6" width="20" height="12" rx="6" />
+</svg>
+
+
+
+                        <span>Dark Mode</span>
+                    </li>
+                
+            </ol>
+        </li>
+    </ol>
+</aside>
+
+    <aside class="sidebar right-sidebar sticky">
+        
+            
+                
+    <section class="widget archives">
+        <div class="widget-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-hash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <line x1="5" y1="9" x2="19" y2="9" />
+  <line x1="5" y1="15" x2="19" y2="15" />
+  <line x1="11" y1="4" x2="7" y2="20" />
+  <line x1="17" y1="4" x2="13" y2="20" />
+</svg>
+
+
+
+        </div>
+        <h2 class="widget-title section-title">Table of contents</h2>
+        
+        <div class="widget--toc">
+            <nav id="TableOfContents">
+  <ul>
+    <li><a href="#写在前面">写在前面</a></li>
+    <li><a href="#一单智能体的观测体系">一、单智能体的观测体系</a>
+      <ul>
+        <li><a href="#11-观测对象与论文地图">1.1 观测对象与论文地图</a></li>
+        <li><a href="#12-agentops建立观测对象与生命周期模型">1.2 AgentOps：建立观测对象与生命周期模型</a></li>
+        <li><a href="#13-agentboard从最终成功率转向过程进展">1.3 AgentBoard：从最终成功率转向过程进展</a></li>
+        <li><a href="#14-trail建立错误分类与轨迹定位基准">1.4 TRAIL：建立错误分类与轨迹定位基准</a></li>
+        <li><a href="#15-τ-bench用环境状态验证结果用重复试验验证可靠性">1.5 τ-bench：用环境状态验证结果，用重复试验验证可靠性</a></li>
+        <li><a href="#16-agentrr将观测轨迹转化为可复用经验">1.6 AgentRR：将观测轨迹转化为可复用经验</a></li>
+        <li><a href="#17-模型评估器评分本身也需要观测">1.7 模型评估器：评分本身也需要观测</a></li>
+        <li><a href="#18-单智能体观测架构证据诊断与验证分层">1.8 单智能体观测架构：证据、诊断与验证分层</a></li>
+        <li><a href="#19-回放与评估的实现边界">1.9 回放与评估的实现边界</a></li>
+      </ul>
+    </li>
+    <li><a href="#二多智能体的观测体系">二、多智能体的观测体系</a>
+      <ul>
+        <li><a href="#21-从局部事件升级为协作与传播关系">2.1 从局部事件升级为协作与传播关系</a></li>
+        <li><a href="#22-whowhen将失败归因定义为-agent-与步骤的联合定位">2.2 Who&amp;When：将失败归因定义为 Agent 与步骤的联合定位</a></li>
+        <li><a href="#23-chief用分层因果图组织失败归因">2.3 CHIEF：用分层因果图组织失败归因</a></li>
+        <li><a href="#24-agentforesight从事后诊断转向在线审计">2.4 AgentForesight：从事后诊断转向在线审计</a></li>
+        <li><a href="#25-多智能体事件模型与依赖重建">2.5 多智能体事件模型与依赖重建</a></li>
+        <li><a href="#26-示例错误如何从检索角色传播到最终报告">2.6 示例：错误如何从检索角色传播到最终报告</a></li>
+        <li><a href="#27-多智能体观测指标与验证闭环">2.7 多智能体观测指标与验证闭环</a></li>
+        <li><a href="#28-两种体系的差异与建设顺序">2.8 两种体系的差异与建设顺序</a></li>
+      </ul>
+    </li>
+    <li><a href="#三常见高频面试题">三、常见高频面试题</a>
+      <ul>
+        <li><a href="#31-可观测性与评估有什么区别">3.1 可观测性与评估有什么区别？</a></li>
+        <li><a href="#32-为什么工具成功率高任务成功率仍然低">3.2 为什么工具成功率高，任务成功率仍然低？</a></li>
+        <li><a href="#33-为什么多智能体观测不能只增加-agent_id">3.3 为什么多智能体观测不能只增加 agent_id？</a></li>
+        <li><a href="#34-发现第一条异常是否等于找到根因">3.4 发现第一条异常是否等于找到根因？</a></li>
+        <li><a href="#35-确定性回放与经验回放有什么区别">3.5 确定性回放与经验回放有什么区别？</a></li>
+        <li><a href="#36-如何评测在线审计器">3.6 如何评测在线审计器？</a></li>
+      </ul>
+    </li>
+    <li><a href="#四附录原始论文与工程资料">四、附录：原始论文与工程资料</a>
+      <ul>
+        <li><a href="#41-单智能体部分的论文来源">4.1 单智能体部分的论文来源</a></li>
+        <li><a href="#42-多智能体部分的论文来源">4.2 多智能体部分的论文来源</a></li>
+        <li><a href="#43-官方工程资料与相关文档">4.3 官方工程资料与相关文档</a></li>
+      </ul>
+    </li>
+  </ul>
+</nav>
+        </div>
+    </section>
+
+            
+        
+    </aside>
+
+
+            <main class="main full-width">
+    <article class="main-article">
+    <header class="article-header">
+
+    <div class="article-details">
+    
+    <header class="article-category">
+        
+            <a href="/categories/paper/" >
+                Paper
+            </a>
+        
+    </header>
+    
+
+    <div class="article-title-wrapper">
+        <h2 class="article-title">
+            <a href="/p/%E6%99%BA%E8%83%BD%E4%BD%93%E8%A7%82%E6%B5%8B%E8%AE%BA%E6%96%87%E8%A7%A3%E8%AF%BB%E5%8D%95%E6%99%BA%E8%83%BD%E4%BD%93%E4%B8%8E%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93%E7%9A%84%E8%A7%82%E6%B5%8B%E4%BD%93%E7%B3%BB%E5%A4%B1%E8%B4%A5%E5%BD%92%E5%9B%A0%E4%B8%8E%E8%AF%84%E4%BC%B0%E7%90%86%E8%AE%BA/">智能体观测论文解读：单智能体与多智能体的观测体系、失败归因与评估理论</a>
+        </h2>
+    
+        
+
+        
+            
+            <div class="article-source">source: agent-observability-papers</div>
+        
+    </div>
+
+    
+    
+    
+    
+    <footer class="article-time">
+        
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-calendar-time" width="56" height="56" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="none" d="M0 0h24v24H0z"/>
+  <path d="M11.795 21h-6.795a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v4" />
+  <circle cx="18" cy="18" r="4" />
+  <path d="M15 3v4" />
+  <path d="M7 3v4" />
+  <path d="M3 11h16" />
+  <path d="M18 16.496v1.504l1 1" />
+</svg>
+                <time class="article-time--published">Oct 09, 2026</time>
+            </div>
+        
+
+        
+    </footer>
+    
+
+    
+</div>
+
+</header>
+
+    <section class="article-content">
+    
+    
+    <h2 id="写在前面">写在前面
+</h2><p>智能体（Agent）没有完成任务，可能是工具请求报错，也可能是工具执行成功却修改了错误对象。多个 Agent 协作时，错误还可能从一个角色传播到另一个角色，直到最终输出才显现。</p>
+<p>观测体系需要保留可核验的证据，回答三个问题：发生了什么、问题从哪里开始、修改是否改善了任务结果。本文围绕十篇相关论文，分为单智能体和多智能体两个大的部分，分别说明核心观点、理论依据、实现机制与工程启示。</p>
+<p>LLM（Large Language Model，大语言模型）是文中的推理与生成组件。本文所说的可观测性（Observability），指通过运行事件、状态与结果理解系统行为；它不意味着可以直接读取模型内部的真实决策原因。模型生成的解释需要与工具结果、环境状态和后续验证区分。</p>
+<p>本文是面向开发者的选题式论文整理，不是完整文献综述。论文方法与本文提出的工程设计会分别标明，也不将不同基准上的性能整理为统一排行榜。</p>
+<h2 id="一单智能体的观测体系">一、单智能体的观测体系
+</h2><h3 id="11-观测对象与论文地图">1.1 观测对象与论文地图
+</h3><p>单智能体可以有多轮决策、并行工具调用和重试，因此观测对象应覆盖整次任务，而不只是一条模型响应。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">工作</th>
+          <th style="text-align: left">年份</th>
+          <th style="text-align: left">类型</th>
+          <th style="text-align: left">支持的观测能力</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left">AgentOps</td>
+          <td style="text-align: left">2024</td>
+          <td style="text-align: left">分类研究</td>
+          <td style="text-align: left">定义应追踪的对象及关系</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">AgentBoard</td>
+          <td style="text-align: left">2024</td>
+          <td style="text-align: left">评测框架</td>
+          <td style="text-align: left">衡量过程进展与能力瓶颈</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">TRAIL</td>
+          <td style="text-align: left">2025</td>
+          <td style="text-align: left">错误分类与基准</td>
+          <td style="text-align: left">检测并定位轨迹中的问题</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">τ-bench</td>
+          <td style="text-align: left">2024</td>
+          <td style="text-align: left">交互评测基准</td>
+          <td style="text-align: left">验证最终状态与重复可靠性</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">AgentRR</td>
+          <td style="text-align: left">2025</td>
+          <td style="text-align: left">经验复用框架</td>
+          <td style="text-align: left">从轨迹提炼可验证流程</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">MT-Bench / Chatbot Arena 评估论文</td>
+          <td style="text-align: left">2023</td>
+          <td style="text-align: left">评估方法研究</td>
+          <td style="text-align: left">校准模型评估器及偏差</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">Rubric Artifacts</td>
+          <td style="text-align: left">2026</td>
+          <td style="text-align: left">评估可靠性研究</td>
+          <td style="text-align: left">检查评分标准对判决的影响</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>年份按 arXiv 首次公开时间记载。这些方法并非只能用于单智能体；这里按其在单智能体观测中的主要作用组织。</p>
+<h3 id="12-agentops建立观测对象与生命周期模型">1.2 AgentOps：建立观测对象与生命周期模型
+</h3><p><strong>论文：</strong><a class="link" href="https://arxiv.org/abs/2411.05285"  target="_blank" rel="noopener"
+    >AgentOps: Enabling Observability of LLM Agents</a>。</p>
+<p>**核心观点：**Agent 的观测要覆盖目标、计划、工具和运行产物，不能仅沿用模型调用的成本与延迟指标。论文通过对工具的系统映射研究，整理观测对象及其关系。<a class="link" href="https://arxiv.org/html/2411.05285"  target="_blank" rel="noopener"
+    >论文正文</a></p>
+<p>**理论与实现机制：**设计期对象与运行期产物相互关联：模型、提示词、工具和上下文配置影响运行时的目标处理、计划与执行。观测基础设施沿生命周期追踪相关数据，将监控、日志、追踪、评价和反馈关联起来。贡献主要是分类体系与参考模型，并非一个已证明可以自动修复故障的算法。<a class="link" href="https://arxiv.org/html/2411.05285"  target="_blank" rel="noopener"
+    >论文正文</a></p>
+<p>**本文工程建议：**每次任务关联模型配置、提示词版本、工具定义版本和环境版本，再记录决策、执行与结果事件。单有 <code>trace_id</code> 只能关联日志，仍需对象版本解释“为什么同一个任务在两次发布后表现不同”。</p>
+<h3 id="13-agentboard从最终成功率转向过程进展">1.3 AgentBoard：从最终成功率转向过程进展
+</h3><p><strong>论文：</strong><a class="link" href="https://arxiv.org/abs/2401.13178"  target="_blank" rel="noopener"
+    >AgentBoard: An Analytical Evaluation Board of Multi-turn LLM Agents</a>。</p>
+<p>**核心观点：**最终失败会掩盖有效进展。论文通过细粒度进展指标和分析面板，观察 Agent 在多轮、部分可观测环境中的行为。<a class="link" href="https://arxiv.org/html/2401.13178"  target="_blank" rel="noopener"
+    >论文正文</a></p>
+<p>**理论与实现机制：**任务具有可检查的子目标，系统根据环境反馈评估目标推进，并结合动作有效性、任务难度及交互轨迹分析瓶颈。过程进展与最终成功分别度量，提供比单一终局指标更细的诊断信息。<a class="link" href="https://arxiv.org/html/2401.13178"  target="_blank" rel="noopener"
+    >论文正文</a></p>
+<p>**本文工程建议：**将“确认订单、验证条件、完成修改、核验结果”定义成业务检查点。记录达到各检查点的情况，并定位在哪个阶段停滞。检查点完成应由工具证据或状态验证，避免只采用模型的完成声明。</p>
+<p>进展提高仍可能没有改善最终任务结果，因此两个指标必须并列查看。</p>
+<h3 id="14-trail建立错误分类与轨迹定位基准">1.4 TRAIL：建立错误分类与轨迹定位基准
+</h3><p><strong>论文：</strong><a class="link" href="https://arxiv.org/abs/2505.08638"  target="_blank" rel="noopener"
+    >TRAIL: Trace Reasoning and Agentic Issue Localization</a>。</p>
+<p>**核心观点：**评价轨迹分析器时，不应只问“是否失败”，还要检查它能否识别问题类别和所在位置。论文将错误组织为推理、规划与协调、系统执行三个主要领域。<a class="link" href="https://arxiv.org/html/2505.08638"  target="_blank" rel="noopener"
+    >论文正文</a></p>
+<p>**理论与实现机制：**论文整理细粒度错误分类，并构建人工标注的结构化执行轨迹基准。分析器读取轨迹，输出错误位置、类型与解释，再对照标注评估。工具选错、结果误解、上下文处理失败和服务错误等具有不同的诊断与修复方向。<a class="link" href="https://arxiv.org/html/2505.08638"  target="_blank" rel="noopener"
+    >论文正文</a></p>
+<p>**本文工程建议：**错误记录至少关联事件位置、分类、证据与诊断结论。自动分析结果作为候选诊断，交由状态检查或人工复核确认。</p>
+<p>一条轨迹可以包含多个局部错误；发现错误位置不等于确定最早导致终局失败的根因。</p>
+<h3 id="15-τ-bench用环境状态验证结果用重复试验验证可靠性">1.5 τ-bench：用环境状态验证结果，用重复试验验证可靠性
+</h3><p><strong>论文：</strong><a class="link" href="https://arxiv.org/abs/2406.12045"  target="_blank" rel="noopener"
+    >τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains</a>。</p>
+<p>**核心观点：**Agent 的任务效果应由实际环境变化检验。论文让 Agent 在模拟用户、领域规则和工具环境之间交互，比较最终数据库状态与目标状态，并检查必要的信息传达。<a class="link" href="https://arxiv.org/html/2406.12045"  target="_blank" rel="noopener"
+    >论文正文</a></p>
+<p>**理论与实现机制：**同一任务允许不同交互路径，成功判断围绕目标结果。论文引入 <code>pass^k</code> 衡量多次尝试全部成功的可靠性，与“多次尝试中至少成功一次”的 <code>pass@k</code> 含义不同。<a class="link" href="https://arxiv.org/html/2406.12045"  target="_blank" rel="noopener"
+    >论文正文</a></p>
+<p>**本文工程建议：**对修改类任务分别核验目标对象、变更内容和完成状态，再重复运行统计波动。一次成功说明该次完成了目标，不能说明后续执行稳定。</p>
+<p>终局状态匹配不能覆盖所有过程约束。未取得必要确认、访问不应访问的对象等，应另设过程检查。</p>
+<h3 id="16-agentrr将观测轨迹转化为可复用经验">1.6 AgentRR：将观测轨迹转化为可复用经验
+</h3><p><strong>论文：</strong><a class="link" href="https://arxiv.org/abs/2505.17716"  target="_blank" rel="noopener"
+    >Get Experience from Practice: LLM Agents with Record &amp; Replay</a>。</p>
+<p>**核心观点：**执行记录除了用于诊断，还可以提炼为流程经验，在相似任务中复用。AgentRR 指 Agent Record &amp; Replay（智能体记录与回放）。<a class="link" href="https://arxiv.org/html/2505.17716"  target="_blank" rel="noopener"
+    >论文正文</a></p>
+<p>**理论与实现机制：**记录交互和决策轨迹，将其抽象为不同层次的经验，再根据新任务与环境生成具体操作。检查函数验证流程完整性、前置条件、参数约束和不变量。其理论基础是通过经验约束行动空间，并用检查机制核验复用过程。<a class="link" href="https://arxiv.org/html/2505.17716"  target="_blank" rel="noopener"
+    >论文正文</a></p>
+<p>**本文工程建议：**保留经验对应的原始轨迹、适用条件与检查规则。检查失败时重新规划或转人工处理。</p>
+<p>这里的回放是经验驱动执行，可能产生新操作，不等同于替换所有外部响应、严格复现历史故障的确定性调试。</p>
+<h3 id="17-模型评估器评分本身也需要观测">1.7 模型评估器：评分本身也需要观测
+</h3><p><strong>论文一：</strong><a class="link" href="https://arxiv.org/abs/2306.05685"  target="_blank" rel="noopener"
+    >Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena</a>。</p>
+<p>**核心观点与机制：**LLM-as-a-Judge（模型作为评估器）可以辅助评价开放式回答，但会受到答案位置、冗长程度、自我偏好和推理能力限制的影响。论文通过多轮问题、成对比较与人类偏好数据分析评估器一致性及偏差。<a class="link" href="https://arxiv.org/html/2306.05685"  target="_blank" rel="noopener"
+    >论文正文</a></p>
+<p>**本文工程建议：**记录评价标准、评估器版本与输入顺序；成对比较时交换顺序，并在人类标注样本上校准。表达质量评分应与工具执行结果分开。</p>
+<p><strong>论文二：</strong><a class="link" href="https://arxiv.org/abs/2609.02942"  target="_blank" rel="noopener"
+    >Judging LLM-as-a-Judge: Concerning Rubric Artifacts in LLM-based Automated Text Generation Evaluation</a>。</p>
+<p>**核心观点与机制：**论文检查仅凭评分标准文本预测评判结果的能力，并通过反事实扰动候选回答和评价条件，研究判决是否随证据变化。结果提示评价标准措辞本身可能携带与判决相关的信号。<a class="link" href="https://arxiv.org/html/2609.02942"  target="_blank" rel="noopener"
+    >论文正文</a></p>
+<p>**本文工程建议：**构造“正确回答改为错误”“满足条件改为违反条件”的对照样本，检查评分器是否相应改变判决。这是对评估器的测试，不能由 Agent 的总体得分替代。</p>
+<h3 id="18-单智能体观测架构证据诊断与验证分层">1.8 单智能体观测架构：证据、诊断与验证分层
+</h3><p>以下架构是本文综合建议，不是某篇论文提供的完整实现。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[用户任务与运行配置] --&gt; B[Agent 决策与模型调用]
+    B --&gt; C[工具请求与执行结果]
+    C --&gt; D[状态更新与结果核验]
+    D --&gt; B
+    B --&gt; E[结构化执行事件]
+    C --&gt; E
+    D --&gt; E
+    E --&gt; F[过程指标与异常检测]
+    E --&gt; G[轨迹分析与候选诊断]
+    D --&gt; H[任务结果评分]
+    G --&gt; I[人工复核或受控重跑]
+    I --&gt; J[回归样本与修复验证]
+    H --&gt; J
+</code></pre><p>建议使用 Trace（执行链路）关联一次任务，Span（执行片段）表示模型调用、工具执行或子任务。为并行操作保留父子关系，工具请求与工具响应通过调用标识匹配。</p>
+<p>下面的数据项是本文的建议字段，不是论文或标准统一规定的接口。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">数据组</th>
+          <th style="text-align: left">示例信息</th>
+          <th style="text-align: left">作用</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left">身份与关系</td>
+          <td style="text-align: left">任务、事件、父事件、调用标识</td>
+          <td style="text-align: left">重建调用结构</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">运行配置</td>
+          <td style="text-align: left">模型、提示词、工具与环境版本</td>
+          <td style="text-align: left">对比运行差异</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">决策输入</td>
+          <td style="text-align: left">可用工具、上下文与证据引用</td>
+          <td style="text-align: left">判断信息是否充分</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">执行结果</td>
+          <td style="text-align: left">参数、返回值、异常与耗时</td>
+          <td style="text-align: left">核验动作结果</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">状态证据</td>
+          <td style="text-align: left">检查点、对象版本与变更引用</td>
+          <td style="text-align: left">判断任务进展</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">评价数据</td>
+          <td style="text-align: left">规则版本、评分器版本与结论</td>
+          <td style="text-align: left">追踪评价变化</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>诊断界面应区分原始事件、规则检查、模型推断和人工结论。原始证据缺失时，应明确记录缺失范围，而不是以生成解释补齐事实。</p>
+<h3 id="19-回放与评估的实现边界">1.9 回放与评估的实现边界
+</h3><p>以下三种模式应分别设计：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">模式</th>
+          <th style="text-align: left">模型响应</th>
+          <th style="text-align: left">工具行为</th>
+          <th style="text-align: left">主要用途</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left">记录回放</td>
+          <td style="text-align: left">使用记录值</td>
+          <td style="text-align: left">返回记录值</td>
+          <td style="text-align: left">检查历史执行逻辑</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">受控重跑</td>
+          <td style="text-align: left">重新推理</td>
+          <td style="text-align: left">在模拟或隔离环境运行</td>
+          <td style="text-align: left">测试修复效果</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">经验复用</td>
+          <td style="text-align: left">根据经验重新决策</td>
+          <td style="text-align: left">在新环境执行</td>
+          <td style="text-align: left">提高类似任务效率</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>记录回放如果需要复现控制流，还要覆盖时钟、随机值、外部读取等非确定性边界。修改执行逻辑后，请求可能与原记录不再对应；回放器应报告分歧。固定模型版本和采样配置仍不足以保证完全复现。</p>
+<p>工程评估建议同时记录任务完成、子目标进展、重复可靠性、成本和诊断准确性。避免将“接口返回成功”直接等同于“业务任务完成”。</p>
+<h2 id="二多智能体的观测体系">二、多智能体的观测体系
+</h2><h3 id="21-从局部事件升级为协作与传播关系">2.1 从局部事件升级为协作与传播关系
+</h3><p>MAS（Multi-Agent System，多智能体系统）的观测需要保留每个 Agent 的执行证据，还要解释消息、任务和产物如何在角色之间流转。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">工作</th>
+          <th style="text-align: left">年份</th>
+          <th style="text-align: left">核心问题</th>
+          <th style="text-align: left">方法方向</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left">Who&amp;When</td>
+          <td style="text-align: left">2025</td>
+          <td style="text-align: left">哪个 Agent、哪个步骤导致失败</td>
+          <td style="text-align: left">标注数据与归因方法比较</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">CHIEF</td>
+          <td style="text-align: left">2026</td>
+          <td style="text-align: left">如何区分根因与传播症状</td>
+          <td style="text-align: left">分层因果图与反事实筛查</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">AgentForesight</td>
+          <td style="text-align: left">2026</td>
+          <td style="text-align: left">能否在任务结束前发现关键错误</td>
+          <td style="text-align: left">仅观察轨迹前缀的在线审计</td>
+      </tr>
+  </tbody>
+</table></div>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart LR
+    P[规划 Agent] --&gt;|委派任务| R[检索 Agent]
+    R --&gt;|证据及来源| W[写作 Agent]
+    W --&gt;|待验证结论| V[验证 Agent]
+    V --&gt;|反馈| P
+    R --&gt; E[事件与产物关系图]
+    W --&gt; E
+    V --&gt; E
+    P --&gt; E
+</code></pre><p>上述图是本文示例。仅把各角色日志按时间排序，会遗漏“哪条输出被哪个角色使用”。观测系统需要记录交接及依赖，而不是只增加 <code>agent_id</code>。</p>
+<h3 id="22-whowhen将失败归因定义为-agent-与步骤的联合定位">2.2 Who&amp;When：将失败归因定义为 Agent 与步骤的联合定位
+</h3><p><strong>论文：</strong><a class="link" href="https://arxiv.org/abs/2505.00212"  target="_blank" rel="noopener"
+    >Which Agent Causes Task Failures and When? On Automated Failure Attribution of LLM Multi-Agent Systems</a>。</p>
+<p>**核心观点：**失败归因需要同时识别责任 Agent 与关键错误步骤。最终报告出错的角色，未必是最早引入关键错误的角色。论文提供 Who&amp;When 数据及细粒度标注。<a class="link" href="https://arxiv.org/html/2505.00212"  target="_blank" rel="noopener"
+    >论文正文</a></p>
+<p>**理论与实现机制：**比较完整日志一次分析、逐步检查和二分搜索三种方法，并分别评价 Agent 定位与步骤定位。完整上下文有利于观察角色关系，细粒度检查有利于定位具体步骤，混合方法需要额外成本。实验展示精确归因仍然困难。<a class="link" href="https://arxiv.org/html/2505.00212"  target="_blank" rel="noopener"
+    >论文正文</a></p>
+<p>**本文工程建议：**诊断输出分别保存责任角色、步骤、错误类型与证据，并允许不确定结论。验证集合需包含“下游继承上游错误”的案例，防止只定位最后暴露问题的节点。</p>
+<p>自动归因的“责任”是修复执行流程的技术定位，不应直接解释为组织或人员责任。</p>
+<h3 id="23-chief用分层因果图组织失败归因">2.3 CHIEF：用分层因果图组织失败归因
+</h3><p><strong>论文：</strong><a class="link" href="https://arxiv.org/abs/2602.23701"  target="_blank" rel="noopener"
+    >From Flat Logs to Causal Graphs: Hierarchical Failure Attribution for LLM-based Multi-Agent Systems</a>。</p>
+<p>**核心观点：**错误沿控制与数据依赖传播，平铺日志难以揭示路径。CHIEF 将轨迹组织成分层因果图，再进行回溯和反事实筛查。<a class="link" href="https://arxiv.org/html/2602.23701"  target="_blank" rel="noopener"
+    >论文正文</a></p>
+<p>**理论与实现机制：**构造子任务与 Agent 执行节点，保留观测、思考、动作、结果信息；连接子任务、协作与步骤数据依赖。通过合成的虚拟判定器检查子任务并缩小候选范围，再根据控制、数据与偏离情况进行归因。<a class="link" href="https://arxiv.org/html/2602.23701"  target="_blank" rel="noopener"
+    >论文正文</a></p>
+<p>其关键理论问题是：在反事实轨迹中修正某一步，是否会改变终局失败。模型推断出的图和判定器不是完备的真实因果模型。</p>
+<p>**本文工程建议：**优先记录真实产物引用和消息依赖，将模型补出的关系标记为推断。论文采用逐步轮流行动的建模方式；生产中的并发、共享状态和竞争条件需要额外处理。</p>
+<h3 id="24-agentforesight从事后诊断转向在线审计">2.4 AgentForesight：从事后诊断转向在线审计
+</h3><p><strong>论文：</strong><a class="link" href="https://arxiv.org/abs/2605.08715"  target="_blank" rel="noopener"
+    >AgentForesight: Online Auditing for Early Failure Prediction in Multi-Agent Systems</a>。</p>
+<p>**核心观点：**完整轨迹有利于事后分析，但没有留下失败前的干预窗口。在线审计只能使用当前已经发生的轨迹前缀，并逐步输出继续或告警。<a class="link" href="https://arxiv.org/html/2605.08715"  target="_blank" rel="noopener"
+    >论文正文</a></p>
+<p>**理论与实现机制：**构建带安全前缀与关键错误位置标注的轨迹数据，通过由粗到细的强化学习训练审计器。先学习错误边界，再优化判决结构、时机和责任定位。审计器与执行系统分别承担观察和行动职责。<a class="link" href="https://arxiv.org/html/2605.08715"  target="_blank" rel="noopener"
+    >论文正文</a></p>
+<p>**本文工程建议：**先以旁路方式观测告警，再验证是否需要暂停或重新规划。评测必须包含成功轨迹，统计误报、漏报、检测延迟与审计成本，并禁止读取未来步骤。</p>
+<p>论文中“安全”的含义围绕任务轨迹是否包含关键错误，不能直接等同于已满足所有安全或隐私政策。</p>
+<h3 id="25-多智能体事件模型与依赖重建">2.5 多智能体事件模型与依赖重建
+</h3><p>以下是本文提出的工程模型，目的是让上面的归因与审计方法拥有足够证据。</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">对象</th>
+          <th style="text-align: left">应记录的信息</th>
+          <th style="text-align: left">支持的分析</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left">Agent 实例</td>
+          <td style="text-align: left">角色、配置版本、生命周期</td>
+          <td style="text-align: left">区分角色和具体运行实例</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">委派任务</td>
+          <td style="text-align: left">父任务、目标、约束、验收条件</td>
+          <td style="text-align: left">判断目标是否正确传递</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">消息交接</td>
+          <td style="text-align: left">消息标识、发送者、接收者、回复关系</td>
+          <td style="text-align: left">重建信息流</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">执行产物</td>
+          <td style="text-align: left">产物标识、版本、创建事件、来源引用</td>
+          <td style="text-align: left">追踪信息被谁采用</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">共享状态</td>
+          <td style="text-align: left">读取与写入版本、冲突结果</td>
+          <td style="text-align: left">分析过期读取或覆盖</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">调度事件</td>
+          <td style="text-align: left">入队、开始、完成、取消与等待</td>
+          <td style="text-align: left">分析停滞和关键路径</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>父子 Span 表达任务包含关系；跨角色产物引用表达数据依赖，两者不应混用。一个汇总 Agent 可能同时消费多个并行结果，单一父节点不足以表达全部来源。</p>
+<p>本文建议将事件组织为三类边：控制边表示委派与执行安排，数据边表示输入输出依赖，消息边表示交接与回复。时间先后只能作为辅助信息，不能单独证明因果。</p>
+<h3 id="26-示例错误如何从检索角色传播到最终报告">2.6 示例：错误如何从检索角色传播到最终报告
+</h3><p>以下为本文构造的工程例子，不是论文中的实验案例。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[规划：查询当前退款政策] --&gt; B[检索：返回旧版政策]
+    B --&gt; C[写作：引用旧版规则]
+    C --&gt; D[执行：生成不符合当前规则的方案]
+    D --&gt; E[验证：只检查格式，未核对政策版本]
+    E --&gt; F[最终结果错误]
+</code></pre><p>诊断至少需要政策来源、版本、发布时间、下游引用以及验证规则。候选问题包括检索采用旧资料、下游未核验时效和验证规则遗漏。</p>
+<p>不能仅凭示例断言只存在一个根因。本文建议在隔离环境中分别替换检索结果、增加版本校验、修正验证规则，重新运行受影响部分，并重复检查结果。若多个独立错误共同存在，应保留多因诊断，而不是强行选择一个角色。</p>
+<h3 id="27-多智能体观测指标与验证闭环">2.7 多智能体观测指标与验证闭环
+</h3><p>除了单智能体指标，本文建议增加协作维度：</p>
+<div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">指标组</th>
+          <th style="text-align: left">建议观测项</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left">任务交接</td>
+          <td style="text-align: left">约束丢失、验收失败、重复委派</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">数据一致性</td>
+          <td style="text-align: left">过期产物引用、共享状态冲突</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">执行效率</td>
+          <td style="text-align: left">等待耗时、关键路径、冗余工作</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">错误传播</td>
+          <td style="text-align: left">错误产物的消费范围与传播阶段</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">归因质量</td>
+          <td style="text-align: left">角色定位、步骤定位、联合正确性</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">在线审计</td>
+          <td style="text-align: left">误报、漏报、检测时机和额外成本</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>误报统计必须包含正常执行；否则只在失败轨迹上评估无法反映线上干预负担。根因验证与评分器校准应建立独立的标注集合，不能用同一个模型的诊断结果作为自己的正确答案。</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">flowchart TD
+    A[多 Agent 执行与协作事件] --&gt; B[重建任务、消息、产物依赖]
+    B --&gt; C[在线前缀审计]
+    B --&gt; D[终局结果验证]
+    D --&gt; E[失败轨迹归因]
+    E --&gt; F[候选角色、步骤与传播路径]
+    F --&gt; G[隔离验证或人工复核]
+    G --&gt; H[修复、回归与重新评估]
+    C --&gt; I[记录告警及后续处置]
+    I --&gt; H
+</code></pre><p>该图是本文的组合架构。监控、诊断与执行干预分别保留记录，便于判断效果改善究竟来自哪个环节。</p>
+<h3 id="28-两种体系的差异与建设顺序">2.8 两种体系的差异与建设顺序
+</h3><div class="table-wrapper"><table>
+  <thead>
+      <tr>
+          <th style="text-align: left">维度</th>
+          <th style="text-align: left">单智能体</th>
+          <th style="text-align: left">多智能体</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left">基本对象</td>
+          <td style="text-align: left">调用、状态、任务结果</td>
+          <td style="text-align: left">另加交接、委派与共享产物</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">诊断重点</td>
+          <td style="text-align: left">哪步偏离目标</td>
+          <td style="text-align: left">谁引入错误、谁传播错误</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">关系结构</td>
+          <td style="text-align: left">执行树与局部依赖</td>
+          <td style="text-align: left">跨角色控制与数据关系</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">重跑边界</td>
+          <td style="text-align: left">恢复局部状态与环境</td>
+          <td style="text-align: left">还需恢复依赖、版本与调度</td>
+      </tr>
+      <tr>
+          <td style="text-align: left">评价重点</td>
+          <td style="text-align: left">成功、进展与稳定性</td>
+          <td style="text-align: left">另加协作效率与联合归因</td>
+      </tr>
+  </tbody>
+</table></div>
+<p>本文建议先建设单 Agent 的事件采集与业务结果核验，再补充跨 Agent 消息、产物和状态版本。拥有足够证据后引入自动归因，最后通过旁路评测决定是否部署在线审计。</p>
+<h2 id="三常见高频面试题">三、常见高频面试题
+</h2><h3 id="31-可观测性与评估有什么区别">3.1 可观测性与评估有什么区别？
+</h3><p>**答：**可观测性保留并组织运行证据，评估依据标准判断行为和结果。Trace 是证据载体，任务成功率是评价结果。两者通过相同的任务标识关联，但不能互相替代。</p>
+<h3 id="32-为什么工具成功率高任务成功率仍然低">3.2 为什么工具成功率高，任务成功率仍然低？
+</h3><p>**答：**工具可以成功执行错误参数，或者修改错误对象。还可能完成了局部动作却遗漏最终目标。需要结合输入证据、业务状态和验收条件判断。</p>
+<h3 id="33-为什么多智能体观测不能只增加-agent_id">3.3 为什么多智能体观测不能只增加 agent_id？
+</h3><p>**答：**角色标识不能说明信息流。还需记录谁委派任务、谁消费哪个版本的产物、谁修改了共享状态，否则无法区分错误引入和错误传播。</p>
+<h3 id="34-发现第一条异常是否等于找到根因">3.4 发现第一条异常是否等于找到根因？
+</h3><p>**答：**异常可能被后续恢复，某个正常返回的动作也可能引入关键错误。归因需要结合依赖和结果，必要时用受控替换验证修正是否改变终局。</p>
+<h3 id="35-确定性回放与经验回放有什么区别">3.5 确定性回放与经验回放有什么区别？
+</h3><p>**答：**记录回放使用已保存的外部响应复现逻辑，经验回放根据抽象流程在新环境生成操作。AgentRR 主要研究后者；受控重跑则用于比较修复后的新行为。</p>
+<h3 id="36-如何评测在线审计器">3.6 如何评测在线审计器？
+</h3><p>**答：**仅提供当时可见的轨迹前缀，同时包含成功与失败任务。分别评价告警是否正确、位置是否准确、是否足够及时，以及误报与审计成本。完整失败日志上的事后定位成绩不能直接作为在线成绩。</p>
+<h2 id="四附录原始论文与工程资料">四、附录：原始论文与工程资料
+</h2><h3 id="41-单智能体部分的论文来源">4.1 单智能体部分的论文来源
+</h3><ul>
+<li><a class="link" href="https://arxiv.org/abs/2411.05285"  target="_blank" rel="noopener"
+    >AgentOps</a></li>
+<li><a class="link" href="https://arxiv.org/abs/2401.13178"  target="_blank" rel="noopener"
+    >AgentBoard</a></li>
+<li><a class="link" href="https://arxiv.org/abs/2505.08638"  target="_blank" rel="noopener"
+    >TRAIL</a></li>
+<li><a class="link" href="https://arxiv.org/abs/2406.12045"  target="_blank" rel="noopener"
+    >τ-bench</a></li>
+<li><a class="link" href="https://arxiv.org/abs/2505.17716"  target="_blank" rel="noopener"
+    >AgentRR</a></li>
+<li><a class="link" href="https://arxiv.org/abs/2306.05685"  target="_blank" rel="noopener"
+    >Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena</a></li>
+<li><a class="link" href="https://arxiv.org/abs/2609.02942"  target="_blank" rel="noopener"
+    >Judging LLM-as-a-Judge: Concerning Rubric Artifacts</a></li>
+</ul>
+<h3 id="42-多智能体部分的论文来源">4.2 多智能体部分的论文来源
+</h3><ul>
+<li><a class="link" href="https://arxiv.org/abs/2505.00212"  target="_blank" rel="noopener"
+    >Who&amp;When</a></li>
+<li><a class="link" href="https://arxiv.org/abs/2602.23701"  target="_blank" rel="noopener"
+    >CHIEF</a></li>
+<li><a class="link" href="https://arxiv.org/abs/2605.08715"  target="_blank" rel="noopener"
+    >AgentForesight</a></li>
+</ul>
+<p>本文查阅日期为 2026-10-09。正文链接可能指向修订版本，复现时应明确论文、代码、模型、数据与评测协议的版本。概念研究、基准和方法论文具有不同的证据范围；实验成绩不能自动转化为生产保证。</p>
+<h3 id="43-官方工程资料与相关文档">4.3 官方工程资料与相关文档
+</h3><ul>
+<li><a class="link" href="https://opentelemetry.io/docs/specs/semconv/gen-ai/"  target="_blank" rel="noopener"
+    >OpenTelemetry：生成式 AI 语义约定入口</a>：用于核对事件和追踪语义，属于工程规范。</li>
+<li><a class="link" href="https://github.com/hkust-nlp/AgentBoard"  target="_blank" rel="noopener"
+    >AgentBoard 官方实现</a>：过程评估与分析框架。</li>
+<li><a class="link" href="https://github.com/sierra-research/tau-bench"  target="_blank" rel="noopener"
+    >τ-bench 官方实现</a>：交互环境、任务与评测实现。</li>
+<li><a class="link" href="https://github.com/mingyin1/Agents_Failure_Attribution"  target="_blank" rel="noopener"
+    >Who&amp;When 官方实现与数据</a>：失败归因研究材料。</li>
+<li><a class="link" href="../ai/agent/11-agent-observability-evaluation.md" >AI Agent 可观测性与评估</a>：本博客的基础介绍。</li>
+<li><a class="link" href="agent-memory-papers.md" >Agent Memory 论文解读</a>：状态、事实与经验维护的相关研究。</li>
+</ul>
+<p>可验证的事件与依赖关系，是从运行记录走向故障定位、可靠性评估和修复验证的基础。</p>
+
+</section>
+
+
+    <footer class="article-footer">
+    
+    <section class="article-tags">
+        
+            <a href="/tags/ai/">Ai</a>
+        
+            <a href="/tags/agent/">Agent</a>
+        
+            <a href="/tags/observability/">Observability</a>
+        
+            <a href="/tags/evaluation/">Evaluation</a>
+        
+            <a href="/tags/paper/">Paper</a>
+        
+    </section>
+
+
+    </footer>
+
+
+    
+</article>
+
+    
+
+    
+
+<aside class="related-content--wrapper">
+    <h2 class="section-title">Related content</h2>
+    <div class="related-content">
+        <div class="flex article-list--tile">
+            
+                
+<article class="">
+    <a href="/p/agent-memory-%E8%AE%BA%E6%96%87%E8%A7%A3%E8%AF%BB%E5%85%AB%E7%AF%87%E4%BB%A3%E8%A1%A8%E5%B7%A5%E4%BD%9C%E7%9A%84%E6%A0%B8%E5%BF%83%E8%A7%82%E7%82%B9%E5%AE%9E%E7%8E%B0%E6%9C%BA%E5%88%B6%E4%B8%8E%E5%B7%A5%E7%A8%8B%E5%90%AF%E7%A4%BA/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">Agent Memory 论文解读：八篇代表工作的核心观点、实现机制与工程启示</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E8%AE%BA%E6%96%87%E7%B2%BE%E8%AF%BBmetagpt-meta-programming-for-a-multi-agent-collaborative-framework/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">论文精读：MetaGPT: Meta Programming for A Multi-Agent Collaborative Framework</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E8%AE%BA%E6%96%87%E7%B2%BE%E8%AF%BBattention-is-all-you-need/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">论文精读：Attention Is All You Need</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/github-%E4%B8%8A-agent-memory-%E7%9A%84%E5%AE%9E%E9%99%85%E5%B7%A5%E7%A8%8B%E5%AE%9E%E7%8E%B0mem0graphitiletta-codelangmem-%E4%B8%8E-a-mem/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">GitHub 上 Agent Memory 的实际工程实现：Mem0、Graphiti、Letta Code、LangMem 与 A-MEM</h2>
+        </div>
+    </a>
+</article>
+
+            
+                
+<article class="">
+    <a href="/p/%E8%AE%BA%E6%96%87%E7%B2%BE%E8%AF%BBa-programming-paradigm-for-spatiotemporal-composability%E7%90%86%E8%A7%A3-deepseek-harness-%E8%83%8C%E5%90%8E%E7%9A%84-cordis-%E8%8C%83%E5%BC%8F/">
+        
+        
+
+        <div class="article-details">
+            <h2 class="article-title">论文精读：A Programming Paradigm for Spatiotemporal Composability——理解 DeepSeek Harness 背后的 Cordis 范式</h2>
+        </div>
+    </a>
+</article>
+
+            
+        </div>
+    </div>
+</aside>
+
+     
+    
+        
+    <script src="https://utteranc.es/client.js" 
+        repo=""
+        issue-term="pathname"
+        
+        crossorigin="anonymous"
+        async
+        >
+</script>
+
+<style>
+    .utterances {
+        max-width: unset;
+    }
+</style>
+
+<script>
+    let utterancesLoaded = false;
+
+    function setUtterancesTheme(theme) {
+        let utterances = document.querySelector('.utterances iframe');
+        if (utterances) {
+            utterances.contentWindow.postMessage(
+                {
+                    type: 'set-theme',
+                    theme: `github-${theme}`
+                },
+                'https://utteranc.es'
+            );
+        }
+    }
+
+    addEventListener('message', event => {
+        if (event.origin !== 'https://utteranc.es') return;
+
+        
+        utterancesLoaded = true;
+        setUtterancesTheme(document.documentElement.dataset.scheme)
+    });
+
+    window.addEventListener('onColorSchemeChange', (e) => {
+        if (!utterancesLoaded) return;
+        setUtterancesTheme(e.detail)
+    })
+</script>
+
+
+    
+
+    <footer class="site-footer">
+    <section class="copyright">
+        &copy; 
+        
+            2020 - 
+        
+        2026 Agsol
+    </section>
+    
+    <section class="powerby">
+        Built with <a href="https://gohugo.io/" target="_blank" rel="noopener">Hugo</a> <br />
+        Theme <b><a href="https://github.com/CaiJimmy/hugo-theme-stack" target="_blank" rel="noopener" data-version="3.31.0">Stack</a></b> designed by <a href="https://jimmycai.com" target="_blank" rel="noopener">Jimmy</a>
+    </section>
+</footer>
+
+
+    
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    
+    <div class="pswp__bg"></div>
+
+    
+    <div class="pswp__scroll-wrap">
+
+        
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                
+                
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"integrity="sha256-ePwmChbbvXbsO02lbM3HoHbSHTHFAeChekF1xKJdleo="crossorigin="anonymous"
+                defer
+                >
+            </script><script 
+                src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"integrity="sha256-UKkzOn/w1mBxRmLLGrSeyB4e1xbrp4xylgAWb3M42pU="crossorigin="anonymous"
+                defer
+                >
+            </script><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css"crossorigin="anonymous"
+            ><link 
+                rel="stylesheet" 
+                href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css"crossorigin="anonymous"
+            >
+
+            </main>
+        </div>
+        <script 
+                src="https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js"integrity="sha256-awcR2jno4kI5X0zL8ex0vi2z&#43;KMkF24hUW8WePSA9HM="crossorigin="anonymous"
+                
+                >
+            </script><script type="text/javascript" src="/ts/main.1e9a3bafd846ced4c345d084b355fb8c7bae75701c338f8a1f8a82c780137826.js" defer></script>
+<script>
+    (function () {
+        const customFont = document.createElement('link');
+        customFont.href = "https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap";
+
+        customFont.type = "text/css";
+        customFont.rel = "stylesheet";
+
+        document.head.appendChild(customFont);
+    }());
+</script>
+
+    </body>
+</html>

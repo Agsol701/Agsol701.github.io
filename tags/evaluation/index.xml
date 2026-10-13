@@ -1,0 +1,498 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+    <channel>
+        <title>Evaluation on Agsol Blog</title>
+        <link>https://Agsol701.github.io/tags/evaluation/</link>
+        <description>Recent content in Evaluation on Agsol Blog</description>
+        <generator>Hugo -- gohugo.io</generator>
+        <language>en</language>
+        <copyright>Agsol</copyright>
+        <lastBuildDate>Fri, 09 Oct 2026 00:00:00 +0000</lastBuildDate><atom:link href="https://Agsol701.github.io/tags/evaluation/index.xml" rel="self" type="application/rss+xml" /><item>
+        <title>智能体观测论文解读：单智能体与多智能体的观测体系、失败归因与评估理论</title>
+        <link>https://Agsol701.github.io/p/%E6%99%BA%E8%83%BD%E4%BD%93%E8%A7%82%E6%B5%8B%E8%AE%BA%E6%96%87%E8%A7%A3%E8%AF%BB%E5%8D%95%E6%99%BA%E8%83%BD%E4%BD%93%E4%B8%8E%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93%E7%9A%84%E8%A7%82%E6%B5%8B%E4%BD%93%E7%B3%BB%E5%A4%B1%E8%B4%A5%E5%BD%92%E5%9B%A0%E4%B8%8E%E8%AF%84%E4%BC%B0%E7%90%86%E8%AE%BA/</link>
+        <pubDate>Fri, 09 Oct 2026 00:00:00 +0000</pubDate>
+        
+        <guid>https://Agsol701.github.io/p/%E6%99%BA%E8%83%BD%E4%BD%93%E8%A7%82%E6%B5%8B%E8%AE%BA%E6%96%87%E8%A7%A3%E8%AF%BB%E5%8D%95%E6%99%BA%E8%83%BD%E4%BD%93%E4%B8%8E%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93%E7%9A%84%E8%A7%82%E6%B5%8B%E4%BD%93%E7%B3%BB%E5%A4%B1%E8%B4%A5%E5%BD%92%E5%9B%A0%E4%B8%8E%E8%AF%84%E4%BC%B0%E7%90%86%E8%AE%BA/</guid>
+        <description>&lt;h2 id=&#34;写在前面&#34;&gt;写在前面
+&lt;/h2&gt;&lt;p&gt;智能体（Agent）没有完成任务，可能是工具请求报错，也可能是工具执行成功却修改了错误对象。多个 Agent 协作时，错误还可能从一个角色传播到另一个角色，直到最终输出才显现。&lt;/p&gt;
+&lt;p&gt;观测体系需要保留可核验的证据，回答三个问题：发生了什么、问题从哪里开始、修改是否改善了任务结果。本文围绕十篇相关论文，分为单智能体和多智能体两个大的部分，分别说明核心观点、理论依据、实现机制与工程启示。&lt;/p&gt;
+&lt;p&gt;LLM（Large Language Model，大语言模型）是文中的推理与生成组件。本文所说的可观测性（Observability），指通过运行事件、状态与结果理解系统行为；它不意味着可以直接读取模型内部的真实决策原因。模型生成的解释需要与工具结果、环境状态和后续验证区分。&lt;/p&gt;
+&lt;p&gt;本文是面向开发者的选题式论文整理，不是完整文献综述。论文方法与本文提出的工程设计会分别标明，也不将不同基准上的性能整理为统一排行榜。&lt;/p&gt;
+&lt;h2 id=&#34;一单智能体的观测体系&#34;&gt;一、单智能体的观测体系
+&lt;/h2&gt;&lt;h3 id=&#34;11-观测对象与论文地图&#34;&gt;1.1 观测对象与论文地图
+&lt;/h3&gt;&lt;p&gt;单智能体可以有多轮决策、并行工具调用和重试，因此观测对象应覆盖整次任务，而不只是一条模型响应。&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;工作&lt;/th&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;年份&lt;/th&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;类型&lt;/th&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;支持的观测能力&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;AgentOps&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;2024&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;分类研究&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;定义应追踪的对象及关系&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;AgentBoard&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;2024&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;评测框架&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;衡量过程进展与能力瓶颈&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;TRAIL&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;2025&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;错误分类与基准&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;检测并定位轨迹中的问题&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;τ-bench&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;2024&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;交互评测基准&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;验证最终状态与重复可靠性&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;AgentRR&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;2025&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;经验复用框架&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;从轨迹提炼可验证流程&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;MT-Bench / Chatbot Arena 评估论文&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;2023&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;评估方法研究&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;校准模型评估器及偏差&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;Rubric Artifacts&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;2026&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;评估可靠性研究&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;检查评分标准对判决的影响&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;年份按 arXiv 首次公开时间记载。这些方法并非只能用于单智能体；这里按其在单智能体观测中的主要作用组织。&lt;/p&gt;
+&lt;h3 id=&#34;12-agentops建立观测对象与生命周期模型&#34;&gt;1.2 AgentOps：建立观测对象与生命周期模型
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;论文：&lt;/strong&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2411.05285&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;AgentOps: Enabling Observability of LLM Agents&lt;/a&gt;。&lt;/p&gt;
+&lt;p&gt;**核心观点：**Agent 的观测要覆盖目标、计划、工具和运行产物，不能仅沿用模型调用的成本与延迟指标。论文通过对工具的系统映射研究，整理观测对象及其关系。&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/html/2411.05285&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;论文正文&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;**理论与实现机制：**设计期对象与运行期产物相互关联：模型、提示词、工具和上下文配置影响运行时的目标处理、计划与执行。观测基础设施沿生命周期追踪相关数据，将监控、日志、追踪、评价和反馈关联起来。贡献主要是分类体系与参考模型，并非一个已证明可以自动修复故障的算法。&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/html/2411.05285&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;论文正文&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;**本文工程建议：**每次任务关联模型配置、提示词版本、工具定义版本和环境版本，再记录决策、执行与结果事件。单有 &lt;code&gt;trace_id&lt;/code&gt; 只能关联日志，仍需对象版本解释“为什么同一个任务在两次发布后表现不同”。&lt;/p&gt;
+&lt;h3 id=&#34;13-agentboard从最终成功率转向过程进展&#34;&gt;1.3 AgentBoard：从最终成功率转向过程进展
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;论文：&lt;/strong&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2401.13178&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;AgentBoard: An Analytical Evaluation Board of Multi-turn LLM Agents&lt;/a&gt;。&lt;/p&gt;
+&lt;p&gt;**核心观点：**最终失败会掩盖有效进展。论文通过细粒度进展指标和分析面板，观察 Agent 在多轮、部分可观测环境中的行为。&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/html/2401.13178&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;论文正文&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;**理论与实现机制：**任务具有可检查的子目标，系统根据环境反馈评估目标推进，并结合动作有效性、任务难度及交互轨迹分析瓶颈。过程进展与最终成功分别度量，提供比单一终局指标更细的诊断信息。&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/html/2401.13178&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;论文正文&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;**本文工程建议：**将“确认订单、验证条件、完成修改、核验结果”定义成业务检查点。记录达到各检查点的情况，并定位在哪个阶段停滞。检查点完成应由工具证据或状态验证，避免只采用模型的完成声明。&lt;/p&gt;
+&lt;p&gt;进展提高仍可能没有改善最终任务结果，因此两个指标必须并列查看。&lt;/p&gt;
+&lt;h3 id=&#34;14-trail建立错误分类与轨迹定位基准&#34;&gt;1.4 TRAIL：建立错误分类与轨迹定位基准
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;论文：&lt;/strong&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2505.08638&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;TRAIL: Trace Reasoning and Agentic Issue Localization&lt;/a&gt;。&lt;/p&gt;
+&lt;p&gt;**核心观点：**评价轨迹分析器时，不应只问“是否失败”，还要检查它能否识别问题类别和所在位置。论文将错误组织为推理、规划与协调、系统执行三个主要领域。&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/html/2505.08638&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;论文正文&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;**理论与实现机制：**论文整理细粒度错误分类，并构建人工标注的结构化执行轨迹基准。分析器读取轨迹，输出错误位置、类型与解释，再对照标注评估。工具选错、结果误解、上下文处理失败和服务错误等具有不同的诊断与修复方向。&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/html/2505.08638&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;论文正文&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;**本文工程建议：**错误记录至少关联事件位置、分类、证据与诊断结论。自动分析结果作为候选诊断，交由状态检查或人工复核确认。&lt;/p&gt;
+&lt;p&gt;一条轨迹可以包含多个局部错误；发现错误位置不等于确定最早导致终局失败的根因。&lt;/p&gt;
+&lt;h3 id=&#34;15-τ-bench用环境状态验证结果用重复试验验证可靠性&#34;&gt;1.5 τ-bench：用环境状态验证结果，用重复试验验证可靠性
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;论文：&lt;/strong&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2406.12045&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains&lt;/a&gt;。&lt;/p&gt;
+&lt;p&gt;**核心观点：**Agent 的任务效果应由实际环境变化检验。论文让 Agent 在模拟用户、领域规则和工具环境之间交互，比较最终数据库状态与目标状态，并检查必要的信息传达。&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/html/2406.12045&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;论文正文&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;**理论与实现机制：**同一任务允许不同交互路径，成功判断围绕目标结果。论文引入 &lt;code&gt;pass^k&lt;/code&gt; 衡量多次尝试全部成功的可靠性，与“多次尝试中至少成功一次”的 &lt;code&gt;pass@k&lt;/code&gt; 含义不同。&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/html/2406.12045&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;论文正文&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;**本文工程建议：**对修改类任务分别核验目标对象、变更内容和完成状态，再重复运行统计波动。一次成功说明该次完成了目标，不能说明后续执行稳定。&lt;/p&gt;
+&lt;p&gt;终局状态匹配不能覆盖所有过程约束。未取得必要确认、访问不应访问的对象等，应另设过程检查。&lt;/p&gt;
+&lt;h3 id=&#34;16-agentrr将观测轨迹转化为可复用经验&#34;&gt;1.6 AgentRR：将观测轨迹转化为可复用经验
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;论文：&lt;/strong&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2505.17716&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Get Experience from Practice: LLM Agents with Record &amp;amp; Replay&lt;/a&gt;。&lt;/p&gt;
+&lt;p&gt;**核心观点：**执行记录除了用于诊断，还可以提炼为流程经验，在相似任务中复用。AgentRR 指 Agent Record &amp;amp; Replay（智能体记录与回放）。&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/html/2505.17716&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;论文正文&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;**理论与实现机制：**记录交互和决策轨迹，将其抽象为不同层次的经验，再根据新任务与环境生成具体操作。检查函数验证流程完整性、前置条件、参数约束和不变量。其理论基础是通过经验约束行动空间，并用检查机制核验复用过程。&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/html/2505.17716&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;论文正文&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;**本文工程建议：**保留经验对应的原始轨迹、适用条件与检查规则。检查失败时重新规划或转人工处理。&lt;/p&gt;
+&lt;p&gt;这里的回放是经验驱动执行，可能产生新操作，不等同于替换所有外部响应、严格复现历史故障的确定性调试。&lt;/p&gt;
+&lt;h3 id=&#34;17-模型评估器评分本身也需要观测&#34;&gt;1.7 模型评估器：评分本身也需要观测
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;论文一：&lt;/strong&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2306.05685&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena&lt;/a&gt;。&lt;/p&gt;
+&lt;p&gt;**核心观点与机制：**LLM-as-a-Judge（模型作为评估器）可以辅助评价开放式回答，但会受到答案位置、冗长程度、自我偏好和推理能力限制的影响。论文通过多轮问题、成对比较与人类偏好数据分析评估器一致性及偏差。&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/html/2306.05685&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;论文正文&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;**本文工程建议：**记录评价标准、评估器版本与输入顺序；成对比较时交换顺序，并在人类标注样本上校准。表达质量评分应与工具执行结果分开。&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;论文二：&lt;/strong&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2609.02942&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Judging LLM-as-a-Judge: Concerning Rubric Artifacts in LLM-based Automated Text Generation Evaluation&lt;/a&gt;。&lt;/p&gt;
+&lt;p&gt;**核心观点与机制：**论文检查仅凭评分标准文本预测评判结果的能力，并通过反事实扰动候选回答和评价条件，研究判决是否随证据变化。结果提示评价标准措辞本身可能携带与判决相关的信号。&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/html/2609.02942&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;论文正文&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;**本文工程建议：**构造“正确回答改为错误”“满足条件改为违反条件”的对照样本，检查评分器是否相应改变判决。这是对评估器的测试，不能由 Agent 的总体得分替代。&lt;/p&gt;
+&lt;h3 id=&#34;18-单智能体观测架构证据诊断与验证分层&#34;&gt;1.8 单智能体观测架构：证据、诊断与验证分层
+&lt;/h3&gt;&lt;p&gt;以下架构是本文综合建议，不是某篇论文提供的完整实现。&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart TD
+    A[用户任务与运行配置] --&amp;gt; B[Agent 决策与模型调用]
+    B --&amp;gt; C[工具请求与执行结果]
+    C --&amp;gt; D[状态更新与结果核验]
+    D --&amp;gt; B
+    B --&amp;gt; E[结构化执行事件]
+    C --&amp;gt; E
+    D --&amp;gt; E
+    E --&amp;gt; F[过程指标与异常检测]
+    E --&amp;gt; G[轨迹分析与候选诊断]
+    D --&amp;gt; H[任务结果评分]
+    G --&amp;gt; I[人工复核或受控重跑]
+    I --&amp;gt; J[回归样本与修复验证]
+    H --&amp;gt; J
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;建议使用 Trace（执行链路）关联一次任务，Span（执行片段）表示模型调用、工具执行或子任务。为并行操作保留父子关系，工具请求与工具响应通过调用标识匹配。&lt;/p&gt;
+&lt;p&gt;下面的数据项是本文的建议字段，不是论文或标准统一规定的接口。&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;数据组&lt;/th&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;示例信息&lt;/th&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;作用&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;身份与关系&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;任务、事件、父事件、调用标识&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;重建调用结构&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;运行配置&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;模型、提示词、工具与环境版本&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;对比运行差异&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;决策输入&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;可用工具、上下文与证据引用&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;判断信息是否充分&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;执行结果&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;参数、返回值、异常与耗时&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;核验动作结果&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;状态证据&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;检查点、对象版本与变更引用&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;判断任务进展&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;评价数据&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;规则版本、评分器版本与结论&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;追踪评价变化&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;诊断界面应区分原始事件、规则检查、模型推断和人工结论。原始证据缺失时，应明确记录缺失范围，而不是以生成解释补齐事实。&lt;/p&gt;
+&lt;h3 id=&#34;19-回放与评估的实现边界&#34;&gt;1.9 回放与评估的实现边界
+&lt;/h3&gt;&lt;p&gt;以下三种模式应分别设计：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;模式&lt;/th&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;模型响应&lt;/th&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;工具行为&lt;/th&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;主要用途&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;记录回放&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;使用记录值&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;返回记录值&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;检查历史执行逻辑&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;受控重跑&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;重新推理&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;在模拟或隔离环境运行&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;测试修复效果&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;经验复用&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;根据经验重新决策&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;在新环境执行&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;提高类似任务效率&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;记录回放如果需要复现控制流，还要覆盖时钟、随机值、外部读取等非确定性边界。修改执行逻辑后，请求可能与原记录不再对应；回放器应报告分歧。固定模型版本和采样配置仍不足以保证完全复现。&lt;/p&gt;
+&lt;p&gt;工程评估建议同时记录任务完成、子目标进展、重复可靠性、成本和诊断准确性。避免将“接口返回成功”直接等同于“业务任务完成”。&lt;/p&gt;
+&lt;h2 id=&#34;二多智能体的观测体系&#34;&gt;二、多智能体的观测体系
+&lt;/h2&gt;&lt;h3 id=&#34;21-从局部事件升级为协作与传播关系&#34;&gt;2.1 从局部事件升级为协作与传播关系
+&lt;/h3&gt;&lt;p&gt;MAS（Multi-Agent System，多智能体系统）的观测需要保留每个 Agent 的执行证据，还要解释消息、任务和产物如何在角色之间流转。&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;工作&lt;/th&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;年份&lt;/th&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;核心问题&lt;/th&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;方法方向&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;Who&amp;amp;When&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;2025&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;哪个 Agent、哪个步骤导致失败&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;标注数据与归因方法比较&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;CHIEF&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;2026&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;如何区分根因与传播症状&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;分层因果图与反事实筛查&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;AgentForesight&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;2026&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;能否在任务结束前发现关键错误&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;仅观察轨迹前缀的在线审计&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart LR
+    P[规划 Agent] --&amp;gt;|委派任务| R[检索 Agent]
+    R --&amp;gt;|证据及来源| W[写作 Agent]
+    W --&amp;gt;|待验证结论| V[验证 Agent]
+    V --&amp;gt;|反馈| P
+    R --&amp;gt; E[事件与产物关系图]
+    W --&amp;gt; E
+    V --&amp;gt; E
+    P --&amp;gt; E
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;上述图是本文示例。仅把各角色日志按时间排序，会遗漏“哪条输出被哪个角色使用”。观测系统需要记录交接及依赖，而不是只增加 &lt;code&gt;agent_id&lt;/code&gt;。&lt;/p&gt;
+&lt;h3 id=&#34;22-whowhen将失败归因定义为-agent-与步骤的联合定位&#34;&gt;2.2 Who&amp;amp;When：将失败归因定义为 Agent 与步骤的联合定位
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;论文：&lt;/strong&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2505.00212&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Which Agent Causes Task Failures and When? On Automated Failure Attribution of LLM Multi-Agent Systems&lt;/a&gt;。&lt;/p&gt;
+&lt;p&gt;**核心观点：**失败归因需要同时识别责任 Agent 与关键错误步骤。最终报告出错的角色，未必是最早引入关键错误的角色。论文提供 Who&amp;amp;When 数据及细粒度标注。&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/html/2505.00212&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;论文正文&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;**理论与实现机制：**比较完整日志一次分析、逐步检查和二分搜索三种方法，并分别评价 Agent 定位与步骤定位。完整上下文有利于观察角色关系，细粒度检查有利于定位具体步骤，混合方法需要额外成本。实验展示精确归因仍然困难。&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/html/2505.00212&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;论文正文&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;**本文工程建议：**诊断输出分别保存责任角色、步骤、错误类型与证据，并允许不确定结论。验证集合需包含“下游继承上游错误”的案例，防止只定位最后暴露问题的节点。&lt;/p&gt;
+&lt;p&gt;自动归因的“责任”是修复执行流程的技术定位，不应直接解释为组织或人员责任。&lt;/p&gt;
+&lt;h3 id=&#34;23-chief用分层因果图组织失败归因&#34;&gt;2.3 CHIEF：用分层因果图组织失败归因
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;论文：&lt;/strong&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2602.23701&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;From Flat Logs to Causal Graphs: Hierarchical Failure Attribution for LLM-based Multi-Agent Systems&lt;/a&gt;。&lt;/p&gt;
+&lt;p&gt;**核心观点：**错误沿控制与数据依赖传播，平铺日志难以揭示路径。CHIEF 将轨迹组织成分层因果图，再进行回溯和反事实筛查。&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/html/2602.23701&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;论文正文&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;**理论与实现机制：**构造子任务与 Agent 执行节点，保留观测、思考、动作、结果信息；连接子任务、协作与步骤数据依赖。通过合成的虚拟判定器检查子任务并缩小候选范围，再根据控制、数据与偏离情况进行归因。&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/html/2602.23701&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;论文正文&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;其关键理论问题是：在反事实轨迹中修正某一步，是否会改变终局失败。模型推断出的图和判定器不是完备的真实因果模型。&lt;/p&gt;
+&lt;p&gt;**本文工程建议：**优先记录真实产物引用和消息依赖，将模型补出的关系标记为推断。论文采用逐步轮流行动的建模方式；生产中的并发、共享状态和竞争条件需要额外处理。&lt;/p&gt;
+&lt;h3 id=&#34;24-agentforesight从事后诊断转向在线审计&#34;&gt;2.4 AgentForesight：从事后诊断转向在线审计
+&lt;/h3&gt;&lt;p&gt;&lt;strong&gt;论文：&lt;/strong&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2605.08715&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;AgentForesight: Online Auditing for Early Failure Prediction in Multi-Agent Systems&lt;/a&gt;。&lt;/p&gt;
+&lt;p&gt;**核心观点：**完整轨迹有利于事后分析，但没有留下失败前的干预窗口。在线审计只能使用当前已经发生的轨迹前缀，并逐步输出继续或告警。&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/html/2605.08715&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;论文正文&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;**理论与实现机制：**构建带安全前缀与关键错误位置标注的轨迹数据，通过由粗到细的强化学习训练审计器。先学习错误边界，再优化判决结构、时机和责任定位。审计器与执行系统分别承担观察和行动职责。&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/html/2605.08715&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;论文正文&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;**本文工程建议：**先以旁路方式观测告警，再验证是否需要暂停或重新规划。评测必须包含成功轨迹，统计误报、漏报、检测延迟与审计成本，并禁止读取未来步骤。&lt;/p&gt;
+&lt;p&gt;论文中“安全”的含义围绕任务轨迹是否包含关键错误，不能直接等同于已满足所有安全或隐私政策。&lt;/p&gt;
+&lt;h3 id=&#34;25-多智能体事件模型与依赖重建&#34;&gt;2.5 多智能体事件模型与依赖重建
+&lt;/h3&gt;&lt;p&gt;以下是本文提出的工程模型，目的是让上面的归因与审计方法拥有足够证据。&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;对象&lt;/th&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;应记录的信息&lt;/th&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;支持的分析&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;Agent 实例&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;角色、配置版本、生命周期&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;区分角色和具体运行实例&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;委派任务&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;父任务、目标、约束、验收条件&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;判断目标是否正确传递&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;消息交接&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;消息标识、发送者、接收者、回复关系&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;重建信息流&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;执行产物&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;产物标识、版本、创建事件、来源引用&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;追踪信息被谁采用&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;共享状态&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;读取与写入版本、冲突结果&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;分析过期读取或覆盖&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;调度事件&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;入队、开始、完成、取消与等待&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;分析停滞和关键路径&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;父子 Span 表达任务包含关系；跨角色产物引用表达数据依赖，两者不应混用。一个汇总 Agent 可能同时消费多个并行结果，单一父节点不足以表达全部来源。&lt;/p&gt;
+&lt;p&gt;本文建议将事件组织为三类边：控制边表示委派与执行安排，数据边表示输入输出依赖，消息边表示交接与回复。时间先后只能作为辅助信息，不能单独证明因果。&lt;/p&gt;
+&lt;h3 id=&#34;26-示例错误如何从检索角色传播到最终报告&#34;&gt;2.6 示例：错误如何从检索角色传播到最终报告
+&lt;/h3&gt;&lt;p&gt;以下为本文构造的工程例子，不是论文中的实验案例。&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart TD
+    A[规划：查询当前退款政策] --&amp;gt; B[检索：返回旧版政策]
+    B --&amp;gt; C[写作：引用旧版规则]
+    C --&amp;gt; D[执行：生成不符合当前规则的方案]
+    D --&amp;gt; E[验证：只检查格式，未核对政策版本]
+    E --&amp;gt; F[最终结果错误]
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;诊断至少需要政策来源、版本、发布时间、下游引用以及验证规则。候选问题包括检索采用旧资料、下游未核验时效和验证规则遗漏。&lt;/p&gt;
+&lt;p&gt;不能仅凭示例断言只存在一个根因。本文建议在隔离环境中分别替换检索结果、增加版本校验、修正验证规则，重新运行受影响部分，并重复检查结果。若多个独立错误共同存在，应保留多因诊断，而不是强行选择一个角色。&lt;/p&gt;
+&lt;h3 id=&#34;27-多智能体观测指标与验证闭环&#34;&gt;2.7 多智能体观测指标与验证闭环
+&lt;/h3&gt;&lt;p&gt;除了单智能体指标，本文建议增加协作维度：&lt;/p&gt;
+&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;指标组&lt;/th&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;建议观测项&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;任务交接&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;约束丢失、验收失败、重复委派&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;数据一致性&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;过期产物引用、共享状态冲突&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;执行效率&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;等待耗时、关键路径、冗余工作&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;错误传播&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;错误产物的消费范围与传播阶段&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;归因质量&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;角色定位、步骤定位、联合正确性&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;在线审计&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;误报、漏报、检测时机和额外成本&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;误报统计必须包含正常执行；否则只在失败轨迹上评估无法反映线上干预负担。根因验证与评分器校准应建立独立的标注集合，不能用同一个模型的诊断结果作为自己的正确答案。&lt;/p&gt;
+&lt;pre tabindex=&#34;0&#34;&gt;&lt;code class=&#34;language-mermaid&#34; data-lang=&#34;mermaid&#34;&gt;flowchart TD
+    A[多 Agent 执行与协作事件] --&amp;gt; B[重建任务、消息、产物依赖]
+    B --&amp;gt; C[在线前缀审计]
+    B --&amp;gt; D[终局结果验证]
+    D --&amp;gt; E[失败轨迹归因]
+    E --&amp;gt; F[候选角色、步骤与传播路径]
+    F --&amp;gt; G[隔离验证或人工复核]
+    G --&amp;gt; H[修复、回归与重新评估]
+    C --&amp;gt; I[记录告警及后续处置]
+    I --&amp;gt; H
+&lt;/code&gt;&lt;/pre&gt;&lt;p&gt;该图是本文的组合架构。监控、诊断与执行干预分别保留记录，便于判断效果改善究竟来自哪个环节。&lt;/p&gt;
+&lt;h3 id=&#34;28-两种体系的差异与建设顺序&#34;&gt;2.8 两种体系的差异与建设顺序
+&lt;/h3&gt;&lt;table&gt;
+  &lt;thead&gt;
+      &lt;tr&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;维度&lt;/th&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;单智能体&lt;/th&gt;
+          &lt;th style=&#34;text-align: left&#34;&gt;多智能体&lt;/th&gt;
+      &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;基本对象&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;调用、状态、任务结果&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;另加交接、委派与共享产物&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;诊断重点&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;哪步偏离目标&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;谁引入错误、谁传播错误&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;关系结构&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;执行树与局部依赖&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;跨角色控制与数据关系&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;重跑边界&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;恢复局部状态与环境&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;还需恢复依赖、版本与调度&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;评价重点&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;成功、进展与稳定性&lt;/td&gt;
+          &lt;td style=&#34;text-align: left&#34;&gt;另加协作效率与联合归因&lt;/td&gt;
+      &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;本文建议先建设单 Agent 的事件采集与业务结果核验，再补充跨 Agent 消息、产物和状态版本。拥有足够证据后引入自动归因，最后通过旁路评测决定是否部署在线审计。&lt;/p&gt;
+&lt;h2 id=&#34;三常见高频面试题&#34;&gt;三、常见高频面试题
+&lt;/h2&gt;&lt;h3 id=&#34;31-可观测性与评估有什么区别&#34;&gt;3.1 可观测性与评估有什么区别？
+&lt;/h3&gt;&lt;p&gt;**答：**可观测性保留并组织运行证据，评估依据标准判断行为和结果。Trace 是证据载体，任务成功率是评价结果。两者通过相同的任务标识关联，但不能互相替代。&lt;/p&gt;
+&lt;h3 id=&#34;32-为什么工具成功率高任务成功率仍然低&#34;&gt;3.2 为什么工具成功率高，任务成功率仍然低？
+&lt;/h3&gt;&lt;p&gt;**答：**工具可以成功执行错误参数，或者修改错误对象。还可能完成了局部动作却遗漏最终目标。需要结合输入证据、业务状态和验收条件判断。&lt;/p&gt;
+&lt;h3 id=&#34;33-为什么多智能体观测不能只增加-agent_id&#34;&gt;3.3 为什么多智能体观测不能只增加 agent_id？
+&lt;/h3&gt;&lt;p&gt;**答：**角色标识不能说明信息流。还需记录谁委派任务、谁消费哪个版本的产物、谁修改了共享状态，否则无法区分错误引入和错误传播。&lt;/p&gt;
+&lt;h3 id=&#34;34-发现第一条异常是否等于找到根因&#34;&gt;3.4 发现第一条异常是否等于找到根因？
+&lt;/h3&gt;&lt;p&gt;**答：**异常可能被后续恢复，某个正常返回的动作也可能引入关键错误。归因需要结合依赖和结果，必要时用受控替换验证修正是否改变终局。&lt;/p&gt;
+&lt;h3 id=&#34;35-确定性回放与经验回放有什么区别&#34;&gt;3.5 确定性回放与经验回放有什么区别？
+&lt;/h3&gt;&lt;p&gt;**答：**记录回放使用已保存的外部响应复现逻辑，经验回放根据抽象流程在新环境生成操作。AgentRR 主要研究后者；受控重跑则用于比较修复后的新行为。&lt;/p&gt;
+&lt;h3 id=&#34;36-如何评测在线审计器&#34;&gt;3.6 如何评测在线审计器？
+&lt;/h3&gt;&lt;p&gt;**答：**仅提供当时可见的轨迹前缀，同时包含成功与失败任务。分别评价告警是否正确、位置是否准确、是否足够及时，以及误报与审计成本。完整失败日志上的事后定位成绩不能直接作为在线成绩。&lt;/p&gt;
+&lt;h2 id=&#34;四附录原始论文与工程资料&#34;&gt;四、附录：原始论文与工程资料
+&lt;/h2&gt;&lt;h3 id=&#34;41-单智能体部分的论文来源&#34;&gt;4.1 单智能体部分的论文来源
+&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2411.05285&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;AgentOps&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2401.13178&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;AgentBoard&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2505.08638&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;TRAIL&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2406.12045&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;τ-bench&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2505.17716&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;AgentRR&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2306.05685&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2609.02942&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Judging LLM-as-a-Judge: Concerning Rubric Artifacts&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;42-多智能体部分的论文来源&#34;&gt;4.2 多智能体部分的论文来源
+&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2505.00212&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Who&amp;amp;When&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2602.23701&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;CHIEF&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://arxiv.org/abs/2605.08715&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;AgentForesight&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;本文查阅日期为 2026-10-09。正文链接可能指向修订版本，复现时应明确论文、代码、模型、数据与评测协议的版本。概念研究、基准和方法论文具有不同的证据范围；实验成绩不能自动转化为生产保证。&lt;/p&gt;
+&lt;h3 id=&#34;43-官方工程资料与相关文档&#34;&gt;4.3 官方工程资料与相关文档
+&lt;/h3&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://opentelemetry.io/docs/specs/semconv/gen-ai/&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;OpenTelemetry：生成式 AI 语义约定入口&lt;/a&gt;：用于核对事件和追踪语义，属于工程规范。&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://github.com/hkust-nlp/AgentBoard&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;AgentBoard 官方实现&lt;/a&gt;：过程评估与分析框架。&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://github.com/sierra-research/tau-bench&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;τ-bench 官方实现&lt;/a&gt;：交互环境、任务与评测实现。&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;https://github.com/mingyin1/Agents_Failure_Attribution&#34;  target=&#34;_blank&#34; rel=&#34;noopener&#34;
+    &gt;Who&amp;amp;When 官方实现与数据&lt;/a&gt;：失败归因研究材料。&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;../ai/agent/11-agent-observability-evaluation.md&#34; &gt;AI Agent 可观测性与评估&lt;/a&gt;：本博客的基础介绍。&lt;/li&gt;
+&lt;li&gt;&lt;a class=&#34;link&#34; href=&#34;agent-memory-papers.md&#34; &gt;Agent Memory 论文解读&lt;/a&gt;：状态、事实与经验维护的相关研究。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;可验证的事件与依赖关系，是从运行记录走向故障定位、可靠性评估和修复验证的基础。&lt;/p&gt;
+</description>
+        </item>
+        
+    </channel>
+</rss>
